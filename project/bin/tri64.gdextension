@@ -1,0 +1,9 @@
+[configuration]
+
+entry_symbol = "tri64_init"
+compatibility_minimum = "4.1"
+reloadable = true
+
+[libraries]
+
+macos.debug = "./libtri64.dylib"

@@ -1,0 +1,59 @@
+[gd_scene format=3 uid="uid://c7vbb7adv02ob"]
+
+[ext_resource type="Script" uid="uid://b724ykmnldxac" path="res://main.gd" id="1_ig7tw"]
+
+[node name="Control" type="Control" unique_id=1832702080]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_ig7tw")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=514978003]
+layout_mode = 0
+offset_right = 952.0
+offset_bottom = 566.0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="VBoxContainer" unique_id=425521656]
+layout_mode = 2
+
+[node name="SelectRomButton" type="Button" parent="VBoxContainer/HBoxContainer" unique_id=1415382150]
+custom_minimum_size = Vector2(100, 50)
+layout_mode = 2
+text = "Open ROM"
+
+[node name="RomNameLabel" type="Label" parent="VBoxContainer/HBoxContainer" unique_id=161336027]
+layout_mode = 2
+text = "No ROM selected."
+
+[node name="OptionButton" type="OptionButton" parent="VBoxContainer/HBoxContainer" unique_id=1745505079]
+custom_minimum_size = Vector2(200, 50)
+layout_mode = 2
+
+[node name="LoadLevelButton" type="Button" parent="VBoxContainer/HBoxContainer" unique_id=1680072384]
+custom_minimum_size = Vector2(100, 50)
+layout_mode = 2
+
+[node name="HSplitContainer" type="HSplitContainer" parent="VBoxContainer" unique_id=914605876]
+layout_mode = 2
+
+[node name="TabContainer" type="TabContainer" parent="VBoxContainer/HSplitContainer" unique_id=1386479377]
+custom_minimum_size = Vector2(300, 0)
+layout_mode = 2
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="VBoxContainer/HSplitContainer" unique_id=980941898]
+custom_minimum_size = Vector2(640, 480)
+layout_mode = 2
+
+[node name="SubViewport" type="SubViewport" parent="VBoxContainer/HSplitContainer/SubViewportContainer" unique_id=1439809650]
+handle_input_locally = false
+render_target_update_mode = 4
+
+[node name="Node3D" type="Node3D" parent="VBoxContainer/HSplitContainer/SubViewportContainer/SubViewport" unique_id=1062059433]
+
+[node name="Camera3D" type="Camera3D" parent="VBoxContainer/HSplitContainer/SubViewportContainer/SubViewport" unique_id=1530727695]
+
+[node name="FileDialog" type="FileDialog" parent="." unique_id=285904367]
+ok_button_text = "Open"

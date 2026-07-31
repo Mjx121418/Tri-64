@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# ROM dumps (copyrighted material, never commit)
+*.z64
+
+# C++ build artifacts
+cpp/.cache/
+cpp/.sconsign.dblite
+cpp/compile_commands.json
+*.o
+*.os
+cpp/tests/bin/
+
+# Godot extension binaries (built by scons)
+project/bin/*.dylib
+project/bin/*.dll
+project/bin/*.so
+
+# Godot editor cache
+project/.godot/
+
+# Vendored godot-cpp checkout (clone separately or add as a git submodule)
+cpp/godot-cpp/
+
+# Editor config
+.vscode/
