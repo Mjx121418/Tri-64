@@ -3,7 +3,7 @@
 
 #include "Level/graph_node.h"
 #include "Memory/segment.h"
-#include <functional>
+#include <array>
 
 class GeoLayoutProcessor {
     struct Frame {
@@ -18,9 +18,16 @@ class GeoLayoutProcessor {
     SegmentedAddress geo_layout_command;
     std::span<uint8_t> command_data;
 
-    std::vector<SegmentedAddress> address_stack {};
-    std::vector<std::reference_wrapper<GraphNode>> graph_node_list {};
-    std::vector<Frame> frame_stack {};
+    // Three fixed arrays with explicit cursors, mirroring the decomp's model
+    // (gGeoLayoutStack + gCurGraphNodeList + gCurGraphNodeIndex): the node
+    // path *contents* survive close over-runs, and End only restores the
+    // cursors. A vector that pops on close cannot emulate that.
+    std::array<SegmentedAddress, 16> address_stack {};
+    std::array<Frame, 16> frame_stack {};
+    std::array<GraphNode *, 32> graph_node_list {};
+    int16_t address_stack_index { 1 };
+    int16_t frame_stack_index { 1 };
+    int16_t graph_node_index { 0 };
 
     void registerSceneGraphNode(std::unique_ptr<GraphNode> node);
 

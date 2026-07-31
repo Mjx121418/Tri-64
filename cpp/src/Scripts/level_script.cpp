@@ -193,6 +193,8 @@ void LevelScriptVM::cmdExit() {
     frame_stack.pop_back();
     current_command = command_stack.back();
     command_stack.pop_back();
+    pc = current_command.addr;
+    pc.offset += current_command.length;
 }
 
 void LevelScriptVM::cmdSleep() {
@@ -222,6 +224,8 @@ void LevelScriptVM::cmdJumpAndLink(){
 void LevelScriptVM::cmdReturn() {
     current_command = command_stack.back();
     command_stack.pop_back();
+    pc = current_command.addr;
+    pc.offset += current_command.length;
 }
 
 void LevelScriptVM::cmdJumpAndLinkPushArg() {
@@ -235,9 +239,13 @@ void LevelScriptVM::cmdJumpRepeat() {
 
     if (val == 0) {
         current_command = command_stack.back();
+        pc = current_command.addr;
+        pc.offset += current_command.length;
     } else if (--val != 0) {
         argument_stack.back() = val;
         current_command = command_stack.back();
+        pc = current_command.addr;
+        pc.offset += current_command.length;
     } else {
         getNextCommand();
         argument_stack.pop_back();

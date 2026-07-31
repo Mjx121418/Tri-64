@@ -1,64 +1,107 @@
 #include "geo_layout.h"
 
 GeoLayoutProcessor::GeoLayoutProcessor(SegmentTable &seg_table) : seg_table(seg_table) {
-    address_stack.reserve(16);
-    graph_node_list.reserve(32);
-    frame_stack.reserve(16);
-
-    graph_node_list.push_back(*root_graph_node);
+    // The arrays are re-initialised by every processGeoLayout call.
 }
 
 void GeoLayoutProcessor::registerSceneGraphNode(std::unique_ptr<GraphNode> node) {
-    if (graph_node_list.size() == 0) {
-        root_graph_node = std::move(node);
-        graph_node_list.push_back(*root_graph_node);
+    if (graph_node_index < 0 || graph_node_index >= static_cast<int16_t>(graph_node_list.size())) {
+        fprintf(stderr, "GeoLayout: register with invalid node index %d, dropping node\n", graph_node_index);
+        return;
+    }
+
+    if (graph_node_index == 0) {
+        if (root_graph_node == nullptr) {
+            root_graph_node = std::move(node);
+            graph_node_list[0] = root_graph_node.get();
+        }
+        // A second node at root level is orphaned by the decomp
+        // (register_scene_graph_node only attaches children for index > 0),
+        // so it is dropped here.
     } else {
-        graph_node_list.pop_back();
-        graph_node_list.push_back(graph_node_list.back().get().addChild(std::move(node)));
+        GraphNode *parent = graph_node_list[graph_node_index - 1];
+        if (parent == nullptr) {
+            fprintf(stderr, "GeoLayout: register with null parent at seg %#04x off %#06x, dropping node\n",
+                    geo_layout_command.seg, geo_layout_command.offset);
+            return;
+        }
+        graph_node_list[graph_node_index] = node.get();
+        parent->addChild(std::move(node));
     }
 }
 
 void GeoLayoutProcessor::cmdBranchAndLink() {
+    if (address_stack_index >= static_cast<int16_t>(address_stack.size())
+        || frame_stack_index >= static_cast<int16_t>(frame_stack.size())) {
+        fprintf(stderr, "GeoLayout: stack overflow in branch_and_link\n");
+        geo_layout_command = SegmentedAddress {};
+        return;
+    }
+
     geo_layout_command.offset += 8;
-    address_stack.push_back(geo_layout_command);
-    Frame current_frame {
-        static_cast<int16_t>(address_stack.size()),
-        static_cast<int16_t>(graph_node_list.size())
+    address_stack[address_stack_index++] = geo_layout_command;
+    frame_stack[frame_stack_index++] = Frame {
+        static_cast<int16_t>(address_stack_index),
+        graph_node_index
     };
-    frame_stack.push_back(current_frame);
     geo_layout_command.setAddress(readInt<uint32_t>(command_data, 4));
 }
 
 void GeoLayoutProcessor::cmdEnd() {
-    const Frame frame { frame_stack.back() };
-    address_stack.erase(address_stack.begin() + frame.return_index, address_stack.end());
-    graph_node_list.erase(graph_node_list.begin() + frame.graph_node_index, graph_node_list.end());
-    geo_layout_command = address_stack.back();
-    address_stack.pop_back();
-    frame_stack.pop_back();
+    if (frame_stack_index <= 0) {
+        fprintf(stderr, "GeoLayout: end with no frame, terminating layout\n");
+        geo_layout_command = SegmentedAddress {};
+        return;
+    }
+
+    const Frame frame = frame_stack[--frame_stack_index];
+    address_stack_index = frame.return_index;
+    graph_node_index = frame.graph_node_index;
+
+    if (address_stack_index <= 0) {
+        geo_layout_command = SegmentedAddress {};
+        return;
+    }
+    geo_layout_command = address_stack[--address_stack_index];
 }
 
 void GeoLayoutProcessor::cmdBranch() {
     if (readInt<uint8_t>(command_data, 0x01) == 1) {
+        if (address_stack_index >= static_cast<int16_t>(address_stack.size())) {
+            fprintf(stderr, "GeoLayout: stack overflow in branch\n");
+            geo_layout_command = SegmentedAddress {};
+            return;
+        }
         geo_layout_command.offset += 8;
-        address_stack.push_back(geo_layout_command);
+        address_stack[address_stack_index++] = geo_layout_command;
     }
 
     geo_layout_command.setAddress(readInt<uint32_t>(command_data, 4));
 }
 
 void GeoLayoutProcessor::cmdReturn() {
-    geo_layout_command = address_stack.back();
-    address_stack.pop_back();
+    if (address_stack_index <= 1) {
+        geo_layout_command = SegmentedAddress {};
+        return;
+    }
+    geo_layout_command = address_stack[--address_stack_index];
 }
 
 void GeoLayoutProcessor::cmdOpenNode() {
-    graph_node_list.push_back(graph_node_list.back());
+    if (graph_node_index < 0 || graph_node_index + 1 >= static_cast<int16_t>(graph_node_list.size())) {
+        fprintf(stderr, "GeoLayout: node list under/overflow in open_node, terminating layout\n");
+        geo_layout_command = SegmentedAddress {};
+        return;
+    }
+    graph_node_list[graph_node_index + 1] = graph_node_list[graph_node_index];
+    graph_node_index++;
     geo_layout_command.offset += 4;
 }
 
 void GeoLayoutProcessor::cmdCloseNode() {
-    graph_node_list.pop_back();
+    // The cursor may go negative here; the node list *contents* survive, and
+    // End restores the cursor from the saved frame (as in the decomp).
+    graph_node_index--;
     geo_layout_command.offset += 4;
 }
 void GeoLayoutProcessor::cmdAssignAsView() {
@@ -69,7 +112,12 @@ void GeoLayoutProcessor::cmdUpdateNodeFlags() {
     // don't know why read an uint8_t into an uint16_t type
     uint16_t operation = readInt<uint8_t>(command_data, 1);
     uint16_t flagBits = readInt<int16_t>(command_data, 2);
-    GraphNode& node = graph_node_list.back().get();
+    if (graph_node_index < 0 || graph_node_list[graph_node_index] == nullptr) {
+        fprintf(stderr, "GeoLayout: update_node_flags with no current node\n");
+        geo_layout_command.offset += 4;
+        return;
+    }
+    GraphNode& node = *graph_node_list[graph_node_index];
 
     switch (operation) {
     case 0:
@@ -436,12 +484,13 @@ void GeoLayoutProcessor::cmdNodeCullingRadius() {
 
 std::unique_ptr<GraphNode> GeoLayoutProcessor::processGeoLayout(SegmentedAddress seg_ptr) {
     root_graph_node = nullptr;
-    address_stack.clear();
-    graph_node_list.clear();
-    frame_stack.clear();
+    address_stack_index = 1;
+    frame_stack_index = 1;
+    graph_node_index = 0;
+    address_stack[0] = SegmentedAddress {};   // null sentinel (top-level End returns to it)
+    frame_stack[0] = Frame {1, 0};            // sentinel frame: return to the null address
+    graph_node_list[0] = nullptr;
     geo_layout_command = seg_ptr;
-    address_stack.push_back(SegmentedAddress {});
-    frame_stack.push_back(Frame {1, 0});
 
     while (!geo_layout_command.isNull()) {
         uint8_t command = seg_table.read(geo_layout_command);
