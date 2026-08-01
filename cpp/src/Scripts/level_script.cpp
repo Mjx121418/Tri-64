@@ -360,6 +360,12 @@ void LevelScriptVM::cmdLoadRaw() {
     int16_t seg = current_command.cmdGet<int16_t>(2);
     uint32_t rom_start = current_command.cmdGet<uint32_t>(4);
     uint32_t rom_end = current_command.cmdGet<uint32_t>(8);
+
+    // workaround for the custom loading code used by sm64 level editor.
+    if (seg >= 0x100 && seg < 0x120) {
+        seg -= 0x100;
+    }
+
     seg_table.loadSegment(seg, rom_start, rom_end);
 
     getNextCommand();
