@@ -20,5 +20,6 @@ int main() {
     printNodeTree(*root, 0);
 
     testRunLevelScript();
+    testDisplayList();
     return 0;
 }

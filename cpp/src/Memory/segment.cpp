@@ -20,19 +20,19 @@ void SegmentedAddress::operator+=(uint32_t step) {
     offset += step;
 }
 
-uint8_t SegmentTable::read(SegmentedAddress seg_addr) {
+uint8_t SegmentTable::read(SegmentedAddress seg_addr) const {
     return segments.at(seg_addr.seg).data.at(seg_addr.offset);
 }
 
-uint8_t SegmentTable::read(SegmentedAddress seg_addr, uint32_t offset) {
+uint8_t SegmentTable::read(SegmentedAddress seg_addr, uint32_t offset) const {
     return segments.at(seg_addr.seg).data.at(seg_addr.offset+offset);
 }
 
-std::span<uint8_t> SegmentTable::data(SegmentedAddress seg_addr) {
+std::span<uint8_t> SegmentTable::data(SegmentedAddress seg_addr) const {
     return segments.at(seg_addr.seg).data.subspan(seg_addr.offset);
 }
 
-std::span<uint8_t> SegmentTable::data(SegmentedAddress seg_addr, uint32_t length) {
+std::span<uint8_t> SegmentTable::data(SegmentedAddress seg_addr, uint32_t length) const {
     return segments.at(seg_addr.seg).data.subspan(seg_addr.offset, length);
 }
 
@@ -72,7 +72,8 @@ std::expected<void, SegmentError> SegmentTable::loadMIO0Segment(int16_t seg, uin
 
     segments[seg].is_compressed = true;
     segments[seg].decompressed_data = decompressed_data.value();
-    segments[seg].data = std::span(decompressed_data.value());
+    // 注意：span 必须指向成员 vector（局部 decompressed_data 在函数返回后销毁）
+    segments[seg].data = std::span(segments[seg].decompressed_data);
 
     return {};
 }

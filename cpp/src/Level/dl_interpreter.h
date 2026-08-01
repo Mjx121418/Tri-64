@@ -1,0 +1,58 @@
+#ifndef DL_INTERPRETER_H
+#define DL_INTERPRETER_H
+
+#include "Level/display_list.h"
+#include "Level/dl_command.h"
+#include "Memory/segment.h"
+#include <array>
+#include <cstdint>
+#include <vector>
+
+namespace GBI {
+
+// 输出网格顶点（模型空间）
+struct MeshVertex {
+    float position[3];
+    float normal[3];
+    float uv[2];
+    uint8_t color[4];
+};
+
+// 输出网格
+struct Mesh {
+    std::vector<MeshVertex> vertices;
+    std::vector<uint32_t> indices;      // 每三角形 3 个索引
+    std::vector<uint32_t> material_ids; // 每三角形材质 id（暂恒为 0）
+};
+
+// fast3d RSP 顶点缓冲大小
+inline constexpr size_t kVertexBufferSize = 32;
+
+// DL 解释器：执行一条 DL（含子 DL 调用），累积三角形到 Mesh。
+//
+// 当前阶段（Milestone 2 第一步）：
+//   - 支持 G_MTX 占位（记录但不应用矩阵），输出原始模型空间顶点
+//   - 支持 G_VTX / G_TRI1 / G_DL / G_ENDDL，累积三角形
+//   - 材质/RDP 命令暂忽略（后续步骤记录材质）
+class DLInterpreter {
+    const SegmentTable &seg_table_;
+    std::array<Vtx, kVertexBufferSize> vertices_ {};
+    std::vector<SegmentedAddress> dl_stack_;
+    Mesh mesh_;
+    uint64_t steps_ {0};
+
+public:
+    explicit DLInterpreter(const SegmentTable &seg_table) : seg_table_(seg_table) {}
+
+    Mesh &run(SegmentedAddress dl);
+
+private:
+    void execute(const DecodedCommand &cmd, SegmentedAddress &pc);
+    void loadVertices(const DecodedCommand &cmd);
+    void drawTriangle(const DecodedCommand &cmd);
+    void appendVertex(const Vtx &v);
+};
+
+} // namespace GBI
+
+#endif /* DL_INTERPRETER_H */

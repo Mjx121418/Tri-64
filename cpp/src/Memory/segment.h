@@ -32,10 +32,10 @@ class SegmentTable {
 
 public:
     std::span<uint8_t> rom_span;
-    uint8_t read(SegmentedAddress seg_addr);
-    uint8_t read(SegmentedAddress seg_addr, uint32_t offset);
-    std::span<uint8_t> data(SegmentedAddress seg_addr);
-    std::span<uint8_t> data(SegmentedAddress seg_addr, uint32_t length);
+    uint8_t read(SegmentedAddress seg_addr) const;
+    uint8_t read(SegmentedAddress seg_addr, uint32_t offset) const;
+    std::span<uint8_t> data(SegmentedAddress seg_addr) const;
+    std::span<uint8_t> data(SegmentedAddress seg_addr, uint32_t length) const;
     void loadSegment(int16_t seg, uint32_t rom_start, uint32_t rom_end);
     std::expected<void, SegmentError> loadMIO0Segment(int16_t seg, uint32_t rom_start, uint32_t rom_end);
 };

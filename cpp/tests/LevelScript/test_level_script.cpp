@@ -1,6 +1,7 @@
 #include "test_level_script.h"
 
 #include "Level/area.h"
+#include "Level/dl_interpreter.h"
 #include "Memory/segment.h"
 #include "ROM.h"
 #include "Scripts/level_script.h"
@@ -105,23 +106,35 @@ std::vector<std::filesystem::path> findRoms() {
     return roms;
 }
 
-void runLevelScript(const std::filesystem::path &rom_path) {
-    ROM rom;
-    rom.load(rom_path);
-    if (!rom.is_loaded) {
+// Collects every GraphNodeDisplayList in the area tree.
+void collectDisplayLists(const GraphNode &node, std::vector<SegmentedAddress> &out) {
+    if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
+        out.push_back(std::get<GraphNodeDisplayList>(node.data).display_list);
+    }
+    for (const auto &child : node.children) {
+        collectDisplayLists(*child, out);
+    }
+}
+
+} // namespace
+
+LevelScriptSetup setupLevelScript(const std::filesystem::path &rom_path) {
+    LevelScriptSetup setup;
+    setup.rom.load(rom_path);
+    if (!setup.rom.is_loaded) {
         printf("test_level_script: could not load %s\n", rom_path.string().c_str());
-        return;
+        return setup;
     }
 
     // Locate the level-scripts segment (0x15) and the level jump table inside
     // it. The jump table pattern can also occur in unrelated data (e.g. MIPS
     // code bytes), so it is only searched within the scripts segment.
-    const size_t scripts_start = findScriptsStart(rom.data);
-    const size_t table_pos = findPattern(rom.data, kLevelTablePattern, scripts_start);
-    if (scripts_start == rom.data.size() || table_pos == rom.data.size()) {
+    const size_t scripts_start = findScriptsStart(setup.rom.data);
+    const size_t table_pos = findPattern(setup.rom.data, kLevelTablePattern, scripts_start);
+    if (scripts_start == setup.rom.data.size() || table_pos == setup.rom.data.size()) {
         printf("test_level_script: %s: could not locate the level scripts segment\n",
                rom_path.string().c_str());
-        return;
+        return setup;
     }
 
     const size_t table_offset = table_pos - scripts_start;
@@ -129,42 +142,23 @@ void runLevelScript(const std::filesystem::path &rom_path) {
     printf("test_level_script: scripts segment @ 0x%zx, level jump table @ +0x%zx\n",
            scripts_start, table_offset);
 
-    SegmentTable seg_table;
-    seg_table.rom_span = std::span(rom.data);
-    seg_table.loadSegment(0x15, static_cast<uint32_t>(scripts_start),
-                          static_cast<uint32_t>(std::min(scripts_start + 0x8000, rom.data.size())));
+    setup.seg_table.rom_span = std::span(setup.rom.data);
+    setup.seg_table.loadSegment(0x15, static_cast<uint32_t>(scripts_start),
+                                static_cast<uint32_t>(std::min(scripts_start + 0x8000, setup.rom.data.size())));
 
     // Same common-segment setup the game performs in level_main_scripts_entry
     // (we enter at the level jump table, skipping the menu).
-    loadCommonSegments(seg_table, rom.data, scripts_start);
+    loadCommonSegments(setup.seg_table, setup.rom.data, scripts_start);
 
-    Level level;
-    LevelScriptVM vm(seg_table, level);
+    LevelScriptVM vm(setup.seg_table, setup.level);
     vm.setLevelNum(LEVEL_BOB);
 
     SegmentedAddress entry { 0x15, static_cast<uint32_t>(table_offset) };
     vm.execute(entry);
 
-    // Report what the script produced.
-    for (int i = 0; i < 8; i++) {
-        auto &area = level.areas[i];
-        if (area.root_node) {
-            printf("== Area %d ==\n", i);
-            printNodeTree(*area.root_node, 0);
-            printf("objects: %zu\n", area.object_infos.size());
-        }
-    }
-
-    size_t loaded_models = 0;
-    for (const auto &node : level.loaded_graph_node) {
-        if (node) {
-            loaded_models++;
-        }
-    }
-    printf("loaded graph nodes (models): %zu\n", loaded_models);
+    setup.ok = true;
+    return setup;
 }
-
-} // namespace
 
 void testRunLevelScript() {
     const auto roms = findRoms();
@@ -174,6 +168,65 @@ void testRunLevelScript() {
     }
 
     for (const auto &rom : roms) {
-        runLevelScript(rom);
+        LevelScriptSetup setup = setupLevelScript(rom);
+        if (!setup.ok) {
+            continue;
+        }
+
+        // Report what the script produced.
+        for (int i = 0; i < 8; i++) {
+            auto &area = setup.level.areas[i];
+            if (area.root_node) {
+                printf("== Area %d ==\n", i);
+                printNodeTree(*area.root_node, 0);
+                printf("objects: %zu\n", area.object_infos.size());
+            }
+        }
+
+        size_t loaded_models = 0;
+        for (const auto &node : setup.level.loaded_graph_node) {
+            if (node) {
+                loaded_models++;
+            }
+        }
+        printf("loaded graph nodes (models): %zu\n", loaded_models);
+    }
+}
+
+void testDisplayList() {
+    const auto roms = findRoms();
+    if (roms.empty()) {
+        return;
+    }
+
+    for (const auto &rom : roms) {
+        LevelScriptSetup setup = setupLevelScript(rom);
+        if (!setup.ok) {
+            continue;
+        }
+
+        for (int i = 0; i < 8; i++) {
+            auto &area = setup.level.areas[i];
+            if (!area.root_node) {
+                continue;
+            }
+
+            std::vector<SegmentedAddress> dls;
+            collectDisplayLists(*area.root_node, dls);
+            printf("test_display_list: Area %d: %zu display lists\n", i, dls.size());
+
+            size_t total_triangles = 0;
+            size_t total_vertices = 0;
+            for (const auto &dl : dls) {
+                GBI::DLInterpreter interp(setup.seg_table);
+                GBI::Mesh &mesh = interp.run(dl);
+                const size_t triangles = mesh.indices.size() / 3;
+                printf("  DL %02x:%06x -> %zu triangles, %zu vertices\n", dl.seg, dl.offset,
+                       triangles, mesh.vertices.size());
+                total_triangles += triangles;
+                total_vertices += mesh.vertices.size();
+            }
+            printf("  total: %zu triangles, %zu vertices\n", total_triangles, total_vertices);
+        }
     }
 }
