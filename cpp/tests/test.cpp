@@ -3,7 +3,6 @@
 #include "Memory/segment.h"
 #include "Scripts/geo_layout.h"
 #include "tree_printer.h"
-#include <print>
 
 int main() {
     printf("Hi.\n");
