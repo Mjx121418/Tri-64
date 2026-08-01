@@ -18,13 +18,16 @@ namespace {
 constexpr int32_t LEVEL_BOB = 9;
 
 // Distinctive command bytes that mark the start of the level-scripts segment
-// (0x15) in the vanilla baserom:
-//   - level_main_scripts_entry[0] = LOAD_MIO0(0x04, ...) -> 18 0C 00 04
-//     (group0_mio0 is only ever loaded there, so the pattern is unique)
-//   - script_exec_level_table[0] = GET_OR_SET(OP_GET, VAR_CURR_LEVEL_NUM)
-//     -> 3C 04 01 03 (opcode, size, op=OP_GET, var=VAR_CURR_LEVEL_NUM; also
-//     unique in the whole game). Only searched inside the scripts segment.
-constexpr std::array<uint8_t, 4> kScriptsStartPattern { 0x18, 0x0C, 0x00, 0x04 };
+// (0x15). level_main_scripts_entry[0] loads segment 0x04, which happens
+// nowhere else, so the command is unique in both the vanilla ROM and binary
+// hacks. Binary hacks often replace the MIO0 load with a raw copy:
+//   - LOAD_MIO0(0x04, ...) -> 18 0C 00 04 (vanilla)
+//   - LOAD_RAW (0x04, ...) -> 17 0C 00 04 (hacks)
+// script_exec_level_table[0] = GET_OR_SET(OP_GET, VAR_CURR_LEVEL_NUM)
+//   -> 3C 04 01 03 (opcode, size, op=OP_GET, var=VAR_CURR_LEVEL_NUM; also
+//   unique in the whole game). Only searched inside the scripts segment.
+constexpr std::array<uint8_t, 4> kScriptsStartMio0Pattern { 0x18, 0x0C, 0x00, 0x04 };
+constexpr std::array<uint8_t, 4> kScriptsStartRawPattern { 0x17, 0x0C, 0x00, 0x04 };
 constexpr std::array<uint8_t, 4> kLevelTablePattern { 0x3C, 0x04, 0x01, 0x03 };
 
 size_t findPattern(const std::vector<uint8_t> &rom, const std::array<uint8_t, 4> &pattern, size_t from = 0) {
@@ -35,6 +38,24 @@ size_t findPattern(const std::vector<uint8_t> &rom, const std::array<uint8_t, 4>
     return static_cast<size_t>(it - rom.begin());
 }
 
+// Locates the scripts segment by its first command (a unique load of segment
+// 0x04). Accepts either the vanilla MIO0 load or the raw load used by binary
+// hacks. A candidate is only trusted if the level-jump-table pattern occurs
+// within the following 0x8000 bytes (the table is near the segment start).
+size_t findScriptsStart(const std::vector<uint8_t> &rom) {
+    for (const auto &pattern : { kScriptsStartMio0Pattern, kScriptsStartRawPattern }) {
+        const size_t pos = findPattern(rom, pattern);
+        if (pos == rom.size()) {
+            continue;
+        }
+        const size_t search_end = std::min(pos + 0x8000, rom.size());
+        if (findPattern(rom, kLevelTablePattern, pos) < search_end) {
+            return pos;
+        }
+    }
+    return rom.size();
+}
+
 uint32_t readBE32(const uint8_t *p) {
     return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
 }
@@ -42,7 +63,8 @@ uint32_t readBE32(const uint8_t *p) {
 // The game loads these five common segments at the top of
 // level_main_scripts_entry, before any course script runs. Our test starts at
 // the level jump table instead (skipping the menu), so we must perform the
-// same loads ourselves. The ROM ranges are read from the commands themselves.
+// same loads ourselves. The ROM ranges are read from the commands themselves
+// (they may point anywhere in the ROM, e.g. the high region of a 64MB hack).
 void loadCommonSegments(SegmentTable &seg_table, const std::vector<uint8_t> &rom, size_t scripts_start) {
     for (size_t off = 0; off < 5 * 0x0C; off += 0x0C) {
         const uint8_t *cmd = rom.data() + scripts_start + off;
@@ -58,39 +80,52 @@ void loadCommonSegments(SegmentTable &seg_table, const std::vector<uint8_t> &rom
     }
 }
 
-std::filesystem::path findBaserom() {
-    for (const char *candidate : {
-             "baserom.us.z64",
-             "tests/baserom.us.z64",
-         }) {
+// Collects every ROM the test should run: the vanilla baserom plus any ROM
+// hack named "Super Mario Treasure World*.z64" (relative to the test's
+// working directory, so no absolute paths are baked in).
+std::vector<std::filesystem::path> findRoms() {
+    std::vector<std::filesystem::path> roms;
+    for (const char *candidate : { "baserom.us.z64", "tests/baserom.us.z64" }) {
         if (std::filesystem::exists(candidate)) {
-            return candidate;
+            roms.emplace_back(candidate);
         }
     }
-    return {};
+
+    for (const char *dir : { ".", "tests" }) {
+        if (!std::filesystem::is_directory(dir)) {
+            continue;
+        }
+        for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+            const std::string name = entry.path().filename().string();
+            if (name.rfind("Super Mario Treasure World", 0) == 0) {
+                roms.push_back(entry.path());
+            }
+        }
+    }
+    return roms;
 }
 
-} // namespace
-
-void testRunLevelScript() {
+void runLevelScript(const std::filesystem::path &rom_path) {
     ROM rom;
-    rom.load(findBaserom());
+    rom.load(rom_path);
     if (!rom.is_loaded) {
-        printf("test_level_script: could not load baserom.us.z64\n");
+        printf("test_level_script: could not load %s\n", rom_path.string().c_str());
         return;
     }
 
-    // Locate the level-scripts segment (0x15) and the level jump table inside it.
-    // The jump table pattern can also occur in unrelated data (e.g. MIPS code
-    // bytes), so it is only searched within the scripts segment.
-    const size_t scripts_start = findPattern(rom.data, kScriptsStartPattern);
+    // Locate the level-scripts segment (0x15) and the level jump table inside
+    // it. The jump table pattern can also occur in unrelated data (e.g. MIPS
+    // code bytes), so it is only searched within the scripts segment.
+    const size_t scripts_start = findScriptsStart(rom.data);
     const size_t table_pos = findPattern(rom.data, kLevelTablePattern, scripts_start);
     if (scripts_start == rom.data.size() || table_pos == rom.data.size()) {
-        printf("test_level_script: could not locate the level scripts segment\n");
+        printf("test_level_script: %s: could not locate the level scripts segment\n",
+               rom_path.string().c_str());
         return;
     }
 
     const size_t table_offset = table_pos - scripts_start;
+    printf("== %s ==\n", rom_path.filename().string().c_str());
     printf("test_level_script: scripts segment @ 0x%zx, level jump table @ +0x%zx\n",
            scripts_start, table_offset);
 
@@ -127,4 +162,18 @@ void testRunLevelScript() {
         }
     }
     printf("loaded graph nodes (models): %zu\n", loaded_models);
+}
+
+} // namespace
+
+void testRunLevelScript() {
+    const auto roms = findRoms();
+    if (roms.empty()) {
+        printf("test_level_script: no ROM found (baserom.us.z64 or Super Mario Treasure World*.z64)\n");
+        return;
+    }
+
+    for (const auto &rom : roms) {
+        runLevelScript(rom);
+    }
 }
