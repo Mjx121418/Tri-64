@@ -117,19 +117,22 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         material_.fog_color[3] = cmd.colorA();
         break;
     case G_SETTILE:
-        material_.tile_fmt = cmd.tileFmt();
-        material_.tile_siz = cmd.tileSize();
+        material_.tile_fmt = cmd.rdpFmt();
+        material_.tile_siz = cmd.rdpSize();
         break;
     case G_SETTILESIZE: {
         // w0: uls<<12 | ult ; w1: lrs<<12 | lrt；尺寸 = (lrs-uls)/4 + 1（RDP 单位 1/4 纹素）
-        material_.tex_sl = (cmd.w0 >> 12) & 0xFFF;
-        material_.tex_tl = cmd.w0 & 0xFFF;
-        material_.tex_sh = (cmd.w1 >> 12) & 0xFFF;
-        material_.tex_th = cmd.w1 & 0xFFF;
+        material_.tex_sl = cmd.lowS();
+        material_.tex_tl = cmd.lowT();
+        material_.tex_sh = cmd.highS();
+        material_.tex_th = cmd.highT();
         break;
     }
     case G_SETTEXIMAGE:
+        // w0 低 12 位 = 图像宽度，但 SM64 通常传 0（宽度隐含在 SETTILESIZE 区域中）；
+        // 解码时 tex_image_width==0 按区域宽兜底。
         material_.tex_image.setAddress(cmd.w1);
+        material_.tex_image_width = cmd.w0 & 0xFFF;
         break;
     case G_TEXTURE:
         // fast3d: G_TEXTURE 的 w0 位 0 切换几何模式的 G_TEXTURE_ENABLE

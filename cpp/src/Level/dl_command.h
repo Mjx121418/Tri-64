@@ -153,9 +153,15 @@ struct DecodedCommand {
     uint8_t colorB() const { return (w1 >> 8) & 0xFF; }
     uint8_t colorA() const { return w1 & 0xFF; }
 
+    // --- G_LOADBLOCK, G_SETTILESIZE, G_LOADTLUT
+    uint16_t lowS() const { return (w0 >> 12) & 0xFFF; }
+    uint16_t lowT() const { return w0 & 0xFFF; }
+    uint16_t highS() const { return (w1 >> 12) & 0xFFF; }
+    uint16_t highT() const { return w1 & 0xFFF; }
+
     // --- G_SETTILE ---
-    uint8_t tileFmt() const { return (w0 >> 21) & 0x7; }
-    uint8_t tileSize() const { return (w0 >> 19) & 0x3; }
+    uint8_t rdpFmt() const { return (w0 >> 21) & 0x7; }
+    uint8_t rdpSize() const { return (w0 >> 19) & 0x3; }
 
     // --- G_MOVEMEM ---
     uint8_t memIndex() const { return (w0 >> 16) & 0xFF; }

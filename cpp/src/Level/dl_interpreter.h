@@ -31,6 +31,7 @@ struct Material {
     uint16_t tex_sh {0};          // 纹理横坐标最大值
     uint16_t tex_th {0};          // 纹理纵坐标最大值
     SegmentedAddress tex_image {};   // G_SETTEXIMAGE 纹理图像地址
+    uint16_t tex_image_width {0};    // G_SETTEXIMAGE 图像行宽（texel，决定行跨度）
     bool textured {false};           // 几何模式 G_TEXTURE_ENABLE（G_TEXTURE 开关）
 
     bool operator==(const Material &o) const {
@@ -45,6 +46,7 @@ struct Material {
             && tex_sl == o.tex_sl && tex_tl == o.tex_tl
             && tex_sh == o.tex_sh && tex_th == o.tex_th
             && tex_image.seg == o.tex_image.seg && tex_image.offset == o.tex_image.offset
+            && tex_image_width == o.tex_image_width
             && textured == o.textured;
     }
 

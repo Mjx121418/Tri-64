@@ -2,6 +2,7 @@
 
 #include "Level/area.h"
 #include "Level/dl_interpreter.h"
+#include "Level/texture.h"
 #include "Memory/segment.h"
 #include "ROM.h"
 #include "Scripts/level_script.h"
@@ -342,7 +343,7 @@ void writeObj(const std::filesystem::path &path, const GBI::Mesh &mesh, const ch
         fprintf(f, "vn %f %f %f\n", v.normal[0], v.normal[1], v.normal[2]);
     }
     for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        fprintf(f, "f %zu/%zu/%zu %zu/%zu/%zu %zu/%zu/%zu\n",
+        fprintf(f, "f %u/%u/%u %u/%u/%u %u/%u/%u\n",
                 mesh.indices[i] + 1, mesh.indices[i] + 1, mesh.indices[i] + 1,
                 mesh.indices[i + 1] + 1, mesh.indices[i + 1] + 1, mesh.indices[i + 1] + 1,
                 mesh.indices[i + 2] + 1, mesh.indices[i + 2] + 1, mesh.indices[i + 2] + 1);
@@ -456,6 +457,30 @@ void testExportObj() {
                     "export" / std::filesystem::path(matname + std::string(".obj"));
                 writeObj(mat_path, sub, matname);
                 printf("  mat %zu: %s (%zu triangles)\n", m, matname, sub_triangles);
+
+                // 解码并导出该材质的纹理（PPM，无 alpha）
+                auto tex = GBI::decodeTexture(materials[m], setup.seg_table);
+                if (tex) {
+                    std::filesystem::path tex_dir = "export" / std::filesystem::path("textures");
+                    std::filesystem::create_directories(tex_dir);
+                    std::filesystem::path tex_path =
+                        tex_dir / std::filesystem::path(matname + std::string(".ppm"));
+                    FILE *tf = fopen(tex_path.string().c_str(), "wb");
+                    if (tf) {
+                        fprintf(tf, "P6\n%u %u\n255\n", tex->width, tex->height);
+                        for (size_t i = 0; i + 3 < tex->pixels.size(); i += 4) {
+                            fputc(tex->pixels[i], tf);
+                            fputc(tex->pixels[i + 1], tf);
+                            fputc(tex->pixels[i + 2], tf);
+                        }
+                        fclose(tf);
+                        printf("    tex: %s (%ux%u img=%02x:%06x w=%u)\n", matname,
+                               tex->width, tex->height, materials[m].tex_image.seg,
+                               materials[m].tex_image.offset, materials[m].tex_image_width);
+                    }
+                } else {
+                    printf("    tex: %s: %s\n", matname, tex.error().c_str());
+                }
             }
         }
     }
