@@ -1,8 +1,11 @@
 #ifndef DL_COMMAND_H
 #define DL_COMMAND_H
 
+#include "Math/math.h"
 #include "Memory/segment.h"
+#include <array>
 #include <cstdint>
+#include <vector>
 
 // GBI (Graphics Binary Interface) 命令层。
 //
@@ -148,6 +151,38 @@ struct DecodedCommand {
 
 // 读取并解码 addr 处的一条命令（8 字节）
 DecodedCommand decodeDLCommand(SegmentedAddress addr, const SegmentTable &seg_table);
+
+// --- GBI 数据类型 ---
+
+// 顶点（16 字节，与游戏内存布局一致）
+struct Vtx {
+    int16_t position[3];
+    uint16_t flag;
+    int16_t texture_coordinate[2]; // 5.11 定点
+    uint8_t coordinate_or_normal[4]; // 法线（有符号）/ 颜色 + alpha
+};
+
+// 视口
+struct Vp {
+    int16_t scale[4];
+    int16_t translate[4];
+};
+
+// 三角形（顶点索引 ×10 编码前）
+struct Tri {
+    uint8_t flag;
+    uint8_t vertices[3];
+};
+
+// RSP 矩阵：4x4 16.16 定点
+typedef Mat4<int32_t> Mtx;
+
+// 光照（暂未使用，保留供后续光照支持）
+struct Light {
+    uint8_t diffuse[3];
+    uint8_t diffuse_copy[3];
+    int8_t direction[3]; // normalized
+};
 
 } // namespace GBI
 

@@ -1,7 +1,6 @@
 #ifndef DL_INTERPRETER_H
 #define DL_INTERPRETER_H
 
-#include "Level/display_list.h"
 #include "Level/dl_command.h"
 #include "Memory/segment.h"
 #include <array>
@@ -28,6 +27,13 @@ struct Mesh {
 // fast3d RSP 顶点缓冲大小
 inline constexpr size_t kVertexBufferSize = 32;
 
+// RSP 状态：投影矩阵 + 模型视图矩阵栈 + 顶点缓冲
+struct RSPState {
+    Mtx projection {};              // 投影矩阵（16.16 定点）
+    std::vector<Mtx> matrix_stack;  // 模型视图矩阵栈
+    std::array<Vtx, kVertexBufferSize> vertices {};
+};
+
 // DL 解释器：执行一条 DL（含子 DL 调用），累积三角形到 Mesh。
 //
 // 当前阶段（Milestone 2 第一步）：
@@ -36,7 +42,7 @@ inline constexpr size_t kVertexBufferSize = 32;
 //   - 材质/RDP 命令暂忽略（后续步骤记录材质）
 class DLInterpreter {
     const SegmentTable &seg_table_;
-    std::array<Vtx, kVertexBufferSize> vertices_ {};
+    RSPState state_;
     std::vector<SegmentedAddress> dl_stack_;
     Mesh mesh_;
     uint64_t steps_ {0};

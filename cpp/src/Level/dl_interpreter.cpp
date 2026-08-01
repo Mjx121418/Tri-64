@@ -113,7 +113,7 @@ void DLInterpreter::loadVertices(const DecodedCommand &cmd) {
         if (o + 16 > data.size()) {
             break;
         }
-        Vtx &v = vertices_[dest + i];
+        Vtx &v = state_.vertices[dest + i];
         v.position[0] = readInt<int16_t>(data, o + 0);
         v.position[1] = readInt<int16_t>(data, o + 2);
         v.position[2] = readInt<int16_t>(data, o + 4);
@@ -149,9 +149,9 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
         return;
     }
     uint32_t base = static_cast<uint32_t>(mesh_.vertices.size());
-    appendVertex(vertices_[v0]);
-    appendVertex(vertices_[v1]);
-    appendVertex(vertices_[v2]);
+    appendVertex(state_.vertices[v0]);
+    appendVertex(state_.vertices[v1]);
+    appendVertex(state_.vertices[v2]);
     mesh_.indices.push_back(base);
     mesh_.indices.push_back(base + 1);
     mesh_.indices.push_back(base + 2);
