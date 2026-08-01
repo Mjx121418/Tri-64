@@ -321,9 +321,8 @@ void testMatrixSupport() {
     }
 }
 
-// 将网格合并后写入 Wavefront OBJ（顶点/UV/法线 + 面索引）
-void writeObj(const std::filesystem::path &path, const std::vector<GBI::Mesh> &meshes,
-              const char *name) {
+// 写入 Wavefront OBJ（顶点/UV/法线 + 面索引）
+void writeObj(const std::filesystem::path &path, const GBI::Mesh &mesh, const char *name) {
     std::filesystem::create_directories(path.parent_path());
     FILE *f = fopen(path.string().c_str(), "w");
     if (!f) {
@@ -333,27 +332,20 @@ void writeObj(const std::filesystem::path &path, const std::vector<GBI::Mesh> &m
     fprintf(f, "# tri-64 DL export: %s\n", name);
     fprintf(f, "o %s\n", name);
 
-    size_t base = 0;
-    for (const auto &mesh : meshes) {
-        for (const auto &v : mesh.vertices) {
-            fprintf(f, "v %f %f %f\n", v.position[0], v.position[1], v.position[2]);
-        }
-        for (const auto &v : mesh.vertices) {
-            fprintf(f, "vt %f %f\n", v.uv[0], v.uv[1]);
-        }
-        for (const auto &v : mesh.vertices) {
-            fprintf(f, "vn %f %f %f\n", v.normal[0], v.normal[1], v.normal[2]);
-        }
-        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-            fprintf(f, "f %zu/%zu/%zu %zu/%zu/%zu %zu/%zu/%zu\n",
-                    mesh.indices[i] + 1 + base, mesh.indices[i] + 1 + base,
-                    mesh.indices[i] + 1 + base,
-                    mesh.indices[i + 1] + 1 + base, mesh.indices[i + 1] + 1 + base,
-                    mesh.indices[i + 1] + 1 + base,
-                    mesh.indices[i + 2] + 1 + base, mesh.indices[i + 2] + 1 + base,
-                    mesh.indices[i + 2] + 1 + base);
-        }
-        base += mesh.vertices.size();
+    for (const auto &v : mesh.vertices) {
+        fprintf(f, "v %f %f %f\n", v.position[0], v.position[1], v.position[2]);
+    }
+    for (const auto &v : mesh.vertices) {
+        fprintf(f, "vt %f %f\n", v.uv[0], v.uv[1]);
+    }
+    for (const auto &v : mesh.vertices) {
+        fprintf(f, "vn %f %f %f\n", v.normal[0], v.normal[1], v.normal[2]);
+    }
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        fprintf(f, "f %zu/%zu/%zu %zu/%zu/%zu %zu/%zu/%zu\n",
+                mesh.indices[i] + 1, mesh.indices[i] + 1, mesh.indices[i] + 1,
+                mesh.indices[i + 1] + 1, mesh.indices[i + 1] + 1, mesh.indices[i + 1] + 1,
+                mesh.indices[i + 2] + 1, mesh.indices[i + 2] + 1, mesh.indices[i + 2] + 1);
     }
     fclose(f);
 }
@@ -385,21 +377,86 @@ void testExportObj() {
             std::vector<SegmentedAddress> dls;
             collectDisplayLists(*area.root_node, dls);
 
-            std::vector<GBI::Mesh> meshes;
-            size_t total_triangles = 0;
+            // 合并所有 DL 的网格，同时建立统一的材质表（跨 DL 去重）
+            GBI::Mesh merged;
+            std::vector<GBI::Material> materials;
+            std::vector<uint32_t> tri_materials; // 每三角形 → 统一材质表索引
+
             for (const auto &dl : dls) {
                 GBI::DLInterpreter interp(setup.seg_table);
                 GBI::Mesh &mesh = interp.run(dl);
-                total_triangles += mesh.indices.size() / 3;
-                meshes.push_back(std::move(mesh));
+
+                const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
+                merged.vertices.insert(merged.vertices.end(), mesh.vertices.begin(),
+                                       mesh.vertices.end());
+                merged.indices.reserve(merged.indices.size() + mesh.indices.size());
+                for (uint32_t idx : mesh.indices) {
+                    merged.indices.push_back(base + idx);
+                }
+
+                const size_t tri_count = mesh.indices.size() / 3;
+                for (size_t t = 0; t < tri_count; t++) {
+                    const GBI::Material &m = mesh.materials[mesh.material_ids[t]];
+                    uint32_t mid = 0;
+                    for (; mid < materials.size(); mid++) {
+                        if (materials[mid] == m) {
+                            break;
+                        }
+                    }
+                    if (mid == materials.size()) {
+                        materials.push_back(m);
+                    }
+                    tri_materials.push_back(mid);
+                }
             }
 
             char name[64];
             snprintf(name, sizeof(name), "%s_area%d", stem.c_str(), i);
+
+            // 合并 OBJ（全部三角形）
             std::filesystem::path path = "export" / std::filesystem::path(name + std::string(".obj"));
-            writeObj(path, meshes, name);
-            printf("test_export_obj: wrote %s (%zu triangles)\n", path.string().c_str(),
-                   total_triangles);
+            writeObj(path, merged, name);
+            printf("test_export_obj: wrote %s (%zu triangles, %zu materials)\n",
+                   path.string().c_str(), tri_materials.size(), materials.size());
+
+            // 按材质分文件：每个材质一个 OBJ（只含该材质的三角形）
+            static const char *kFmt[] = { "RGBA", "YUV", "CI", "IA", "I" };
+            static const char *kSiz[] = { "4", "8", "16", "32" };
+            for (size_t m = 0; m < materials.size(); m++) {
+                // 该材质的三角形 → 只保留被引用的顶点
+                GBI::Mesh sub;
+                std::vector<uint32_t> remap(merged.vertices.size(), UINT32_MAX);
+                size_t sub_triangles = 0;
+                for (size_t t = 0; t < tri_materials.size(); t++) {
+                    if (tri_materials[t] != m) {
+                        continue;
+                    }
+                    sub_triangles++;
+                    for (int k = 0; k < 3; k++) {
+                        const uint32_t vi = merged.indices[t * 3 + k];
+                        if (remap[vi] == UINT32_MAX) {
+                            remap[vi] = static_cast<uint32_t>(sub.vertices.size());
+                            sub.vertices.push_back(merged.vertices[vi]);
+                        }
+                        sub.indices.push_back(remap[vi]);
+                    }
+                }
+                if (sub_triangles == 0) {
+                    continue;
+                }
+                sub.materials.push_back(materials[m]);
+                sub.material_ids.assign(sub_triangles, 0);
+
+                char matname[96];
+                snprintf(matname, sizeof(matname), "%s_mat%02zu_%s%s_%ux%u", name, m,
+                         materials[m].tile_fmt < 5 ? kFmt[materials[m].tile_fmt] : "?",
+                         materials[m].tile_siz < 4 ? kSiz[materials[m].tile_siz] : "?",
+                         materials[m].tex_width, materials[m].tex_height);
+                std::filesystem::path mat_path =
+                    "export" / std::filesystem::path(matname + std::string(".obj"));
+                writeObj(mat_path, sub, matname);
+                printf("  mat %zu: %s (%zu triangles)\n", m, matname, sub_triangles);
+            }
         }
     }
 }
