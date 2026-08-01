@@ -24,6 +24,9 @@ void testDisplayList();
 // applied to a known vertex must yield position + translation.
 void testMatrixSupport();
 
+// Dumps every area's display lists to Wavefront OBJ files under export/.
+void testExportObj();
+
 // Shared setup for the level script tests: loads the ROM, locates the scripts
 // segment and the level jump table, loads the common segments and runs the
 // level script for BOB. Returns the populated segment table and level.

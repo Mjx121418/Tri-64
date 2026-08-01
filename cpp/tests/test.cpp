@@ -22,5 +22,6 @@ int main() {
     testRunLevelScript();
     testDisplayList();
     testMatrixSupport();
+    testExportObj();
     return 0;
 }

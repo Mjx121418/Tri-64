@@ -291,3 +291,86 @@ void testMatrixSupport() {
                mesh.vertices[0].position[2]);
     }
 }
+
+// 将网格合并后写入 Wavefront OBJ（顶点/UV/法线 + 面索引）
+void writeObj(const std::filesystem::path &path, const std::vector<GBI::Mesh> &meshes,
+              const char *name) {
+    std::filesystem::create_directories(path.parent_path());
+    FILE *f = fopen(path.string().c_str(), "w");
+    if (!f) {
+        printf("test_export_obj: cannot open %s\n", path.string().c_str());
+        return;
+    }
+    fprintf(f, "# tri-64 DL export: %s\n", name);
+    fprintf(f, "o %s\n", name);
+
+    size_t base = 0;
+    for (const auto &mesh : meshes) {
+        for (const auto &v : mesh.vertices) {
+            fprintf(f, "v %f %f %f\n", v.position[0], v.position[1], v.position[2]);
+        }
+        for (const auto &v : mesh.vertices) {
+            fprintf(f, "vt %f %f\n", v.uv[0], v.uv[1]);
+        }
+        for (const auto &v : mesh.vertices) {
+            fprintf(f, "vn %f %f %f\n", v.normal[0], v.normal[1], v.normal[2]);
+        }
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            fprintf(f, "f %zu/%zu/%zu %zu/%zu/%zu %zu/%zu/%zu\n",
+                    mesh.indices[i] + 1 + base, mesh.indices[i] + 1 + base,
+                    mesh.indices[i] + 1 + base,
+                    mesh.indices[i + 1] + 1 + base, mesh.indices[i + 1] + 1 + base,
+                    mesh.indices[i + 1] + 1 + base,
+                    mesh.indices[i + 2] + 1 + base, mesh.indices[i + 2] + 1 + base,
+                    mesh.indices[i + 2] + 1 + base);
+        }
+        base += mesh.vertices.size();
+    }
+    fclose(f);
+}
+
+void testExportObj() {
+    const auto roms = findRoms();
+    if (roms.empty()) {
+        return;
+    }
+
+    for (const auto &rom : roms) {
+        LevelScriptSetup setup = setupLevelScript(rom);
+        if (!setup.ok) {
+            continue;
+        }
+
+        std::string stem = rom.filename().string();
+        const size_t dot = stem.rfind(".z64");
+        if (dot != std::string::npos) {
+            stem = stem.substr(0, dot);
+        }
+
+        for (int i = 0; i < 8; i++) {
+            auto &area = setup.level.areas[i];
+            if (!area.root_node) {
+                continue;
+            }
+
+            std::vector<SegmentedAddress> dls;
+            collectDisplayLists(*area.root_node, dls);
+
+            std::vector<GBI::Mesh> meshes;
+            size_t total_triangles = 0;
+            for (const auto &dl : dls) {
+                GBI::DLInterpreter interp(setup.seg_table);
+                GBI::Mesh &mesh = interp.run(dl);
+                total_triangles += mesh.indices.size() / 3;
+                meshes.push_back(std::move(mesh));
+            }
+
+            char name[64];
+            snprintf(name, sizeof(name), "%s_area%d", stem.c_str(), i);
+            std::filesystem::path path = "export" / std::filesystem::path(name + std::string(".obj"));
+            writeObj(path, meshes, name);
+            printf("test_export_obj: wrote %s (%zu triangles)\n", path.string().c_str(),
+                   total_triangles);
+        }
+    }
+}
