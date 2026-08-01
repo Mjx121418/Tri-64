@@ -5,16 +5,11 @@ namespace GBI {
 
 DecodedCommand decodeDLCommand(SegmentedAddress addr, const SegmentTable &seg_table) {
     DecodedCommand cmd;
+    std::span<const uint8_t> d = seg_table.data(addr, 8);
     cmd.addr = addr;
-    cmd.opcode = seg_table.read(addr);
-    cmd.w0 = uint32_t(cmd.opcode) << 24;
-    cmd.w1 = 0;
-    for (int i = 0; i < 3; i++) {
-        cmd.w0 |= uint32_t(seg_table.read(addr, 1 + i)) << (16 - 8 * i);
-    }
-    for (int i = 0; i < 4; i++) {
-        cmd.w1 = (cmd.w1 << 8) | seg_table.read(addr, 4 + i);
-    }
+    cmd.opcode = readInt<uint8_t>(d, 0);
+    cmd.w0 = readInt<uint32_t>(d, 0);
+    cmd.w1 = readInt<uint32_t>(d, 4);
     return cmd;
 }
 
@@ -45,9 +40,9 @@ Mtxf decodeMtx(SegmentedAddress addr, const SegmentTable &seg_table) {
     Mtxf m {};
     for (int k = 0; k < 16; k++) {
         // 布局：字节 0-31 = 各元素高 16 位，字节 32-63 = 低 16 位
-        int16_t hi = readInt<int16_t>(d, 2 * k);
-        int16_t lo = readInt<int16_t>(d, 32 + 2 * k);
-        int32_t fixed = (int32_t(hi) << 16) | uint16_t(lo);
+        uint16_t hi = readInt<uint16_t>(d, 2 * k);
+        uint16_t lo = readInt<uint16_t>(d, 32 + 2 * k);
+        int32_t fixed = static_cast<int32_t>((hi << 16) | lo);
         m[k / 4][k % 4] = fixed / 65536.0f;
     }
     return m;

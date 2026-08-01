@@ -217,16 +217,45 @@ void testDisplayList() {
 
             size_t total_triangles = 0;
             size_t total_vertices = 0;
+            std::vector<GBI::Material> merged_materials;
             for (const auto &dl : dls) {
                 GBI::DLInterpreter interp(setup.seg_table);
                 GBI::Mesh &mesh = interp.run(dl);
                 const size_t triangles = mesh.indices.size() / 3;
-                printf("  DL %02x:%06x -> %zu triangles, %zu vertices\n", dl.seg, dl.offset,
-                       triangles, mesh.vertices.size());
+                printf("  DL %02x:%06x -> %zu triangles, %zu vertices, %zu materials\n",
+                       dl.seg, dl.offset, triangles, mesh.vertices.size(), mesh.materials.size());
+                for (const auto &m : mesh.materials) {
+                    static const char *kFmt[] = { "RGBA", "YUV", "CI", "IA", "I" };
+                    static const char *kSiz[] = { "4", "8", "16", "32" };
+                    const char *fmt = m.tile_fmt < 5 ? kFmt[m.tile_fmt] : "?";
+                    const char *siz = m.tile_siz < 4 ? kSiz[m.tile_siz] : "?";
+                    printf("    mat: %s%s %ux%u img=%02x:%06x tex=%d\n", fmt, siz,
+                           m.tex_width, m.tex_height, m.tex_image.seg, m.tex_image.offset,
+                           m.textured ? 1 : 0);
+                }
                 total_triangles += triangles;
                 total_vertices += mesh.vertices.size();
+                for (const auto &m : mesh.materials) {
+                    bool found = false;
+                    for (const auto &u : merged_materials) {
+                        if (u == m) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        merged_materials.push_back(m);
+                    }
+                }
             }
-            printf("  total: %zu triangles, %zu vertices\n", total_triangles, total_vertices);
+            size_t textured_materials = 0;
+            for (const auto &m : merged_materials) {
+                if (m.textured) {
+                    textured_materials++;
+                }
+            }
+            printf("  total: %zu triangles, %zu vertices, %zu distinct materials (%zu textured)\n",
+                   total_triangles, total_vertices, merged_materials.size(), textured_materials);
         }
     }
 }

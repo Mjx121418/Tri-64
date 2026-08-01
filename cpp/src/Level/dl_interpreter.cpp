@@ -14,56 +14,73 @@ Mesh &DLInterpreter::run(SegmentedAddress dl) {
     // 模型视图矩阵栈初始为单位阵（不使用矩阵的 DL 输出原始顶点）
     state_.matrix_stack.clear();
     state_.matrix_stack.push_back(mtxfIdentity());
+    finished = false;
+    steps_ = 0;
+    geometry_mode_ = 0;
+    material_ = {};
+
     SegmentedAddress pc = dl;
-    while (true) {
+    while (!finished) {
         if (++steps_ > kMaxSteps) {
             printf("DLInterpreter: exceeded step limit\n");
             break;
         }
+
         DecodedCommand cmd;
+
         try {
             cmd = decodeDLCommand(pc, seg_table_);
         } catch (const std::out_of_range &e) {
             printf("DLInterpreter: out_of_range at %02x:%06x (pc)\n", pc.seg, pc.offset);
-            return mesh_;
+            break;
         }
 
-        switch (cmd.opcode) {
-        case G_ENDDL:
-            if (dl_stack_.empty()) {
-                return mesh_;
-            }
-            pc = dl_stack_.back();
-            dl_stack_.pop_back();
-            continue;
-        case G_DL:
-            if (cmd.dlBranch()) {
-                pc = cmd.dlAddress();
-            } else {
-                pc += 8;
-                dl_stack_.push_back(pc);
-                if (dl_stack_.size() > kMaxDLDepth) {
-                    printf("DLInterpreter: DL stack overflow\n");
-                    return mesh_;
-                }
-                pc = cmd.dlAddress();
-            }
-            continue;
-        default:
-            try {
-                execute(cmd, pc);
-            } catch (const std::out_of_range &e) {
-                printf("DLInterpreter: out_of_range at %02x:%06x\n", cmd.addr.seg, cmd.addr.offset);
-                return mesh_;
-            }
+        try {
+            execute(cmd, pc);
+        } catch (const std::out_of_range &e) {
+            printf("DLInterpreter: out_of_range at %02x:%06x\n", cmd.addr.seg, cmd.addr.offset);
+            break;
+        }
+        // G_ENDDL / G_DL 已设置 pc（弹栈返回 / 跳转），其他命令按 8 字节顺序前进
+        if (cmd.opcode != G_ENDDL && cmd.opcode != G_DL) {
             pc += 8;
         }
     }
     return mesh_;
 }
 
+void DLInterpreter::end(SegmentedAddress &pc) {
+    if (dl_stack_.empty()) {
+        finished = true;
+    } else {
+        pc = dl_stack_.back();
+        dl_stack_.pop_back();
+    }
+}
+
+void DLInterpreter::branch(const DecodedCommand &cmd, SegmentedAddress &pc) {
+    if (cmd.dlBranch()) {
+        pc = cmd.dlAddress();
+    } else {
+        pc += 8;
+        dl_stack_.push_back(pc);
+        if (dl_stack_.size() > kMaxDLDepth) {
+            printf("DLInterpreter: DL stack overflow\n");
+            finished = true;
+        } else {
+            pc = cmd.dlAddress();
+        }
+    }
+}
+
 void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     switch (cmd.opcode) {
+    case G_ENDDL:
+        end(pc);
+        break;
+    case G_DL:
+        branch(cmd, pc);
+        break;
     case G_VTX:
         loadVertices(cmd);
         break;
@@ -76,6 +93,61 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_POPMTX:
         handlePopMtx(cmd);
         break;
+    // --- 材质/渲染状态 ---
+    case G_SETCOMBINE:
+        material_.combine_w0 = cmd.w0;
+        material_.combine_w1 = cmd.w1;
+        break;
+    case G_SETPRIMCOLOR:
+        material_.prim_color[0] = (cmd.w1 >> 24) & 0xFF;
+        material_.prim_color[1] = (cmd.w1 >> 16) & 0xFF;
+        material_.prim_color[2] = (cmd.w1 >> 8) & 0xFF;
+        material_.prim_color[3] = cmd.w1 & 0xFF;
+        break;
+    case G_SETENVCOLOR:
+        material_.env_color[0] = (cmd.w1 >> 24) & 0xFF;
+        material_.env_color[1] = (cmd.w1 >> 16) & 0xFF;
+        material_.env_color[2] = (cmd.w1 >> 8) & 0xFF;
+        material_.env_color[3] = cmd.w1 & 0xFF;
+        break;
+    case G_SETFOGCOLOR:
+        material_.fog_color[0] = (cmd.w1 >> 24) & 0xFF;
+        material_.fog_color[1] = (cmd.w1 >> 16) & 0xFF;
+        material_.fog_color[2] = (cmd.w1 >> 8) & 0xFF;
+        material_.fog_color[3] = cmd.w1 & 0xFF;
+        break;
+    case G_SETTILE:
+        material_.tile_fmt = (cmd.w0 >> 21) & 0x7;
+        material_.tile_siz = (cmd.w0 >> 19) & 0x3;
+        break;
+    case G_SETTILESIZE: {
+        // w0: uls<<12 | ult ; w1: lrs<<12 | lrt；尺寸 = (lrs-uls)/4 + 1（RDP 单位 1/4 纹素）
+        uint32_t uls = (cmd.w0 >> 12) & 0xFFF;
+        uint32_t ult = cmd.w0 & 0xFFF;
+        uint32_t lrs = (cmd.w1 >> 12) & 0xFFF;
+        uint32_t lrt = cmd.w1 & 0xFFF;
+        material_.tex_width = static_cast<uint16_t>((lrs - uls) / 4 + 1);
+        material_.tex_height = static_cast<uint16_t>((lrt - ult) / 4 + 1);
+        break;
+    }
+    case G_SETTEXIMAGE:
+        material_.tex_image.setAddress(cmd.w1);
+        break;
+    case G_TEXTURE:
+        // fast3d: G_TEXTURE 的 w0 位 0 切换几何模式的 G_TEXTURE_ENABLE
+        if (cmd.w0 & 1) {
+            geometry_mode_ |= G_TEXTURE_ENABLE;
+        } else {
+            geometry_mode_ &= ~G_TEXTURE_ENABLE;
+        }
+        material_.textured = (geometry_mode_ & G_TEXTURE_ENABLE) != 0;
+        break;
+    case G_SETGEOMETRYMODE:
+        handleGeometryMode(cmd, true);
+        break;
+    case G_CLEARGEOMETRYMODE:
+        handleGeometryMode(cmd, false);
+        break;
     // 已实现但不产生几何的命令：忽略
     // （fast3d 的 DMA 表里 0x02/0x05/0x07-0x09 也是 SP_NOOP）
     case 0x02:
@@ -84,10 +156,7 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case 0x08:
     case 0x09:
     case G_MOVEMEM:
-    case G_TEXTURE:
     case G_MOVEWORD:
-    case G_SETGEOMETRYMODE:
-    case G_CLEARGEOMETRYMODE:
     case G_SETOTHERMODE_L:
     case G_SETOTHERMODE_H:
     case G_CULLDL:
@@ -96,17 +165,10 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_DPPIPESYNC:
     case G_DPTILESYNC:
     case G_DPFULLSYNC:
-    case G_SETTILESIZE:
     case G_LOADBLOCK:
     case G_LOADTILE:
-    case G_SETTILE:
     case G_SETFILLCOLOR:
-    case G_SETFOGCOLOR:
     case G_SETBLENDCOLOR:
-    case G_SETPRIMCOLOR:
-    case G_SETENVCOLOR:
-    case G_SETCOMBINE:
-    case G_SETTEXIMAGE:
     case G_SETZIMG:
     case G_SETCIMG:
         break;
@@ -145,6 +207,26 @@ void DLInterpreter::handlePopMtx(const DecodedCommand &cmd) {
     while (n-- > 0 && state_.matrix_stack.size() > 1) {
         state_.matrix_stack.pop_back(); // 保留栈底单位阵
     }
+}
+
+void DLInterpreter::handleGeometryMode(const DecodedCommand &cmd, bool set) {
+    const uint32_t bits = cmd.geometryMode();
+    if (set) {
+        geometry_mode_ |= bits;
+    } else {
+        geometry_mode_ &= ~bits;
+    }
+    material_.textured = (geometry_mode_ & G_TEXTURE_ENABLE) != 0;
+}
+
+uint32_t DLInterpreter::materialId() {
+    for (size_t i = 0; i < mesh_.materials.size(); i++) {
+        if (mesh_.materials[i] == material_) {
+            return static_cast<uint32_t>(i);
+        }
+    }
+    mesh_.materials.push_back(material_);
+    return static_cast<uint32_t>(mesh_.materials.size() - 1);
 }
 
 void DLInterpreter::loadVertices(const DecodedCommand &cmd) {
@@ -198,7 +280,7 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
     mesh_.indices.push_back(base);
     mesh_.indices.push_back(base + 1);
     mesh_.indices.push_back(base + 2);
-    mesh_.material_ids.push_back(0);
+    mesh_.material_ids.push_back(materialId());
 }
 
 void DLInterpreter::appendVertex(const Vtx &v) {
