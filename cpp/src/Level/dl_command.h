@@ -141,6 +141,22 @@ struct DecodedCommand {
     uint8_t omLen() const { return (w0 >> 8) & 0xFF; }
     uint64_t omParams() const { return ((uint64_t)(w0 & 0xFF) << 32) | w1; }
 
+    // --- G_SETCONBINE ---
+    uint32_t combineMux0() const { return w0 & 0x00FFFFFF; }
+    uint32_t combineMux1() const { return w1; }
+
+    // --- G_SETPRIMCOLOR, G_SETENVCOLOR, G_SETFOGCOLOR ---
+    uint8_t primColorM() const { return (w0 >> 8) & 0xFF; } // Minimum possible LOD value (clamped to this at minimum)
+    uint8_t primColorL() const { return w0 & 0xFF; } // Primitive LOD fraction for mipmap filtering
+    uint8_t colorR() const { return (w1 >> 24) & 0xFF; }
+    uint8_t colorG() const { return (w1 >> 16) & 0xFF; }
+    uint8_t colorB() const { return (w1 >> 8) & 0xFF; }
+    uint8_t colorA() const { return w1 & 0xFF; }
+
+    // --- G_SETTILE ---
+    uint8_t tileFmt() const { return (w0 >> 21) & 0x7; }
+    uint8_t tileSize() const { return (w0 >> 19) & 0x3; }
+
     // --- G_MOVEMEM ---
     uint8_t memIndex() const { return (w0 >> 16) & 0xFF; }
     uint16_t memLength() const { return w0 & 0xFFFF; }

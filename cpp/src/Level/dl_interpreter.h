@@ -26,8 +26,10 @@ struct Material {
     uint8_t fog_color[4] {0, 0, 0, 0};  // G_SETFOGCOLOR
     uint8_t tile_fmt {0};            // G_SETTILE 纹理格式（0=RGBA 2=CI 3=IA 4=I）
     uint8_t tile_siz {0};            // G_SETTILE 位深（0=4b 1=8b 2=16b 3=32b）
-    uint16_t tex_width {0};          // 纹理宽度（像素，从 G_SETTILESIZE 推算）
-    uint16_t tex_height {0};
+    uint16_t tex_sl {0};          // 纹理横坐标最小值
+    uint16_t tex_tl {0};          // 纹理纵坐标最小值
+    uint16_t tex_sh {0};          // 纹理横坐标最大值
+    uint16_t tex_th {0};          // 纹理纵坐标最大值
     SegmentedAddress tex_image {};   // G_SETTEXIMAGE 纹理图像地址
     bool textured {false};           // 几何模式 G_TEXTURE_ENABLE（G_TEXTURE 开关）
 
@@ -40,9 +42,18 @@ struct Material {
             && fog_color[0] == o.fog_color[0] && fog_color[1] == o.fog_color[1]
             && fog_color[2] == o.fog_color[2] && fog_color[3] == o.fog_color[3]
             && tile_fmt == o.tile_fmt && tile_siz == o.tile_siz
-            && tex_width == o.tex_width && tex_height == o.tex_height
+            && tex_sl == o.tex_sl && tex_tl == o.tex_tl
+            && tex_sh == o.tex_sh && tex_th == o.tex_th
             && tex_image.seg == o.tex_image.seg && tex_image.offset == o.tex_image.offset
             && textured == o.textured;
+    }
+
+    uint16_t tex_width() const {
+        return static_cast<uint16_t>((tex_sh - tex_sl) / 4 + 1);
+    }
+
+    uint16_t tex_height() const {
+        return static_cast<uint16_t>((tex_th - tex_tl) / 4 + 1);
     }
 };
 

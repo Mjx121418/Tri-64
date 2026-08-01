@@ -230,7 +230,7 @@ void testDisplayList() {
                     const char *fmt = m.tile_fmt < 5 ? kFmt[m.tile_fmt] : "?";
                     const char *siz = m.tile_siz < 4 ? kSiz[m.tile_siz] : "?";
                     printf("    mat: %s%s %ux%u img=%02x:%06x tex=%d\n", fmt, siz,
-                           m.tex_width, m.tex_height, m.tex_image.seg, m.tex_image.offset,
+                           m.tex_width(), m.tex_height(), m.tex_image.seg, m.tex_image.offset,
                            m.textured ? 1 : 0);
                 }
                 total_triangles += triangles;
@@ -451,7 +451,7 @@ void testExportObj() {
                 snprintf(matname, sizeof(matname), "%s_mat%02zu_%s%s_%ux%u", name, m,
                          materials[m].tile_fmt < 5 ? kFmt[materials[m].tile_fmt] : "?",
                          materials[m].tile_siz < 4 ? kSiz[materials[m].tile_siz] : "?",
-                         materials[m].tex_width, materials[m].tex_height);
+                         materials[m].tex_width(), materials[m].tex_height());
                 std::filesystem::path mat_path =
                     "export" / std::filesystem::path(matname + std::string(".obj"));
                 writeObj(mat_path, sub, matname);

@@ -95,39 +95,37 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         break;
     // --- 材质/渲染状态 ---
     case G_SETCOMBINE:
-        material_.combine_w0 = cmd.w0;
-        material_.combine_w1 = cmd.w1;
+        material_.combine_w0 = cmd.combineMux0();
+        material_.combine_w1 = cmd.combineMux1();
         break;
     case G_SETPRIMCOLOR:
-        material_.prim_color[0] = (cmd.w1 >> 24) & 0xFF;
-        material_.prim_color[1] = (cmd.w1 >> 16) & 0xFF;
-        material_.prim_color[2] = (cmd.w1 >> 8) & 0xFF;
-        material_.prim_color[3] = cmd.w1 & 0xFF;
+        material_.prim_color[0] = cmd.colorR();
+        material_.prim_color[1] = cmd.colorG();
+        material_.prim_color[2] = cmd.colorB();
+        material_.prim_color[3] = cmd.colorA();
         break;
     case G_SETENVCOLOR:
-        material_.env_color[0] = (cmd.w1 >> 24) & 0xFF;
-        material_.env_color[1] = (cmd.w1 >> 16) & 0xFF;
-        material_.env_color[2] = (cmd.w1 >> 8) & 0xFF;
-        material_.env_color[3] = cmd.w1 & 0xFF;
+        material_.env_color[0] = cmd.colorR();
+        material_.env_color[1] = cmd.colorG();
+        material_.env_color[2] = cmd.colorB();
+        material_.env_color[3] = cmd.colorA();
         break;
     case G_SETFOGCOLOR:
-        material_.fog_color[0] = (cmd.w1 >> 24) & 0xFF;
-        material_.fog_color[1] = (cmd.w1 >> 16) & 0xFF;
-        material_.fog_color[2] = (cmd.w1 >> 8) & 0xFF;
-        material_.fog_color[3] = cmd.w1 & 0xFF;
+        material_.fog_color[0] = cmd.colorR();
+        material_.fog_color[1] = cmd.colorG();
+        material_.fog_color[2] = cmd.colorB();
+        material_.fog_color[3] = cmd.colorA();
         break;
     case G_SETTILE:
-        material_.tile_fmt = (cmd.w0 >> 21) & 0x7;
-        material_.tile_siz = (cmd.w0 >> 19) & 0x3;
+        material_.tile_fmt = cmd.tileFmt();
+        material_.tile_siz = cmd.tileSize();
         break;
     case G_SETTILESIZE: {
         // w0: uls<<12 | ult ; w1: lrs<<12 | lrt；尺寸 = (lrs-uls)/4 + 1（RDP 单位 1/4 纹素）
-        uint32_t uls = (cmd.w0 >> 12) & 0xFFF;
-        uint32_t ult = cmd.w0 & 0xFFF;
-        uint32_t lrs = (cmd.w1 >> 12) & 0xFFF;
-        uint32_t lrt = cmd.w1 & 0xFFF;
-        material_.tex_width = static_cast<uint16_t>((lrs - uls) / 4 + 1);
-        material_.tex_height = static_cast<uint16_t>((lrt - ult) / 4 + 1);
+        material_.tex_sl = (cmd.w0 >> 12) & 0xFFF;
+        material_.tex_tl = cmd.w0 & 0xFFF;
+        material_.tex_sh = (cmd.w1 >> 12) & 0xFFF;
+        material_.tex_th = cmd.w1 & 0xFFF;
         break;
     }
     case G_SETTEXIMAGE:
