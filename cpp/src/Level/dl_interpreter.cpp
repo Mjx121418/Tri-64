@@ -77,6 +77,12 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         handlePopMtx(cmd);
         break;
     // 已实现但不产生几何的命令：忽略
+    // （fast3d 的 DMA 表里 0x02/0x05/0x07-0x09 也是 SP_NOOP）
+    case 0x02:
+    case 0x05:
+    case 0x07:
+    case 0x08:
+    case 0x09:
     case G_MOVEMEM:
     case G_TEXTURE:
     case G_MOVEWORD:
