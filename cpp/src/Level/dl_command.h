@@ -3,9 +3,7 @@
 
 #include "Math/math.h"
 #include "Memory/segment.h"
-#include <array>
 #include <cstdint>
-#include <vector>
 
 // GBI (Graphics Binary Interface) 命令层。
 //
@@ -176,6 +174,19 @@ struct Tri {
 
 // RSP 矩阵：4x4 16.16 定点
 typedef Mat4<int32_t> Mtx;
+
+// 浮点矩阵（行主序，平移在最后一行 m[3][0..2]）——解释器内部使用
+using Mtxf = std::array<std::array<float, 4>, 4>;
+
+// 单位阵
+Mtxf mtxfIdentity();
+
+// 矩阵乘法 a × b（结果先应用 b 再应用 a，与 decomp 的 mtxf_mul 一致）
+Mtxf mtxfMul(const Mtxf &a, const Mtxf &b);
+
+// 读取并解码一条 G_MTX 的 64 字节定点矩阵：
+//   字节 0-31 = 各元素高 16 位（整数部分），字节 32-63 = 低 16 位（小数部分）
+Mtxf decodeMtx(SegmentedAddress addr, const SegmentTable &seg_table);
 
 // 光照（暂未使用，保留供后续光照支持）
 struct Light {

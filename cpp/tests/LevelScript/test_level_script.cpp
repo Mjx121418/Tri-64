@@ -230,3 +230,64 @@ void testDisplayList() {
         }
     }
 }
+
+void testMatrixSupport() {
+    // 合成段 0x1E：矩阵 @0x00，3 个顶点 @0x40，DL @0x70
+    std::vector<uint8_t> seg(0x100, 0);
+
+    // 平移矩阵 (100, 200, 300)：行主序、平移在最后一行；
+    // 固定点布局：字节 0-31 = 各元素高 16 位，字节 32-63 = 低 16 位
+    auto putElem = [&](int k, int32_t fixed) {
+        seg[2 * k] = uint8_t((fixed >> 24) & 0xFF);
+        seg[2 * k + 1] = uint8_t((fixed >> 16) & 0xFF);
+        seg[32 + 2 * k] = uint8_t((fixed >> 8) & 0xFF);
+        seg[33 + 2 * k] = uint8_t(fixed & 0xFF);
+    };
+    putElem(0, 0x00010000);   // m[0][0] = 1.0
+    putElem(5, 0x00010000);   // m[1][1] = 1.0
+    putElem(10, 0x00010000);  // m[2][2] = 1.0
+    putElem(12, 100 << 16);   // m[3][0] = 100
+    putElem(13, 200 << 16);   // m[3][1] = 200
+    putElem(14, 300 << 16);   // m[3][2] = 300
+    putElem(15, 0x00010000);  // m[3][3] = 1.0
+
+    auto putVtx = [&](int i, int16_t x, int16_t y, int16_t z) {
+        size_t o = 0x40 + size_t(i) * 16;
+        auto putS16 = [&](size_t off, int16_t v) {
+            seg[o + off] = uint8_t(v >> 8);
+            seg[o + off + 1] = uint8_t(v & 0xFF);
+        };
+        putS16(0, x);
+        putS16(2, y);
+        putS16(4, z);
+        // flag / uv / normal 保持 0
+    };
+    putVtx(0, 1, 2, 3);
+    putVtx(1, 10, 20, 30);
+    putVtx(2, 100, 200, 300);
+
+    auto putCmd = [&](size_t off, uint32_t w0, uint32_t w1) {
+        for (int i = 0; i < 4; i++) {
+            seg[off + i] = uint8_t(w0 >> (24 - 8 * i));
+            seg[off + 4 + i] = uint8_t(w1 >> (24 - 8 * i));
+        }
+    };
+    putCmd(0x70, 0x01020040, 0x1E000000); // G_MTX(矩阵@0x1E:0x00, MODELVIEW|LOAD)
+    putCmd(0x78, 0x04200030, 0x1E000040); // G_VTX(顶点@0x1E:0x40, n=3, v0=0)
+    putCmd(0x80, 0xBF000000, 0x00000A14); // G_TRI1(v0=0, v1=1, v2=2, flag=0)
+    putCmd(0x88, 0xB8000000, 0x00000000); // G_ENDDL
+
+    SegmentTable seg_table;
+    seg_table.rom_span = std::span(seg);
+    seg_table.loadSegment(0x1E, 0, static_cast<uint32_t>(seg.size()));
+
+    GBI::DLInterpreter interp(seg_table);
+    GBI::Mesh &mesh = interp.run(SegmentedAddress { 0x1E, 0x70 });
+    printf("test_matrix: triangles=%zu, vertices=%zu\n", mesh.indices.size() / 3,
+           mesh.vertices.size());
+    if (mesh.vertices.size() >= 1) {
+        printf("test_matrix: v0 = (%.1f, %.1f, %.1f)  (expect 101.0, 202.0, 303.0)\n",
+               mesh.vertices[0].position[0], mesh.vertices[0].position[1],
+               mesh.vertices[0].position[2]);
+    }
+}

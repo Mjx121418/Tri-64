@@ -21,5 +21,6 @@ int main() {
 
     testRunLevelScript();
     testDisplayList();
+    testMatrixSupport();
     return 0;
 }

@@ -11,6 +11,9 @@ constexpr size_t kMaxDLDepth = 32;
 
 Mesh &DLInterpreter::run(SegmentedAddress dl) {
     dl_stack_.clear();
+    // 模型视图矩阵栈初始为单位阵（不使用矩阵的 DL 输出原始顶点）
+    state_.matrix_stack.clear();
+    state_.matrix_stack.push_back(mtxfIdentity());
     SegmentedAddress pc = dl;
     while (true) {
         if (++steps_ > kMaxSteps) {
@@ -67,12 +70,16 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_TRI1:
         drawTriangle(cmd);
         break;
-    // 已实现但不产生几何的命令：忽略
     case G_MTX:
+        handleMtx(cmd);
+        break;
+    case G_POPMTX:
+        handlePopMtx(cmd);
+        break;
+    // 已实现但不产生几何的命令：忽略
     case G_MOVEMEM:
     case G_TEXTURE:
     case G_MOVEWORD:
-    case G_POPMTX:
     case G_SETGEOMETRYMODE:
     case G_CLEARGEOMETRYMODE:
     case G_SETOTHERMODE_L:
@@ -101,6 +108,36 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         printf("DLInterpreter: unknown opcode 0x%02x at %02x:%06x\n", cmd.opcode, cmd.addr.seg,
                cmd.addr.offset);
         break;
+    }
+}
+
+void DLInterpreter::handleMtx(const DecodedCommand &cmd) {
+    Mtxf m = decodeMtx(cmd.mtxAddress(), seg_table_);
+    uint8_t params = cmd.mtxParams();
+
+    if (params & MTX_PROJECTION) {
+        state_.projection = m; // 投影矩阵只记录，网格输出不应用（Godot 自行投影）
+        return;
+    }
+
+    // 模型视图矩阵栈
+    if (params & MTX_PUSH) {
+        // 压栈：复制当前栈顶（栈保证至少有一个单位阵）
+        state_.matrix_stack.push_back(state_.matrix_stack.back());
+    }
+
+    Mtxf &top = state_.matrix_stack.back();
+    if (params & MTX_LOAD) {
+        top = m; // 载入：替换栈顶
+    } else {
+        top = mtxfMul(top, m); // 乘：top = top × m（先应用 m）
+    }
+}
+
+void DLInterpreter::handlePopMtx(const DecodedCommand &cmd) {
+    uint8_t n = cmd.popCount();
+    while (n-- > 0 && state_.matrix_stack.size() > 1) {
+        state_.matrix_stack.pop_back(); // 保留栈底单位阵
     }
 }
 
@@ -160,9 +197,14 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
 
 void DLInterpreter::appendVertex(const Vtx &v) {
     MeshVertex mv;
-    mv.position[0] = v.position[0];
-    mv.position[1] = v.position[1];
-    mv.position[2] = v.position[2];
+    // 应用当前模型视图矩阵（平移在 m[3][0..2]，与 decomp 的 mtxf_mul_vec3s 一致）
+    const Mtxf &m = state_.matrix_stack.back();
+    const float x = v.position[0];
+    const float y = v.position[1];
+    const float z = v.position[2];
+    mv.position[0] = m[0][0] * x + m[1][0] * y + m[2][0] * z + m[3][0];
+    mv.position[1] = m[0][1] * x + m[1][1] * y + m[2][1] * z + m[3][1];
+    mv.position[2] = m[0][2] * x + m[1][2] * y + m[2][2] * z + m[3][2];
     // coordinate_or_normal 为有符号法线（-128..127）
     mv.normal[0] = static_cast<int8_t>(v.coordinate_or_normal[0]) / 127.0f;
     mv.normal[1] = static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f;

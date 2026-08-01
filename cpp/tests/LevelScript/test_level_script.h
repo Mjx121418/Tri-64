@@ -20,6 +20,10 @@ void testRunLevelScript();
 // areas produced by the level script and prints triangle statistics.
 void testDisplayList();
 
+// Synthetic check of the G_MTX model-view transform: a translation matrix
+// applied to a known vertex must yield position + translation.
+void testMatrixSupport();
+
 // Shared setup for the level script tests: loads the ROM, locates the scripts
 // segment and the level jump table, loads the common segments and runs the
 // level script for BOB. Returns the populated segment table and level.
