@@ -159,9 +159,11 @@ struct DecodedCommand {
     uint16_t highS() const { return (w1 >> 12) & 0xFFF; }
     uint16_t highT() const { return w1 & 0xFFF; }
 
-    // --- G_SETTILE ---
+    // --- G_SETTILE / G_LOADBLOCK / G_LOADTILE ---
     uint8_t rdpFmt() const { return (w0 >> 21) & 0x7; }
     uint8_t rdpSize() const { return (w0 >> 19) & 0x3; }
+    uint8_t tileNum() const { return (w1 >> 24) & 0x7; } // w1 bits 24-26
+    uint16_t tileTMEM() const { return w0 & 0x1FF; }     // 仅 G_SETTILE：tmem（64 位字）
 
     // --- G_MOVEMEM ---
     uint8_t memIndex() const { return (w0 >> 16) & 0xFF; }

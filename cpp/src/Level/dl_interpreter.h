@@ -70,11 +70,20 @@ struct Mesh {
 // fast3d RSP 顶点缓冲大小
 inline constexpr size_t kVertexBufferSize = 32;
 
-// RSP 状态：投影矩阵 + 模型视图矩阵栈 + 顶点缓冲
+// RDP 纹理状态常量：tmem 共 4096 字节（512 个 64 位字），渲染 tile 固定为 0
+inline constexpr uint32_t kTMEMWords = 512;
+inline constexpr uint8_t kRenderTile = 0;
+
+// RSP 状态：投影矩阵 + 模型视图矩阵栈 + 顶点缓冲 + RDP 纹理绑定
 struct RSPState {
     Mtxf projection {};              // 投影矩阵（不应用于网格输出，Godot 自行投影）
     std::vector<Mtxf> matrix_stack;  // 模型视图矩阵栈（栈顶 = 当前矩阵，初始为单位阵）
     std::array<Vtx, kVertexBufferSize> vertices {};
+    // 防御性纹理绑定：G_SETTILE 记录每个 tile 的 tmem；G_LOADBLOCK/LOADTILE
+    // 把当前 G_SETTEXIMAGE 图像绑定到该 tmem 槽位。三角形采样渲染 tile（0）
+    // 的 tmem → 查表得到真正加载的图像（支持"先加载多个纹理再切换"）。
+    std::array<uint8_t, 8> tile_tmem {};        // G_SETTILE 的 tmem（64 位字）
+    std::array<uint32_t, kTMEMWords> tmem_images {}; // tmem → 图像段地址（0=未绑定）
 };
 
 // DL 解释器：执行一条 DL（含子 DL 调用），累积三角形到 Mesh。

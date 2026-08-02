@@ -18,6 +18,8 @@ Mesh &DLInterpreter::run(SegmentedAddress dl) {
     steps_ = 0;
     geometry_mode_ = 0;
     material_ = {};
+    state_.tile_tmem = {};
+    state_.tmem_images = {};
 
     SegmentedAddress pc = dl;
     while (!finished) {
@@ -119,6 +121,17 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_SETTILE:
         material_.tile_fmt = cmd.rdpFmt();
         material_.tile_siz = cmd.rdpSize();
+        // 防御性绑定：记录该 tile 的 tmem 地址（LOAD 时绑定图像用）
+        state_.tile_tmem[cmd.tileNum()] = cmd.tileTMEM();
+        break;
+    case G_LOADBLOCK:
+    case G_LOADTILE:
+        // 防御性绑定：把当前 G_SETTEXIMAGE 图像绑定到该 tile 的 tmem 槽位
+        if (material_.tex_image.seg >= 0) {
+            const uint32_t img = (uint32_t(material_.tex_image.seg) << 24) |
+                                 (material_.tex_image.offset & 0xFFFFFF);
+            state_.tmem_images[state_.tile_tmem[cmd.tileNum()]] = img;
+        }
         break;
     case G_SETTILESIZE: {
         // w0: uls<<12 | ult ; w1: lrs<<12 | lrt；尺寸 = (lrs-uls)/4 + 1（RDP 单位 1/4 纹素）
@@ -166,8 +179,6 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_DPPIPESYNC:
     case G_DPTILESYNC:
     case G_DPFULLSYNC:
-    case G_LOADBLOCK:
-    case G_LOADTILE:
     case G_SETFILLCOLOR:
     case G_SETBLENDCOLOR:
     case G_SETZIMG:
@@ -273,6 +284,12 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
     if (v0 >= kVertexBufferSize || v1 >= kVertexBufferSize || v2 >= kVertexBufferSize) {
         printf("DLInterpreter: triangle vertex index out of range (%u,%u,%u)\n", v0, v1, v2);
         return;
+    }
+    // 防御性绑定：三角形采样渲染 tile（fast3d 固定 0）对应 tmem 槽位的图像；
+    // 该 tmem 未加载过（=0）时回退到最近 G_SETTEXIMAGE（当前行为）
+    const uint32_t bound = state_.tmem_images[state_.tile_tmem[kRenderTile]];
+    if (bound != 0) {
+        material_.tex_image.setAddress(bound);
     }
     uint32_t base = static_cast<uint32_t>(mesh_.vertices.size());
     appendVertex(state_.vertices[v0]);
