@@ -298,9 +298,14 @@ void DLInterpreter::appendVertex(const Vtx &v) {
     mv.normal[0] = static_cast<int8_t>(v.coordinate_or_normal[0]) / 127.0f;
     mv.normal[1] = static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f;
     mv.normal[2] = static_cast<int8_t>(v.coordinate_or_normal[2]) / 127.0f;
-    // 纹理坐标 5.11 定点 → /32
-    mv.uv[0] = v.texture_coordinate[0] / 32.0f;
-    mv.uv[1] = v.texture_coordinate[1] / 32.0f;
+    // 纹理坐标：原始 16 位 → 纹素（每纹素 64 个原始单位，见 movtex_make_quad_vertex
+    // 的 scale=1 四边形 = 1984 原始单位 = 31 纹素）→ 按纹理尺寸归一化（1 次平铺 = 1.0）
+    mv.uv[0] = v.texture_coordinate[0] / 64.0f;
+    mv.uv[1] = v.texture_coordinate[1] / 64.0f;
+    if (material_.textured && material_.tex_width() > 0 && material_.tex_height() > 0) {
+        mv.uv[0] /= material_.tex_width();
+        mv.uv[1] /= material_.tex_height();
+    }
     mv.color[0] = v.coordinate_or_normal[0];
     mv.color[1] = v.coordinate_or_normal[1];
     mv.color[2] = v.coordinate_or_normal[2];
