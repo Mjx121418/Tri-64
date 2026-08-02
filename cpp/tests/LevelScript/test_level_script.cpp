@@ -322,8 +322,10 @@ void testMatrixSupport() {
     }
 }
 
-// 写入 Wavefront OBJ（顶点/UV/法线 + 面索引）
-void writeObj(const std::filesystem::path &path, const GBI::Mesh &mesh, const char *name) {
+// 写入 Wavefront OBJ：mtllib 引用同名 .mtl，三角形按材质分组（usemtl）
+void writeObj(const std::filesystem::path &path, const GBI::Mesh &mesh,
+              const std::vector<GBI::Material> &materials,
+              const std::vector<uint32_t> &tri_materials, const char *name) {
     std::filesystem::create_directories(path.parent_path());
     FILE *f = fopen(path.string().c_str(), "w");
     if (!f) {
@@ -331,6 +333,7 @@ void writeObj(const std::filesystem::path &path, const GBI::Mesh &mesh, const ch
         return;
     }
     fprintf(f, "# tri-64 DL export: %s\n", name);
+    fprintf(f, "mtllib %s.mtl\n", name);
     fprintf(f, "o %s\n", name);
 
     for (const auto &v : mesh.vertices) {
@@ -342,11 +345,50 @@ void writeObj(const std::filesystem::path &path, const GBI::Mesh &mesh, const ch
     for (const auto &v : mesh.vertices) {
         fprintf(f, "vn %f %f %f\n", v.normal[0], v.normal[1], v.normal[2]);
     }
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        fprintf(f, "f %u/%u/%u %u/%u/%u %u/%u/%u\n",
-                mesh.indices[i] + 1, mesh.indices[i] + 1, mesh.indices[i] + 1,
-                mesh.indices[i + 1] + 1, mesh.indices[i + 1] + 1, mesh.indices[i + 1] + 1,
-                mesh.indices[i + 2] + 1, mesh.indices[i + 2] + 1, mesh.indices[i + 2] + 1);
+
+    // 面：按材质分组（usemtl 只出现一次/材质）
+    for (size_t m = 0; m < materials.size(); m++) {
+        bool first = true;
+        for (size_t t = 0; t < tri_materials.size(); t++) {
+            if (tri_materials[t] != m) {
+                continue;
+            }
+            if (first) {
+                fprintf(f, "usemtl mat%02zu\n", m);
+                first = false;
+            }
+            fprintf(f, "f %u/%u/%u %u/%u/%u %u/%u/%u\n",
+                    mesh.indices[t * 3] + 1, mesh.indices[t * 3] + 1,
+                    mesh.indices[t * 3] + 1,
+                    mesh.indices[t * 3 + 1] + 1, mesh.indices[t * 3 + 1] + 1,
+                    mesh.indices[t * 3 + 1] + 1,
+                    mesh.indices[t * 3 + 2] + 1, mesh.indices[t * 3 + 2] + 1,
+                    mesh.indices[t * 3 + 2] + 1);
+        }
+    }
+    fclose(f);
+}
+
+// 写入 MTL：每个材质一个 newmtl（Kd 用 prim 颜色，map_Kd 引用解码纹理）
+void writeMtl(const std::filesystem::path &path,
+              const std::vector<GBI::Material> &materials,
+              const std::vector<std::string> &matnames, const char *name) {
+    FILE *f = fopen(path.string().c_str(), "w");
+    if (!f) {
+        printf("test_export_obj: cannot open %s\n", path.string().c_str());
+        return;
+    }
+    fprintf(f, "# tri-64 materials: %s\n", name);
+    for (size_t m = 0; m < materials.size(); m++) {
+        const GBI::Material &mat = materials[m];
+        fprintf(f, "newmtl mat%02zu\n", m);
+        fprintf(f, "Kd %.3f %.3f %.3f\n", mat.prim_color[0] / 255.0f,
+                mat.prim_color[1] / 255.0f, mat.prim_color[2] / 255.0f);
+        fprintf(f, "Ks 0 0 0\n");
+        if (mat.textured && m < matnames.size() && !matnames[m].empty()) {
+            fprintf(f, "map_Kd textures/%s.ppm\n", matnames[m].c_str());
+        }
+        fprintf(f, "\n");
     }
     fclose(f);
 }
@@ -414,51 +456,24 @@ void testExportObj() {
             char name[64];
             snprintf(name, sizeof(name), "%s_area%d", stem.c_str(), i);
 
-            // 合并 OBJ（全部三角形）
+            // 合并 OBJ：mtllib + 按材质分组的 usemtl
             std::filesystem::path path = "export" / std::filesystem::path(name + std::string(".obj"));
-            writeObj(path, merged, name);
+            writeObj(path, merged, materials, tri_materials, name);
             printf("test_export_obj: wrote %s (%zu triangles, %zu materials)\n",
                    path.string().c_str(), tri_materials.size(), materials.size());
 
-            // 按材质分文件：每个材质一个 OBJ（只含该材质的三角形）
+            // 解码每个材质的纹理（PPM，供 MTL 引用）+ 收集材质名
             static const char *kFmt[] = { "RGBA", "YUV", "CI", "IA", "I" };
             static const char *kSiz[] = { "4", "8", "16", "32" };
+            std::vector<std::string> matnames(materials.size());
             for (size_t m = 0; m < materials.size(); m++) {
-                // 该材质的三角形 → 只保留被引用的顶点
-                GBI::Mesh sub;
-                std::vector<uint32_t> remap(merged.vertices.size(), UINT32_MAX);
-                size_t sub_triangles = 0;
-                for (size_t t = 0; t < tri_materials.size(); t++) {
-                    if (tri_materials[t] != m) {
-                        continue;
-                    }
-                    sub_triangles++;
-                    for (int k = 0; k < 3; k++) {
-                        const uint32_t vi = merged.indices[t * 3 + k];
-                        if (remap[vi] == UINT32_MAX) {
-                            remap[vi] = static_cast<uint32_t>(sub.vertices.size());
-                            sub.vertices.push_back(merged.vertices[vi]);
-                        }
-                        sub.indices.push_back(remap[vi]);
-                    }
-                }
-                if (sub_triangles == 0) {
-                    continue;
-                }
-                sub.materials.push_back(materials[m]);
-                sub.material_ids.assign(sub_triangles, 0);
-
                 char matname[96];
                 snprintf(matname, sizeof(matname), "%s_mat%02zu_%s%s_%ux%u", name, m,
                          materials[m].tile_fmt < 5 ? kFmt[materials[m].tile_fmt] : "?",
                          materials[m].tile_siz < 4 ? kSiz[materials[m].tile_siz] : "?",
                          materials[m].tex_width(), materials[m].tex_height());
-                std::filesystem::path mat_path =
-                    "export" / std::filesystem::path(matname + std::string(".obj"));
-                writeObj(mat_path, sub, matname);
-                printf("  mat %zu: %s (%zu triangles)\n", m, matname, sub_triangles);
+                matnames[m] = matname;
 
-                // 解码并导出该材质的纹理（PPM，无 alpha）
                 auto tex = GBI::decodeTexture(materials[m], setup.seg_table);
                 if (tex) {
                     std::filesystem::path tex_dir = "export" / std::filesystem::path("textures");
@@ -474,14 +489,21 @@ void testExportObj() {
                             fputc(tex->pixels[i + 2], tf);
                         }
                         fclose(tf);
-                        printf("    tex: %s (%ux%u img=%02x:%06x w=%u)\n", matname,
-                               tex->width, tex->height, materials[m].tex_image.seg,
-                               materials[m].tex_image.offset, materials[m].tex_image_width);
+                        printf("    tex: %s (%ux%u img=%02x:%06x)\n", matname, tex->width,
+                               tex->height, materials[m].tex_image.seg,
+                               materials[m].tex_image.offset);
                     }
                 } else {
                     printf("    tex: %s: %s\n", matname, tex.error().c_str());
                 }
             }
+
+            // MTL：所有材质 + 纹理引用
+            std::filesystem::path mtl_path =
+                "export" / std::filesystem::path(name + std::string(".mtl"));
+            writeMtl(mtl_path, materials, matnames, name);
+            printf("test_export_obj: wrote %s (%zu materials)\n", mtl_path.string().c_str(),
+                   materials.size());
         }
     }
 }
