@@ -386,7 +386,7 @@ void writeMtl(const std::filesystem::path &path,
                 mat.prim_color[1] / 255.0f, mat.prim_color[2] / 255.0f);
         fprintf(f, "Ks 0 0 0\n");
         if (mat.textured && m < matnames.size() && !matnames[m].empty()) {
-            fprintf(f, "map_Kd textures/%s.ppm\n", matnames[m].c_str());
+            fprintf(f, "map_Kd textures/%s.tga\n", matnames[m].c_str());
         }
         fprintf(f, "\n");
     }
@@ -479,14 +479,24 @@ void testExportObj() {
                     std::filesystem::path tex_dir = "export" / std::filesystem::path("textures");
                     std::filesystem::create_directories(tex_dir);
                     std::filesystem::path tex_path =
-                        tex_dir / std::filesystem::path(matname + std::string(".ppm"));
+                        tex_dir / std::filesystem::path(matname + std::string(".tga"));
                     FILE *tf = fopen(tex_path.string().c_str(), "wb");
                     if (tf) {
-                        fprintf(tf, "P6\n%u %u\n255\n", tex->width, tex->height);
+                        // TGA 未压缩 24-bit：底左原点 + 行序 = 纹理行序。
+                        // 配合 OBJ 的 vt（v = t/32，t=0=纹理顶部），标准查看器中方向正确。
+                        uint8_t hdr[18] = {0};
+                        hdr[2] = 2; // true-color, uncompressed
+                        hdr[12] = tex->width & 0xFF;
+                        hdr[13] = (tex->width >> 8) & 0xFF;
+                        hdr[14] = tex->height & 0xFF;
+                        hdr[15] = (tex->height >> 8) & 0xFF;
+                        hdr[16] = 24; // RGB
+                        hdr[17] = 0x00; // bottom-left origin
+                        fwrite(hdr, 1, 18, tf);
                         for (size_t i = 0; i + 3 < tex->pixels.size(); i += 4) {
-                            fputc(tex->pixels[i], tf);
-                            fputc(tex->pixels[i + 1], tf);
-                            fputc(tex->pixels[i + 2], tf);
+                            fputc(tex->pixels[i + 2], tf); // B
+                            fputc(tex->pixels[i + 1], tf); // G
+                            fputc(tex->pixels[i], tf);     // R
                         }
                         fclose(tf);
                         printf("    tex: %s (%ux%u img=%02x:%06x)\n", matname, tex->width,
