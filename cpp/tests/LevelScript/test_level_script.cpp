@@ -375,7 +375,8 @@ void writeObj(const std::filesystem::path &path, const GBI::Mesh &mesh,
     fclose(f);
 }
 
-// 写入 MTL：每个材质一个 newmtl（Kd 用 prim 颜色，map_Kd 引用解码纹理）
+// 写入 MTL：每个材质一个 newmtl（Kd 用 prim 颜色，map_Kd 引用解码纹理，
+// map_d 引用同一纹理的 alpha 通道供查看器/Blender 做透明）
 void writeMtl(const std::filesystem::path &path,
               const std::vector<GBI::Material> &materials,
               const std::vector<std::string> &matnames, const char *name) {
@@ -393,10 +394,134 @@ void writeMtl(const std::filesystem::path &path,
         fprintf(f, "Ks 0 0 0\n");
         if (mat.textured && m < matnames.size() && !matnames[m].empty()) {
             fprintf(f, "map_Kd textures/%s.tga\n", matnames[m].c_str());
+            fprintf(f, "map_d textures/%s.tga\n", matnames[m].c_str());
         }
         fprintf(f, "\n");
     }
     fclose(f);
+}
+
+// 图层编号（decomp 的 sm64.h）：图层存在 GraphNode.flags 的高 8 位
+// （geo 处理器的 cmdNodeDisplayList 写入 (drawing_layer << 8)）。
+// billboard 风格的卡片（如 BOB 的树）放在 LAYER_ALPHA 及之后的透明图层上。
+enum LayerType : int16_t {
+    LAYER_FORCE = 0,
+    LAYER_OPAQUE = 1,
+    LAYER_OPAQUE_DECAL = 2,
+    LAYER_OPAQUE_INTER = 3,
+    LAYER_ALPHA = 4,
+    LAYER_TRANSPARENT = 5,
+    LAYER_TRANSPARENT_DECAL = 6,
+    LAYER_TRANSPARENT_INTER = 7,
+};
+
+// 解释一组 DL 并导出为 OBJ + MTL + 纹理（export/ 目录）。
+// 材质按内容 + 纹理源图像跨 DL 去重；dls 为空时不写任何文件。
+// name 同时用作文件名前缀、对象名与纹理名前缀。
+void exportDlsToObj(const SegmentTable &seg_table, const std::vector<SegmentedAddress> &dls,
+                    const std::string &name) {
+    if (dls.empty()) {
+        return;
+    }
+
+    // 合并所有 DL 的网格，同时建立统一的材质表（跨 DL 去重，图像并行记录）
+    GBI::Mesh merged;
+    std::vector<GBI::Material> materials;
+    std::vector<uint32_t> material_images; // 与 materials 并行：纹理源图像
+    std::vector<uint32_t> tri_materials; // 每三角形 → 统一材质表索引
+
+    for (const auto &dl : dls) {
+        GBI::DLInterpreter interp(seg_table);
+        GBI::Mesh &mesh = interp.run(dl);
+
+        const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
+        merged.vertices.insert(merged.vertices.end(), mesh.vertices.begin(),
+                               mesh.vertices.end());
+        merged.indices.reserve(merged.indices.size() + mesh.indices.size());
+        for (uint32_t idx : mesh.indices) {
+            merged.indices.push_back(base + idx);
+        }
+
+        const size_t tri_count = mesh.indices.size() / 3;
+        for (size_t t = 0; t < tri_count; t++) {
+            const uint32_t mi = mesh.material_ids[t];
+            const GBI::Material &m = mesh.materials[mi];
+            const uint32_t img = mesh.material_images[mi];
+            uint32_t mid = 0;
+            for (; mid < materials.size(); mid++) {
+                if (materials[mid] == m && material_images[mid] == img) {
+                    break;
+                }
+            }
+            if (mid == materials.size()) {
+                materials.push_back(m);
+                material_images.push_back(img);
+            }
+            tri_materials.push_back(mid);
+        }
+    }
+
+    // 合并 OBJ：mtllib + 按材质分组的 usemtl
+    std::filesystem::path path = "export" / std::filesystem::path(name + std::string(".obj"));
+    writeObj(path, merged, materials, tri_materials, name.c_str());
+    printf("test_export_obj: wrote %s (%zu triangles, %zu materials)\n",
+           path.string().c_str(), tri_materials.size(), materials.size());
+
+    // 解码每个材质的纹理（TGA，供 MTL 引用）+ 收集材质名
+    static const char *kFmt[] = { "RGBA", "YUV", "CI", "IA", "I" };
+    static const char *kSiz[] = { "4", "8", "16", "32" };
+    std::vector<std::string> matnames(materials.size());
+    for (size_t m = 0; m < materials.size(); m++) {
+        char matname[96];
+        snprintf(matname, sizeof(matname), "%s_mat%02zu_%s%s_%ux%u", name.c_str(), m,
+                 materials[m].tile_fmt < 5 ? kFmt[materials[m].tile_fmt] : "?",
+                 materials[m].tile_siz < 4 ? kSiz[materials[m].tile_siz] : "?",
+                 materials[m].tex_width(), materials[m].tex_height());
+        matnames[m] = matname;
+
+        auto tex = GBI::decodeTexture(materials[m], segAddress(material_images[m]), seg_table);
+        if (tex) {
+            std::filesystem::path tex_dir = "export" / std::filesystem::path("textures");
+            std::filesystem::create_directories(tex_dir);
+            std::filesystem::path tex_path =
+                tex_dir / std::filesystem::path(matname + std::string(".tga"));
+            FILE *tf = fopen(tex_path.string().c_str(), "wb");
+            if (tf) {
+                // TGA 未压缩 32-bit RGBA：底左原点 + 8 位 alpha + 行序 = 纹理行序。
+                // alpha 通道必须保留（IA16 的圆形/遮罩、RGBA16 的 1 位透明都只在
+                // alpha 里），否则透明纹素在查看器/Blender 里会变成不透明黑块。
+                // 配合 OBJ 的 vt（v = t/32，t=0=纹理顶部），标准查看器中方向正确。
+                uint8_t hdr[18] = {0};
+                hdr[2] = 2; // true-color, uncompressed
+                hdr[12] = tex->width & 0xFF;
+                hdr[13] = (tex->width >> 8) & 0xFF;
+                hdr[14] = tex->height & 0xFF;
+                hdr[15] = (tex->height >> 8) & 0xFF;
+                hdr[16] = 32; // RGBA
+                hdr[17] = 0x08; // bottom-left origin + 8 alpha bits
+                fwrite(hdr, 1, 18, tf);
+                for (size_t i = 0; i + 3 < tex->pixels.size(); i += 4) {
+                    fputc(tex->pixels[i + 2], tf); // B
+                    fputc(tex->pixels[i + 1], tf); // G
+                    fputc(tex->pixels[i], tf);     // R
+                    fputc(tex->pixels[i + 3], tf); // A
+                }
+                fclose(tf);
+                SegmentedAddress img = segAddress(material_images[m]);
+                printf("    tex: %s (%ux%u img=%02x:%06x)\n", matname, tex->width,
+                       tex->height, img.seg, img.offset);
+            }
+        } else {
+            printf("    tex: %s: %s\n", matname, tex.error().c_str());
+        }
+    }
+
+    // MTL：所有材质 + 纹理引用
+    std::filesystem::path mtl_path =
+        "export" / std::filesystem::path(name + std::string(".mtl"));
+    writeMtl(mtl_path, materials, matnames, name.c_str());
+    printf("test_export_obj: wrote %s (%zu materials)\n", mtl_path.string().c_str(),
+           materials.size());
 }
 
 void testExportObj() {
@@ -425,106 +550,71 @@ void testExportObj() {
 
             std::vector<SegmentedAddress> dls;
             collectDisplayLists(*area.root_node, dls);
-
-            // 合并所有 DL 的网格，同时建立统一的材质表（跨 DL 去重，图像并行记录）
-            GBI::Mesh merged;
-            std::vector<GBI::Material> materials;
-            std::vector<uint32_t> material_images; // 与 materials 并行：纹理源图像
-            std::vector<uint32_t> tri_materials; // 每三角形 → 统一材质表索引
-
-            for (const auto &dl : dls) {
-                GBI::DLInterpreter interp(setup.seg_table);
-                GBI::Mesh &mesh = interp.run(dl);
-
-                const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
-                merged.vertices.insert(merged.vertices.end(), mesh.vertices.begin(),
-                                       mesh.vertices.end());
-                merged.indices.reserve(merged.indices.size() + mesh.indices.size());
-                for (uint32_t idx : mesh.indices) {
-                    merged.indices.push_back(base + idx);
-                }
-
-                const size_t tri_count = mesh.indices.size() / 3;
-                for (size_t t = 0; t < tri_count; t++) {
-                    const uint32_t mi = mesh.material_ids[t];
-                    const GBI::Material &m = mesh.materials[mi];
-                    const uint32_t img = mesh.material_images[mi];
-                    uint32_t mid = 0;
-                    for (; mid < materials.size(); mid++) {
-                        if (materials[mid] == m && material_images[mid] == img) {
-                            break;
-                        }
-                    }
-                    if (mid == materials.size()) {
-                        materials.push_back(m);
-                        material_images.push_back(img);
-                    }
-                    tri_materials.push_back(mid);
-                }
-            }
-
             char name[64];
             snprintf(name, sizeof(name), "%s_area%d", stem.c_str(), i);
+            exportDlsToObj(setup.seg_table, dls, name);
+        }
+    }
+}
 
-            // 合并 OBJ：mtllib + 按材质分组的 usemtl
-            std::filesystem::path path = "export" / std::filesystem::path(name + std::string(".obj"));
-            writeObj(path, merged, materials, tri_materials, name);
-            printf("test_export_obj: wrote %s (%zu triangles, %zu materials)\n",
-                   path.string().c_str(), tri_materials.size(), materials.size());
+// 收集"billboard 风格"三角形的显示列表：
+//   - GraphNodeBillboard 节点（及其子树）里的 DL（GEO_BILLBOARD）
+//   - 非不透明图层（LAYER_ALPHA / LAYER_TRANSPARENT / LAYER_TRANSPARENT_DECAL）
+//     的 DL 节点 —— SM64 把 billboard 卡片（如 BOB 的树）放在这些图层上，
+//     它们不是 3D 实体，而是始终面向相机的平面。
+void collectBillboardDisplayLists(const GraphNode &node, std::vector<SegmentedAddress> &out) {
+    if (std::holds_alternative<GraphNodeBillboard>(node.data)) {
+        const auto &bb = std::get<GraphNodeBillboard>(node.data);
+        if (bb.display_list.seg >= 0) {
+            out.push_back(bb.display_list);
+        }
+        collectDisplayLists(node, out); // billboard 子树里的所有 DL 都算
+        return;
+    }
+    if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
+        const int16_t layer = (node.flags >> 8) & 0x0F;
+        if (layer >= LAYER_ALPHA) {
+            out.push_back(std::get<GraphNodeDisplayList>(node.data).display_list);
+        }
+    }
+    for (const auto &child : node.children) {
+        collectBillboardDisplayLists(*child, out);
+    }
+}
 
-            // 解码每个材质的纹理（PPM，供 MTL 引用）+ 收集材质名
-            static const char *kFmt[] = { "RGBA", "YUV", "CI", "IA", "I" };
-            static const char *kSiz[] = { "4", "8", "16", "32" };
-            std::vector<std::string> matnames(materials.size());
-            for (size_t m = 0; m < materials.size(); m++) {
-                char matname[96];
-                snprintf(matname, sizeof(matname), "%s_mat%02zu_%s%s_%ux%u", name, m,
-                         materials[m].tile_fmt < 5 ? kFmt[materials[m].tile_fmt] : "?",
-                         materials[m].tile_siz < 4 ? kSiz[materials[m].tile_siz] : "?",
-                         materials[m].tex_width(), materials[m].tex_height());
-                matnames[m] = matname;
+// 单独导出 billboard 风格三角形及其纹理（export/<stem>_area<N>_billboards.obj/.mtl），
+// 与 testExportObj 导出的地形/实体几何分开，便于单独查看这些平面卡片
+// （如 BOB 的树）在 3D 下不成立的问题。
+void testExportBillboards() {
+    const auto roms = findRoms();
+    if (roms.empty()) {
+        return;
+    }
 
-                auto tex = GBI::decodeTexture(materials[m], segAddress(material_images[m]),
-                                              setup.seg_table);
-                if (tex) {
-                    std::filesystem::path tex_dir = "export" / std::filesystem::path("textures");
-                    std::filesystem::create_directories(tex_dir);
-                    std::filesystem::path tex_path =
-                        tex_dir / std::filesystem::path(matname + std::string(".tga"));
-                    FILE *tf = fopen(tex_path.string().c_str(), "wb");
-                    if (tf) {
-                        // TGA 未压缩 24-bit：底左原点 + 行序 = 纹理行序。
-                        // 配合 OBJ 的 vt（v = t/32，t=0=纹理顶部），标准查看器中方向正确。
-                        uint8_t hdr[18] = {0};
-                        hdr[2] = 2; // true-color, uncompressed
-                        hdr[12] = tex->width & 0xFF;
-                        hdr[13] = (tex->width >> 8) & 0xFF;
-                        hdr[14] = tex->height & 0xFF;
-                        hdr[15] = (tex->height >> 8) & 0xFF;
-                        hdr[16] = 24; // RGB
-                        hdr[17] = 0x00; // bottom-left origin
-                        fwrite(hdr, 1, 18, tf);
-                        for (size_t i = 0; i + 3 < tex->pixels.size(); i += 4) {
-                            fputc(tex->pixels[i + 2], tf); // B
-                            fputc(tex->pixels[i + 1], tf); // G
-                            fputc(tex->pixels[i], tf);     // R
-                        }
-                        fclose(tf);
-                        SegmentedAddress img = segAddress(material_images[m]);
-                        printf("    tex: %s (%ux%u img=%02x:%06x)\n", matname, tex->width,
-                               tex->height, img.seg, img.offset);
-                    }
-                } else {
-                    printf("    tex: %s: %s\n", matname, tex.error().c_str());
-                }
+    for (const auto &rom : roms) {
+        LevelScriptSetup setup = setupLevelScript(rom);
+        if (!setup.ok) {
+            continue;
+        }
+
+        std::string stem = rom.filename().string();
+        const size_t dot = stem.rfind(".z64");
+        if (dot != std::string::npos) {
+            stem = stem.substr(0, dot);
+        }
+
+        for (int i = 0; i < 8; i++) {
+            auto &area = setup.level.areas[i];
+            if (!area.root_node) {
+                continue;
             }
 
-            // MTL：所有材质 + 纹理引用
-            std::filesystem::path mtl_path =
-                "export" / std::filesystem::path(name + std::string(".mtl"));
-            writeMtl(mtl_path, materials, matnames, name);
-            printf("test_export_obj: wrote %s (%zu materials)\n", mtl_path.string().c_str(),
-                   materials.size());
+            std::vector<SegmentedAddress> dls;
+            collectBillboardDisplayLists(*area.root_node, dls);
+
+            char name[64];
+            snprintf(name, sizeof(name), "%s_area%d_billboards", stem.c_str(), i);
+            exportDlsToObj(setup.seg_table, dls, name);
         }
     }
 }

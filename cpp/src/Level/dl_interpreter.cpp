@@ -333,12 +333,12 @@ void DLInterpreter::appendVertex(const Vtx &v) {
     mv.normal[0] = static_cast<int8_t>(v.coordinate_or_normal[0]) / 127.0f;
     mv.normal[1] = static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f;
     mv.normal[2] = static_cast<int8_t>(v.coordinate_or_normal[2]) / 127.0f;
-    // 纹理坐标：原始 16 位 → 纹素（每纹素 64 个原始单位，见 movtex_make_quad_vertex
-    // 的 scale=1 四边形 = 1984 原始单位 = 31 纹素），再乘 G_TEXTURE 的 S/T 缩放
-    // （RSP 在 dma_VTX 里执行 raw×scale>>16，见 fast3d.s 的 vmudm）→
-    // 按纹理尺寸归一化（1 次平铺 = 1.0）
-    mv.uv[0] = v.texture_coordinate[0] / 64.0f * (state_.tex_scale_s / 65536.0f);
-    mv.uv[1] = v.texture_coordinate[1] / 64.0f * (state_.tex_scale_t / 65536.0f);
+    // 纹理坐标：原始 16 位 → 纹素（16-bit 纹理每纹素 32 个原始单位，8-bit 为 16；
+    // 见 movtex_make_quad_vertex：scale=1（平铺 1 次）四边形 = 992 原始单位 =
+    // 31 纹素），再乘 G_TEXTURE 的 S/T 缩放（RSP 在 dma_VTX 里执行
+    // raw×scale>>16，见 fast3d.s 的 vmudm）→ 按纹理尺寸归一化（1 次平铺 = 1.0）
+    mv.uv[0] = v.texture_coordinate[0] / 32.0f * (state_.tex_scale_s / 65536.0f);
+    mv.uv[1] = v.texture_coordinate[1] / 32.0f * (state_.tex_scale_t / 65536.0f);
     if (material_.textured && material_.tex_width() > 0 && material_.tex_height() > 0) {
         mv.uv[0] /= material_.tex_width();
         mv.uv[1] /= material_.tex_height();

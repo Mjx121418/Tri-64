@@ -34,3 +34,7 @@ cpp/SGI_RDP_Command_Summary.pdf
 
 # OpenCode config
 opencode.json
+
+# .ignore used to block files from OpenCode
+.ignore
+
