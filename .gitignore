@@ -31,3 +31,6 @@ cpp/export/
 
 # RDP reference pdf
 cpp/SGI_RDP_Command_Summary.pdf
+
+# OpenCode config
+opencode.json
