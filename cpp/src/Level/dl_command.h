@@ -130,8 +130,7 @@ struct DecodedCommand {
     uint16_t mwOffset() const { return w0 & 0xFFFF; }
     uint32_t mwValue() const { return w1; }
 
-    // --- G_POPMTX：w1 = 弹出数量 ---
-    uint8_t popCount() const { return w1 & 0xFF; }
+    // --- G_POPMTX：fast3d 固定弹出 1 个矩阵，w1 被忽略（见 rsp/fast3d.s imm_POPMTX） ---
 
     // --- G_SET/CLEARGEOMETRYMODE：w1 = 几何模式位 ---
     uint32_t geometryMode() const { return w1; }
@@ -154,6 +153,7 @@ struct DecodedCommand {
     uint8_t colorA() const { return w1 & 0xFF; }
 
     // --- G_LOADBLOCK, G_SETTILESIZE, G_LOADTLUT
+    // G_LOADBLOCK 的 w1 低 12 位 = DXT（编码源图像行宽，见 gbi.h CALC_DXT）
     uint16_t lowS() const { return (w0 >> 12) & 0xFFF; }
     uint16_t lowT() const { return w0 & 0xFFF; }
     uint16_t highS() const { return (w1 >> 12) & 0xFFF; }

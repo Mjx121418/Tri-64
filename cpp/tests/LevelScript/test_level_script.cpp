@@ -219,33 +219,39 @@ void testDisplayList() {
             size_t total_triangles = 0;
             size_t total_vertices = 0;
             std::vector<GBI::Material> merged_materials;
+            std::vector<uint32_t> merged_images; // 与 merged_materials 并行：纹理源图像
             for (const auto &dl : dls) {
                 GBI::DLInterpreter interp(setup.seg_table);
                 GBI::Mesh &mesh = interp.run(dl);
                 const size_t triangles = mesh.indices.size() / 3;
                 printf("  DL %02x:%06x -> %zu triangles, %zu vertices, %zu materials\n",
                        dl.seg, dl.offset, triangles, mesh.vertices.size(), mesh.materials.size());
-                for (const auto &m : mesh.materials) {
+                for (size_t mi = 0; mi < mesh.materials.size(); mi++) {
+                    const auto &m = mesh.materials[mi];
                     static const char *kFmt[] = { "RGBA", "YUV", "CI", "IA", "I" };
                     static const char *kSiz[] = { "4", "8", "16", "32" };
                     const char *fmt = m.tile_fmt < 5 ? kFmt[m.tile_fmt] : "?";
                     const char *siz = m.tile_siz < 4 ? kSiz[m.tile_siz] : "?";
+                    SegmentedAddress img = segAddress(mesh.material_images[mi]);
                     printf("    mat: %s%s %ux%u img=%02x:%06x tex=%d\n", fmt, siz,
-                           m.tex_width(), m.tex_height(), m.tex_image.seg, m.tex_image.offset,
+                           m.tex_width(), m.tex_height(), img.seg, img.offset,
                            m.textured ? 1 : 0);
                 }
                 total_triangles += triangles;
                 total_vertices += mesh.vertices.size();
-                for (const auto &m : mesh.materials) {
+                for (size_t mi = 0; mi < mesh.materials.size(); mi++) {
+                    const auto &m = mesh.materials[mi];
+                    const uint32_t img = mesh.material_images[mi];
                     bool found = false;
-                    for (const auto &u : merged_materials) {
-                        if (u == m) {
+                    for (size_t u = 0; u < merged_materials.size(); u++) {
+                        if (merged_materials[u] == m && merged_images[u] == img) {
                             found = true;
                             break;
                         }
                     }
                     if (!found) {
                         merged_materials.push_back(m);
+                        merged_images.push_back(img);
                     }
                 }
             }
@@ -420,9 +426,10 @@ void testExportObj() {
             std::vector<SegmentedAddress> dls;
             collectDisplayLists(*area.root_node, dls);
 
-            // 合并所有 DL 的网格，同时建立统一的材质表（跨 DL 去重）
+            // 合并所有 DL 的网格，同时建立统一的材质表（跨 DL 去重，图像并行记录）
             GBI::Mesh merged;
             std::vector<GBI::Material> materials;
+            std::vector<uint32_t> material_images; // 与 materials 并行：纹理源图像
             std::vector<uint32_t> tri_materials; // 每三角形 → 统一材质表索引
 
             for (const auto &dl : dls) {
@@ -439,15 +446,18 @@ void testExportObj() {
 
                 const size_t tri_count = mesh.indices.size() / 3;
                 for (size_t t = 0; t < tri_count; t++) {
-                    const GBI::Material &m = mesh.materials[mesh.material_ids[t]];
+                    const uint32_t mi = mesh.material_ids[t];
+                    const GBI::Material &m = mesh.materials[mi];
+                    const uint32_t img = mesh.material_images[mi];
                     uint32_t mid = 0;
                     for (; mid < materials.size(); mid++) {
-                        if (materials[mid] == m) {
+                        if (materials[mid] == m && material_images[mid] == img) {
                             break;
                         }
                     }
                     if (mid == materials.size()) {
                         materials.push_back(m);
+                        material_images.push_back(img);
                     }
                     tri_materials.push_back(mid);
                 }
@@ -474,7 +484,8 @@ void testExportObj() {
                          materials[m].tex_width(), materials[m].tex_height());
                 matnames[m] = matname;
 
-                auto tex = GBI::decodeTexture(materials[m], setup.seg_table);
+                auto tex = GBI::decodeTexture(materials[m], segAddress(material_images[m]),
+                                              setup.seg_table);
                 if (tex) {
                     std::filesystem::path tex_dir = "export" / std::filesystem::path("textures");
                     std::filesystem::create_directories(tex_dir);
@@ -499,9 +510,9 @@ void testExportObj() {
                             fputc(tex->pixels[i], tf);     // R
                         }
                         fclose(tf);
+                        SegmentedAddress img = segAddress(material_images[m]);
                         printf("    tex: %s (%ux%u img=%02x:%06x)\n", matname, tex->width,
-                               tex->height, materials[m].tex_image.seg,
-                               materials[m].tex_image.offset);
+                               tex->height, img.seg, img.offset);
                     }
                 } else {
                     printf("    tex: %s: %s\n", matname, tex.error().c_str());

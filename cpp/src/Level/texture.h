@@ -21,12 +21,14 @@ struct Texture {
 
 // 从材质解码纹理像素。
 //
-// 数据源 = G_SETTEXIMAGE 的 DRAM 图像（行主序），区域 = G_SETTILESIZE
-// 的 4 坐标（1/4 纹素），格式 = G_SETTILE。不需要模拟 RDP 的 TMEM 拷贝：
-// 对线性布局而言 "DRAM → TMEM" 的结果就是直接读 DRAM。
+// tex_image = 三角形实际采样的图像（Mesh.material_images 里解析出的段地址）。
+// 数据源 = 该图像的 DRAM 数据（行主序），区域 = G_SETTILESIZE 的 4 坐标
+// （1/4 纹素），格式 = G_SETTILE。不需要模拟 RDP 的 TMEM 拷贝：对线性布局
+// 而言 "DRAM → TMEM" 的结果就是直接读 DRAM。
 //
 // 当前支持 RGBA16（fmt=0, siz=2）与 IA16（fmt=3, siz=2）。
 std::expected<Texture, std::string> decodeTexture(const Material &material,
+                                                  SegmentedAddress tex_image,
                                                   const SegmentTable &seg_table);
 
 } // namespace GBI

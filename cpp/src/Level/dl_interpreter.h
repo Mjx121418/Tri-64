@@ -30,8 +30,7 @@ struct Material {
     uint16_t tex_tl {0};          // 纹理纵坐标最小值
     uint16_t tex_sh {0};          // 纹理横坐标最大值
     uint16_t tex_th {0};          // 纹理纵坐标最大值
-    SegmentedAddress tex_image {};   // G_SETTEXIMAGE 纹理图像地址
-    uint16_t tex_image_width {0};    // G_SETTEXIMAGE 图像行宽（texel，决定行跨度）
+    uint16_t tex_dxt {0};            // G_LOADBLOCK 的 DXT（w1 低 12 位，编码源图像行宽）
     bool textured {false};           // 几何模式 G_TEXTURE_ENABLE（G_TEXTURE 开关）
 
     bool operator==(const Material &o) const {
@@ -45,8 +44,7 @@ struct Material {
             && tile_fmt == o.tile_fmt && tile_siz == o.tile_siz
             && tex_sl == o.tex_sl && tex_tl == o.tex_tl
             && tex_sh == o.tex_sh && tex_th == o.tex_th
-            && tex_image.seg == o.tex_image.seg && tex_image.offset == o.tex_image.offset
-            && tex_image_width == o.tex_image_width
+            && tex_dxt == o.tex_dxt
             && textured == o.textured;
     }
 
@@ -64,7 +62,11 @@ struct Mesh {
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;      // 每三角形 3 个索引
     std::vector<uint32_t> material_ids; // 每三角形 → materials 表
-    std::vector<Material> materials;    // 材质表（按内容去重）
+    std::vector<Material> materials;    // 材质表（按内容去重，不含图像地址）
+    // 与 materials 并行的纹理源：每个材质的解析图像地址（段地址打包成 u32，
+    // 0 = 未绑定）。图像属于材质去重键（同图块配置、不同图像的三角形不能合并），
+    // 但它是 drawTriangle 时从 RSP 状态解析出来的，不属于 Material 本身。
+    std::vector<uint32_t> material_images;
 };
 
 // fast3d RSP 顶点缓冲大小
@@ -84,6 +86,18 @@ struct RSPState {
     // 的 tmem → 查表得到真正加载的图像（支持"先加载多个纹理再切换"）。
     std::array<uint8_t, 8> tile_tmem {};        // G_SETTILE 的 tmem（64 位字）
     std::array<uint32_t, kTMEMWords> tmem_images {}; // tmem → 图像段地址（0=未绑定）
+    // G_TEXTURE 的纹理坐标缩放：w1 = (S<<16)|T，16.16 定点（0xFFFF≈1.0）。
+    // fast3d 在 G_VTX 时把它乘到每个顶点的纹理坐标上（dmem 0x124/0x126，
+    // 默认 0，见 rsp/fast3d.s 的 dma_VTX/imm_TEXTURE）。
+    uint16_t tex_scale_s {0};
+    uint16_t tex_scale_t {0};
+    // G_SETTEXIMAGE 记录的当前图像（RDP 状态）：地址 + 行宽字段。
+    SegmentedAddress tex_image {};
+    // G_SETTEXIMAGE 的 w0 低 12 位（源图像行宽，texel）。
+    // 注意：该字段实际未被使用 —— gbi.h 的 gsSetImage 存的是 (width-1) 且
+    // SM64 传 1，所以恒为 0；纹理解码改用 G_LOADBLOCK 的 DXT 反推行宽。
+    // 保留它仅为忠实记录原始命令状态（潜在 G_LOADTILE 支持）。
+    uint16_t tex_image_width {0};
 };
 
 // DL 解释器：执行一条 DL（含子 DL 调用），累积三角形到 Mesh。
@@ -119,7 +133,7 @@ private:
     void loadVertices(const DecodedCommand &cmd);
     void drawTriangle(const DecodedCommand &cmd);
     void appendVertex(const Vtx &v);
-    uint32_t materialId();
+    uint32_t materialId(uint32_t tex_image);
 };
 
 } // namespace GBI

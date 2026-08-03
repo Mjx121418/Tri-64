@@ -4,6 +4,7 @@
 namespace GBI {
 
 std::expected<Texture, std::string> decodeTexture(const Material &m,
+                                                  SegmentedAddress tex_image,
                                                   const SegmentTable &seg_table) {
     if (!m.textured) {
         return std::unexpected("material is not textured");
@@ -16,8 +17,20 @@ std::expected<Texture, std::string> decodeTexture(const Material &m,
     const uint16_t h = m.tex_height();
     const uint32_t x0 = m.tex_sl / 4; // 区域起点（纹素）
     const uint32_t y0 = m.tex_tl / 4;
-    // 行跨度 = G_SETTEXIMAGE 的图像宽度；未知时按整图（区域宽）兜底
-    const uint32_t image_width = m.tex_image_width ? m.tex_image_width : w;
+    // 行跨度（源图像行宽）：优先用 G_LOADBLOCK 的 DXT 反推 ——
+    // dxt = ceil(2^11/words_per_line)（CALC_DXT 约定），words_per_line =
+    // 行宽(纹素) × 每纹素字节 / 8；无 DXT（G_LOADTILE）时按整图（区域宽）兜底。
+    const uint32_t image_width = [&]() -> uint32_t {
+        if (m.tex_dxt != 0) {
+            const uint32_t words = (2048 + m.tex_dxt - 1) / m.tex_dxt; // ceil(2^11/dxt)
+            const uint32_t bytes_per_texel = (m.tile_siz == 2) ? 2 : (m.tile_siz == 3) ? 4 : 1;
+            const uint32_t stride = words * 8 / bytes_per_texel;
+            if (stride >= x0 + w) { // 图块必在图像内，行宽不可能小于图块宽
+                return stride;
+            }
+        }
+        return w;
+    }();
 
     Texture tex;
     tex.width = w;
@@ -28,7 +41,7 @@ std::expected<Texture, std::string> decodeTexture(const Material &m,
 
     // 一次读入覆盖区域所需的图像字节（16-bit 行主序）
     const size_t needed = (size_t(y0 + h) * image_width + (x0 + w)) * 2;
-    std::span<const uint8_t> d = seg_table.data(m.tex_image, static_cast<uint32_t>(needed));
+    std::span<const uint8_t> d = seg_table.data(tex_image, static_cast<uint32_t>(needed));
 
     for (uint32_t y = 0; y < h; y++) {
         for (uint32_t x = 0; x < w; x++) {

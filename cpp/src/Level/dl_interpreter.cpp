@@ -20,6 +20,10 @@ Mesh &DLInterpreter::run(SegmentedAddress dl) {
     material_ = {};
     state_.tile_tmem = {};
     state_.tmem_images = {};
+    state_.tex_scale_s = 0;
+    state_.tex_scale_t = 0;
+    state_.tex_image = {};
+    state_.tex_image_width = 0;
 
     SegmentedAddress pc = dl;
     while (!finished) {
@@ -127,11 +131,15 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_LOADBLOCK:
     case G_LOADTILE:
         // 防御性绑定：把当前 G_SETTEXIMAGE 图像绑定到该 tile 的 tmem 槽位
-        if (material_.tex_image.seg >= 0) {
-            const uint32_t img = (uint32_t(material_.tex_image.seg) << 24) |
-                                 (material_.tex_image.offset & 0xFFFFFF);
+        if (state_.tex_image.seg >= 0) {
+            const uint32_t img = (uint32_t(state_.tex_image.seg) << 24) |
+                                 (state_.tex_image.offset & 0xFFFFFF);
             state_.tmem_images[state_.tile_tmem[cmd.tileNum()]] = img;
         }
+        // G_LOADBLOCK 的 DXT（w1 低 12 位）编码了源图像每行的 64 位字数
+        // （dxt = ceil(2^11/words)，见 gbi.h 的 CALC_DXT），纹理解码用它反推行宽；
+        // G_LOADTILE 无 DXT，重置后解码退回图块宽。
+        material_.tex_dxt = (cmd.opcode == G_LOADBLOCK) ? cmd.highT() : 0;
         break;
     case G_SETTILESIZE: {
         // w0: uls<<12 | ult ; w1: lrs<<12 | lrt；尺寸 = (lrs-uls)/4 + 1（RDP 单位 1/4 纹素）
@@ -142,19 +150,24 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         break;
     }
     case G_SETTEXIMAGE:
-        // w0 低 12 位 = 图像宽度，但 SM64 通常传 0（宽度隐含在 SETTILESIZE 区域中）；
-        // 解码时 tex_image_width==0 按区域宽兜底。
-        material_.tex_image.setAddress(cmd.w1);
-        material_.tex_image_width = cmd.w0 & 0xFFF;
+        // 记录到 RSP 状态（RDP 命令状态，不属于材质）。
+        // w0 低 12 位 = 图像行宽字段（gbi.h 存 width-1，SM64 传 1 → 恒为 0，
+        // 纹理解码改用 G_LOADBLOCK 的 DXT 反推行宽）。
+        state_.tex_image.setAddress(cmd.w1);
+        state_.tex_image_width = cmd.w0 & 0xFFF;
         break;
     case G_TEXTURE:
-        // fast3d: G_TEXTURE 的 w0 位 0 切换几何模式的 G_TEXTURE_ENABLE
+        // fast3d: G_TEXTURE 的 w0 位 0 切换几何模式的 G_TEXTURE_ENABLE；
+        // w1 = (S<<16)|T 是纹理坐标缩放（16.16 定点，0xFFFF≈1.0），
+        // 由 dma_VTX 在载入顶点时应用（与开关位无关，G_OFF 也照样存储）。
         if (cmd.w0 & 1) {
             geometry_mode_ |= G_TEXTURE_ENABLE;
         } else {
             geometry_mode_ &= ~G_TEXTURE_ENABLE;
         }
         material_.textured = (geometry_mode_ & G_TEXTURE_ENABLE) != 0;
+        state_.tex_scale_s = (cmd.w1 >> 16) & 0xFFFF;
+        state_.tex_scale_t = cmd.w1 & 0xFFFF;
         break;
     case G_SETGEOMETRYMODE:
         handleGeometryMode(cmd, true);
@@ -215,8 +228,9 @@ void DLInterpreter::handleMtx(const DecodedCommand &cmd) {
 }
 
 void DLInterpreter::handlePopMtx(const DecodedCommand &cmd) {
-    uint8_t n = cmd.popCount();
-    while (n-- > 0 && state_.matrix_stack.size() > 1) {
+    // fast3d 的 imm_POPMTX 固定弹出 1 个矩阵（栈指针 -0x40），w1 被完全忽略
+    // （SM64 的 gSPPopMatrix 传 G_MTX_MODELVIEW=0，见 rsp/fast3d.s imm_POPMTX）。
+    if (state_.matrix_stack.size() > 1) {
         state_.matrix_stack.pop_back(); // 保留栈底单位阵
     }
 }
@@ -231,13 +245,14 @@ void DLInterpreter::handleGeometryMode(const DecodedCommand &cmd, bool set) {
     material_.textured = (geometry_mode_ & G_TEXTURE_ENABLE) != 0;
 }
 
-uint32_t DLInterpreter::materialId() {
+uint32_t DLInterpreter::materialId(uint32_t tex_image) {
     for (size_t i = 0; i < mesh_.materials.size(); i++) {
-        if (mesh_.materials[i] == material_) {
+        if (mesh_.materials[i] == material_ && mesh_.material_images[i] == tex_image) {
             return static_cast<uint32_t>(i);
         }
     }
     mesh_.materials.push_back(material_);
+    mesh_.material_images.push_back(tex_image);
     return static_cast<uint32_t>(mesh_.materials.size() - 1);
 }
 
@@ -285,11 +300,14 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
         printf("DLInterpreter: triangle vertex index out of range (%u,%u,%u)\n", v0, v1, v2);
         return;
     }
-    // 防御性绑定：三角形采样渲染 tile（fast3d 固定 0）对应 tmem 槽位的图像；
-    // 该 tmem 未加载过（=0）时回退到最近 G_SETTEXIMAGE（当前行为）
-    const uint32_t bound = state_.tmem_images[state_.tile_tmem[kRenderTile]];
-    if (bound != 0) {
-        material_.tex_image.setAddress(bound);
+    // 解析本三角形的纹理源：渲染 tile（fast3d 固定 0）对应 tmem 槽位绑定的图像；
+    // 该 tmem 未加载过（=0）时回退到最近 G_SETTEXIMAGE（当前行为）。
+    // 图像是材质去重键的一部分，但属于 drawTriangle 时解析出的 RSP 状态，
+    // 因此记录在 Mesh.material_images（与 materials 并行），而不是 Material 里。
+    uint32_t tex_image = state_.tmem_images[state_.tile_tmem[kRenderTile]];
+    if (tex_image == 0 && state_.tex_image.seg >= 0) {
+        tex_image = (uint32_t(state_.tex_image.seg) << 24) |
+                    (state_.tex_image.offset & 0xFFFFFF);
     }
     uint32_t base = static_cast<uint32_t>(mesh_.vertices.size());
     appendVertex(state_.vertices[v0]);
@@ -298,7 +316,7 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
     mesh_.indices.push_back(base);
     mesh_.indices.push_back(base + 1);
     mesh_.indices.push_back(base + 2);
-    mesh_.material_ids.push_back(materialId());
+    mesh_.material_ids.push_back(materialId(tex_image));
 }
 
 void DLInterpreter::appendVertex(const Vtx &v) {
@@ -316,9 +334,11 @@ void DLInterpreter::appendVertex(const Vtx &v) {
     mv.normal[1] = static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f;
     mv.normal[2] = static_cast<int8_t>(v.coordinate_or_normal[2]) / 127.0f;
     // 纹理坐标：原始 16 位 → 纹素（每纹素 64 个原始单位，见 movtex_make_quad_vertex
-    // 的 scale=1 四边形 = 1984 原始单位 = 31 纹素）→ 按纹理尺寸归一化（1 次平铺 = 1.0）
-    mv.uv[0] = v.texture_coordinate[0] / 64.0f;
-    mv.uv[1] = v.texture_coordinate[1] / 64.0f;
+    // 的 scale=1 四边形 = 1984 原始单位 = 31 纹素），再乘 G_TEXTURE 的 S/T 缩放
+    // （RSP 在 dma_VTX 里执行 raw×scale>>16，见 fast3d.s 的 vmudm）→
+    // 按纹理尺寸归一化（1 次平铺 = 1.0）
+    mv.uv[0] = v.texture_coordinate[0] / 64.0f * (state_.tex_scale_s / 65536.0f);
+    mv.uv[1] = v.texture_coordinate[1] / 64.0f * (state_.tex_scale_t / 65536.0f);
     if (material_.textured && material_.tex_width() > 0 && material_.tex_height() > 0) {
         mv.uv[0] /= material_.tex_width();
         mv.uv[1] /= material_.tex_height();
