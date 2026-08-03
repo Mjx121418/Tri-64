@@ -30,17 +30,17 @@ func _process(delta: float) -> void:
 	right = right.normalized()
 
 	var dir := Vector3.ZERO
-	if Input.is_key_pressed(KEY_W) or Input.is_key_pressed(KEY_UP):
+	if Input.is_key_pressed(KEY_W):
 		dir += forward
-	if Input.is_key_pressed(KEY_S) or Input.is_key_pressed(KEY_DOWN):
+	if Input.is_key_pressed(KEY_S):
 		dir -= forward
-	if Input.is_key_pressed(KEY_A) or Input.is_key_pressed(KEY_LEFT):
+	if Input.is_key_pressed(KEY_A):
 		dir -= right
-	if Input.is_key_pressed(KEY_D) or Input.is_key_pressed(KEY_RIGHT):
+	if Input.is_key_pressed(KEY_D):
 		dir += right
-	if Input.is_key_pressed(KEY_SPACE):
+	if Input.is_key_pressed(KEY_R):
 		dir += Vector3.UP
-	if Input.is_key_pressed(KEY_CTRL):
+	if Input.is_key_pressed(KEY_F):
 		dir -= Vector3.UP
 
 	global_position += dir.normalized() * speed * delta

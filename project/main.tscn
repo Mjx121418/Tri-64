@@ -1,7 +1,7 @@
-[gd_scene load_steps=8 format=3 uid="uid://c7vbb7adv02ob"]
+[gd_scene format=3 uid="uid://c7vbb7adv02ob"]
 
 [ext_resource type="Script" uid="uid://b724ykmnldxac" path="res://main.gd" id="1_main"]
-[ext_resource type="Script" path="res://fly_camera.gd" id="2_cam"]
+[ext_resource type="Script" uid="uid://b2vqvcvn2c5t5" path="res://fly_camera.gd" id="2_cam"]
 
 [sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_1"]
 sky_top_color = Color(0.35, 0.55, 0.9, 1)
@@ -14,124 +14,123 @@ sky_material = SubResource("ProceduralSkyMaterial_1")
 background_mode = 2
 sky = SubResource("Sky_1")
 ambient_light_source = 3
-ambient_light_energy = 0.8
+ambient_light_energy = 2.0
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_1"]
-albedo_color = Color(0.45, 0.5, 0.55, 1)
-shading_mode = 0
-
-[sub_resource type="PlaneMesh" id="PlaneMesh_1"]
-material = SubResource("StandardMaterial3D_1")
-size = Vector2(16000, 16000)
-
-[node name="World" type="Node3D"]
+[node name="World" type="Node3D" unique_id=347377192]
 script = ExtResource("1_main")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=268341073]
 environment = SubResource("Environment_1")
 
-[node name="Sun" type="DirectionalLight3D" parent="."]
+[node name="Sun" type="DirectionalLight3D" parent="." unique_id=875002194]
 unique_name_in_owner = true
-rotation_degrees = Vector3(-50, -35, 0)
+transform = Transform3D(0.81915206, 0.43938506, -0.36868784, 0, 0.64278764, 0.76604444, 0.57357645, -0.62750685, 0.5265408, 0, 0, 0)
 light_energy = 1.3
 shadow_enabled = true
 
-[node name="Camera3D" type="Camera3D" parent="."]
-position = Vector3(2500, 4500, 7500)
-rotation_degrees = Vector3(-35, -25, 0)
+[node name="Camera3D" type="Camera3D" parent="." unique_id=2078550102]
+unique_name_in_owner = true
+transform = Transform3D(0.90630776, 0.24240388, -0.34618863, 0, 0.81915206, 0.57357645, 0.42261827, -0.5198368, 0.74240386, 0, 0, 0)
 far = 30000.0
 script = ExtResource("2_cam")
 
-[node name="GroundGrid" type="MeshInstance3D" parent="."]
-mesh = SubResource("PlaneMesh_1")
+[node name="ModelRoot" type="Node3D" parent="." unique_id=1600000511]
 
-[node name="UI" type="CanvasLayer" parent="."]
+[node name="UI" type="CanvasLayer" parent="." unique_id=1615873474]
 
-[node name="TopBar" type="PanelContainer" parent="UI"]
+[node name="TopBar" type="PanelContainer" parent="UI" unique_id=1126180979]
 anchors_preset = 10
 anchor_right = 1.0
 offset_bottom = 44.0
 grow_horizontal = 2
 
-[node name="HBox" type="HBoxContainer" parent="UI/TopBar"]
+[node name="HBox" type="HBoxContainer" parent="UI/TopBar" unique_id=717212337]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="OpenRomButton" type="Button" parent="UI/TopBar/HBox"]
+[node name="OpenRomButton" type="Button" parent="UI/TopBar/HBox" unique_id=444909423]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(130, 0)
 layout_mode = 2
+focus_mode = 0
 text = "Open ROM"
 
-[node name="RomNameLabel" type="Label" parent="UI/TopBar/HBox"]
+[node name="RomNameLabel" type="Label" parent="UI/TopBar/HBox" unique_id=1572237981]
 unique_name_in_owner = true
 layout_mode = 2
-vertical_alignment = 1
 text = "No ROM selected."
-
-[node name="LevelLabel" type="Label" parent="UI/TopBar/HBox"]
-layout_mode = 2
 vertical_alignment = 1
-text = "Level:"
 
-[node name="LevelOption" type="OptionButton" parent="UI/TopBar/HBox"]
+[node name="LevelLabel" type="Label" parent="UI/TopBar/HBox" unique_id=1505668074]
+layout_mode = 2
+text = "Level:"
+vertical_alignment = 1
+
+[node name="LevelOption" type="OptionButton" parent="UI/TopBar/HBox" unique_id=1294020259]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(300, 0)
 layout_mode = 2
+focus_mode = 0
 disabled = true
 
-[node name="LeftPanel" type="PanelContainer" parent="UI"]
-anchor_top = 0.0
+[node name="LeftPanel" type="PanelContainer" parent="UI" unique_id=1382548952]
+anchors_preset = 9
 anchor_bottom = 1.0
 offset_top = 48.0
 offset_right = 260.0
 offset_bottom = -28.0
 grow_vertical = 2
 
-[node name="VBox" type="VBoxContainer" parent="UI/LeftPanel"]
+[node name="VBox" type="VBoxContainer" parent="UI/LeftPanel" unique_id=1810948297]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="ObjectsTitle" type="Label" parent="UI/LeftPanel/VBox"]
+[node name="ObjectsTitle" type="Label" parent="UI/LeftPanel/VBox" unique_id=127782233]
 layout_mode = 2
 text = "Objects"
 
-[node name="ObjectList" type="ItemList" parent="UI/LeftPanel/VBox"]
+[node name="ObjectList" type="ItemList" parent="UI/LeftPanel/VBox" unique_id=422687451]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
+focus_mode = 0
 
-[node name="Sep" type="HSeparator" parent="UI/LeftPanel/VBox"]
+[node name="Sep" type="HSeparator" parent="UI/LeftPanel/VBox" unique_id=757419781]
 layout_mode = 2
 
-[node name="RenderTitle" type="Label" parent="UI/LeftPanel/VBox"]
+[node name="RenderTitle" type="Label" parent="UI/LeftPanel/VBox" unique_id=790709940]
 layout_mode = 2
 text = "Rendering Options"
 
-[node name="TexturesOption" type="CheckButton" parent="UI/LeftPanel/VBox"]
+[node name="TexturesOption" type="CheckButton" parent="UI/LeftPanel/VBox" unique_id=1429902992]
 unique_name_in_owner = true
 layout_mode = 2
+focus_mode = 0
 button_pressed = true
 text = "Textures"
 
-[node name="LightingOption" type="CheckButton" parent="UI/LeftPanel/VBox"]
+[node name="LightingOption" type="CheckButton" parent="UI/LeftPanel/VBox" unique_id=1710469279]
 unique_name_in_owner = true
 layout_mode = 2
+focus_mode = 0
 button_pressed = true
 text = "Lighting"
 
-[node name="ShadowsOption" type="CheckButton" parent="UI/LeftPanel/VBox"]
+[node name="ShadowsOption" type="CheckButton" parent="UI/LeftPanel/VBox" unique_id=1325857537]
 unique_name_in_owner = true
 layout_mode = 2
+focus_mode = 0
 button_pressed = true
 text = "Shadows"
 
-[node name="WireframeOption" type="CheckButton" parent="UI/LeftPanel/VBox"]
+[node name="WireframeOption" type="CheckButton" parent="UI/LeftPanel/VBox" unique_id=715544434]
 unique_name_in_owner = true
 layout_mode = 2
+focus_mode = 0
 text = "Wireframe"
 
-[node name="StatusBar" type="PanelContainer" parent="UI"]
+[node name="StatusBar" type="PanelContainer" parent="UI" unique_id=798349282]
+anchors_preset = 12
 anchor_top = 1.0
 anchor_right = 1.0
 anchor_bottom = 1.0
@@ -139,12 +138,12 @@ offset_top = -28.0
 grow_horizontal = 2
 grow_vertical = 0
 
-[node name="StatusLabel" type="Label" parent="UI/StatusBar"]
+[node name="StatusLabel" type="Label" parent="UI/StatusBar" unique_id=1704764072]
 unique_name_in_owner = true
 layout_mode = 2
 text = "No ROM loaded."
 
-[node name="RomFileDialog" type="FileDialog" parent="UI"]
+[node name="RomFileDialog" type="FileDialog" parent="UI" unique_id=1383238674]
 unique_name_in_owner = true
 title = "Open ROM"
 ok_button_text = "Open"
