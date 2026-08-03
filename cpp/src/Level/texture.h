@@ -14,8 +14,10 @@ namespace GBI {
 struct Texture {
     uint16_t width {0};
     uint16_t height {0};
-    uint8_t fmt {0};  // 源格式（G_SETTILE）
-    uint8_t siz {0};  // 源位深（G_SETTILE）
+    // 源格式/位深（G_SETTILE 的 fmt/siz）元数据。解码像素后不再被读取，
+    // 保留用于诊断与未来的格式转换。
+    uint8_t fmt {0};
+    uint8_t siz {0};
     std::vector<uint8_t> pixels; // width*height*4, R,G,B,A
 };
 

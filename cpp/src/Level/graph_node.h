@@ -41,6 +41,8 @@ struct GraphNodePerspective {
 };
 
 struct GraphNodeMasterList {
+    // SM64：主列表节点每帧把要渲染的子 DL（带各自的变换矩阵）写进这个列表
+    // 并依次执行。静态导出不填充/使用它（DL 直接由 collectDisplayLists 收集）。
     std::list<DisplayListNode> display_lists;
 };
 
@@ -63,6 +65,8 @@ struct GraphNodeCamera {
     // union {mode; camera} config;
     Vec3<float> pos;
     Vec3<float> focus;
+    // SM64：相机节点的 look-at 矩阵（视图矩阵，由 geo 处理计算）。
+    // 导出不渲染场景，保留以忠实还原 decomp 的结构。
     Mat4<float> look_at;
     int16_t roll;
     int16_t roll_screen;

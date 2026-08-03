@@ -14,16 +14,26 @@ struct MeshVertex {
     float position[3];
     float normal[3];
     float uv[2];
+    // 顶点第 4 个字（coordinate_or_normal）：G_LIGHTING 开启 = 有符号法线
+    // （见 normal）；关闭 = 顶点 RGBA 色（fast3d 的 G_SHADE 插值用）。
+    // 导出未输出顶点色，保留供未来使用。
     uint8_t color[4];
 };
 
 // 材质：RDP 命令累积的渲染状态，三角形按内容归组（材质表去重）
 struct Material {
-    uint32_t combine_w0 {0};         // G_SETCOMBINE 原始字（M3 解析混合方式）
+    // G_SETCOMBINE 的两个 mux 字：选择颜色/alpha 混合的 A/B/C/D 输入
+    // （纹素、prim/env/fog 颜色、alpha 等）。SM64 关卡 DL 用它配置
+    // "纹素 × prim + env" 等组合。导出未解析混合，保留原始字以忠实记录状态。
+    uint32_t combine_w0 {0};
     uint32_t combine_w1 {0};
-    uint8_t prim_color[4] {0, 0, 0, 0}; // G_SETPRIMCOLOR
-    uint8_t env_color[4] {0, 0, 0, 0};  // G_SETENVCOLOR
-    uint8_t fog_color[4] {0, 0, 0, 0};  // G_SETFOGCOLOR
+    uint8_t prim_color[4] {0, 0, 0, 0}; // G_SETPRIMCOLOR（MTL 的 Kd 用）
+    // G_SETENVCOLOR：combine 的 E 输入与 LOD 相关颜色，SM64 用它调制纹素。
+    // 导出未使用，保留以记录材质状态。
+    uint8_t env_color[4] {0, 0, 0, 0};
+    // G_SETFOGCOLOR：RDP 雾混合的颜色（G_FOG 开启时随距离渐入）。
+    // 导出未模拟雾，保留以记录材质状态。
+    uint8_t fog_color[4] {0, 0, 0, 0};
     uint8_t tile_fmt {0};            // G_SETTILE 纹理格式（0=RGBA 2=CI 3=IA 4=I）
     uint8_t tile_siz {0};            // G_SETTILE 位深（0=4b 1=8b 2=16b 3=32b）
     uint16_t tex_sl {0};          // 纹理横坐标最小值
@@ -78,7 +88,9 @@ inline constexpr uint8_t kRenderTile = 0;
 
 // RSP 状态：投影矩阵 + 模型视图矩阵栈 + 顶点缓冲 + RDP 纹理绑定
 struct RSPState {
-    Mtxf projection {};              // 投影矩阵（不应用于网格输出，Godot 自行投影）
+    // 投影矩阵（gSPMatrix 带 MTX_PROJECTION 时载入）：SM64 用它把世界坐标
+    // 变换到 NDC 供光栅化。导出不做投影（Godot 自行投影），仅忠实记录状态。
+    Mtxf projection {};
     std::vector<Mtxf> matrix_stack;  // 模型视图矩阵栈（栈顶 = 当前矩阵，初始为单位阵）
     std::array<Vtx, kVertexBufferSize> vertices {};
     // 防御性纹理绑定：G_SETTILE 记录每个 tile 的 tmem；G_LOADBLOCK/LOADTILE
