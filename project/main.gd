@@ -8,6 +8,7 @@ extends Node3D
 @onready var status_label: Label = %StatusLabel
 @onready var object_list: ItemList = %ObjectList
 @onready var level_option: OptionButton = %LevelOption
+@onready var area_option: OptionButton = %AreaOption
 @onready var camera: Camera3D = %Camera3D
 @onready var model_root: Node3D = $ModelRoot
 
@@ -44,7 +45,11 @@ const LEVELS := [
 	[27, "Princess's Secret Slide"],
 	[28, "Cavern of the Metal Cap"],
 	[29, "Tower of the Wing Cap"],
-	[30, "Wing Mario Over the Rainbow"],
+	[30, "Bowser 1"],
+	[31, "Wing Mario Over the Rainbow"],
+	[33, "Bowser 2"],
+	[34, "Bowser 3"],
+	[36, "Tall, Tall Mountain"],
 ]
 
 # 延迟创建 GodotBridge：只在用到时才实例化，且通过类名字符串查找，
@@ -53,6 +58,7 @@ const LEVELS := [
 var rom_manager: Variant = null
 var _rom_loaded := false
 var selected_level := 9
+var selected_area := 1
 
 func _ensure_bridge() -> bool:
 	if rom_manager == null:
@@ -71,6 +77,7 @@ func _ready() -> void:
 	lighting_option.toggled.connect(_on_lighting_toggled)
 	shadows_option.toggled.connect(_on_shadows_toggled)
 	level_option.item_selected.connect(_on_level_selected)
+	area_option.item_selected.connect(_on_area_selected)
 
 	for level in LEVELS:
 		level_option.add_item("%d  %s" % [level[0], level[1]])
@@ -95,10 +102,33 @@ func _on_rom_file_selected(path: String) -> void:
 	_rom_loaded = true
 	level_option.disabled = false
 	rom_name_label.text = path.get_file()
+	_populate_areas()
 	_extract_and_render()
 
 func _on_level_selected(index: int) -> void:
 	selected_level = level_option.get_item_metadata(index)
+	if _rom_loaded:
+		_populate_areas()
+		_extract_and_render()
+
+## 用 getLevelAreas 查询当前关卡的有效区域，填充 Area 下拉列表。
+func _populate_areas() -> void:
+	area_option.clear()
+	area_option.disabled = true
+	if not _ensure_bridge():
+		return
+	var areas: PackedInt32Array = rom_manager.getLevelAreas(selected_level)
+	if areas.is_empty():
+		return
+	area_option.disabled = false
+	for area in areas:
+		area_option.add_item("Area %d" % area)
+		area_option.set_item_metadata(area_option.item_count - 1, area)
+	area_option.select(0)
+	selected_area = areas[0]
+
+func _on_area_selected(index: int) -> void:
+	selected_area = area_option.get_item_metadata(index)
 	if _rom_loaded:
 		_extract_and_render()
 
@@ -113,7 +143,7 @@ func _extract_and_render() -> void:
 	if not _ensure_bridge():
 		status_label.text = "GDExtension (GodotBridge) is not loaded; cannot extract the level."
 		return
-	if not rom_manager.extractLevel(selected_level, 1):
+	if not rom_manager.extractLevel(selected_level, selected_area):
 		status_label.text = "Extraction failed for level %d." % selected_level
 		return
 
@@ -149,8 +179,9 @@ func _extract_and_render() -> void:
 	camera.global_position = Vector3.ZERO
 	camera.rotation_degrees = Vector3(-35, -25, 0)
 
-	status_label.text = "Level %d: %d meshes, %d materials, %d triangles, %d objects." % [
-			selected_level, meshes.size(), materials.size(), total_triangles, objects.size()]
+	status_label.text = "Level %d, Area %d: %d meshes, %d materials, %d triangles, %d objects." % [
+			selected_level, selected_area, meshes.size(), materials.size(), total_triangles,
+			objects.size()]
 
 func _clear_model() -> void:
 	for child in model_root.get_children():

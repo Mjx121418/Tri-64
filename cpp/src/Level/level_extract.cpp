@@ -71,37 +71,64 @@ void collectDisplayLists(const GraphNode &node, std::vector<SegmentedAddress> &o
 
 } // namespace
 
-Result extract(ROM &rom, int level_num, int area_index) {
-    Result result;
+// 定位脚本段、加载公共段、运行目标关卡的关卡脚本，返回构建好的段表与场景图。
+// rom 必须在调用期间保持有效（seg_table.rom_span 指向 rom.data）。
+struct ScriptContext {
+    SegmentTable seg_table;
+    Level level;
+    bool ok {false};
+    std::string error;
+};
+
+ScriptContext runLevelScript(ROM &rom, int level_num) {
+    ScriptContext ctx;
     if (!rom.is_loaded) {
-        result.error = "ROM not loaded";
-        return result;
+        ctx.error = "ROM not loaded";
+        return ctx;
     }
 
     const size_t scripts_start = findScriptsStart(rom.data);
     const size_t table_pos = findPattern(rom.data, kLevelTablePattern, scripts_start);
     if (scripts_start == rom.data.size() || table_pos == rom.data.size()) {
-        result.error = "could not locate the level scripts segment";
-        return result;
+        ctx.error = "could not locate the level scripts segment";
+        return ctx;
     }
     const size_t table_offset = table_pos - scripts_start;
 
-    SegmentTable seg_table;
-    seg_table.rom_span = std::span(rom.data);
-    seg_table.loadSegment(0x15, static_cast<uint32_t>(scripts_start),
-                          static_cast<uint32_t>(std::min(scripts_start + 0x8000, rom.data.size())));
-    loadCommonSegments(seg_table, rom.data, scripts_start);
+    ctx.seg_table.rom_span = std::span(rom.data);
+    ctx.seg_table.loadSegment(0x15, static_cast<uint32_t>(scripts_start),
+                              static_cast<uint32_t>(
+                                  std::min(scripts_start + 0x8000, rom.data.size())));
+    loadCommonSegments(ctx.seg_table, rom.data, scripts_start);
 
-    Level level;
-    LevelScriptVM vm(seg_table, level);
+    LevelScriptVM vm(ctx.seg_table, ctx.level);
     vm.setLevelNum(level_num);
     vm.execute(SegmentedAddress { 0x15, static_cast<uint32_t>(table_offset) });
 
-    if (area_index < 0 || area_index >= 8 || !level.areas[area_index].root_node) {
+    ctx.ok = true;
+    return ctx;
+}
+
+Result extract(ROM &rom, int level_num, int area_index) {
+    Result result;
+    ScriptContext ctx = runLevelScript(rom, level_num);
+    if (!ctx.ok) {
+        result.error = ctx.error;
+        return result;
+    }
+
+    // 记录该关卡所有有效区域（供 UI 下拉列表使用）
+    for (int i = 0; i < 8; i++) {
+        if (ctx.level.areas[i].root_node) {
+            result.areas.push_back(i);
+        }
+    }
+
+    if (area_index < 0 || area_index >= 8 || !ctx.level.areas[area_index].root_node) {
         result.error = "area " + std::to_string(area_index) + " not found";
         return result;
     }
-    const Area &area = level.areas[area_index];
+    const Area &area = ctx.level.areas[area_index];
 
     // 收集该区域的所有 DL，合并进一个 GBI::Mesh（去重键与 OBJ 导出一致：
     // 材质内容 + 解析出的纹理源图像）。
@@ -110,7 +137,7 @@ Result extract(ROM &rom, int level_num, int area_index) {
 
     GBI::Mesh &merged = result.mesh;
     for (const auto &dl : dls) {
-        GBI::DLInterpreter interp(seg_table);
+        GBI::DLInterpreter interp(ctx.seg_table);
         GBI::Mesh &mesh = interp.run(dl);
 
         const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
@@ -146,7 +173,7 @@ Result extract(ROM &rom, int level_num, int area_index) {
     for (size_t m = 0; m < merged.materials.size(); m++) {
         if (merged.materials[m].textured && merged.material_images[m] != 0) {
             auto tex = GBI::decodeTexture(merged.materials[m],
-                                          segAddress(merged.material_images[m]), seg_table);
+                                          segAddress(merged.material_images[m]), ctx.seg_table);
             if (tex) {
                 result.textures[m] = std::move(*tex);
             }
@@ -156,6 +183,20 @@ Result extract(ROM &rom, int level_num, int area_index) {
     result.objects = area.object_infos;
     result.ok = true;
     return result;
+}
+
+std::vector<int> listAreas(ROM &rom, int level_num) {
+    std::vector<int> areas;
+    ScriptContext ctx = runLevelScript(rom, level_num);
+    if (!ctx.ok) {
+        return areas;
+    }
+    for (int i = 0; i < 8; i++) {
+        if (ctx.level.areas[i].root_node) {
+            areas.push_back(i);
+        }
+    }
+    return areas;
 }
 
 } // namespace LevelExtract

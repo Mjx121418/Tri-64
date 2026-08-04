@@ -24,11 +24,15 @@ struct Result {
     GBI::Mesh mesh;                      // 合并后的网格（含材质表与纹理源图像）
     std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
     std::vector<ObjectSpawnInfo> objects; // 对象出生点（未来的对象列表）
+    std::vector<int> areas;              // 该关卡所有有效区域索引（有 root_node）
 };
 
 // 提取 rom 中 level_num（LevelNum，如 BOB=9）的 area_index 号区域。
 // rom 必须已通过 ROM::load 加载，数据在调用期间保持有效。
 Result extract(ROM &rom, int level_num, int area_index);
+
+// 返回 level_num 关卡的所有有效区域索引（供 UI 的 Area 下拉列表使用）。
+std::vector<int> listAreas(ROM &rom, int level_num);
 
 } // namespace LevelExtract
 

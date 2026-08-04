@@ -13,6 +13,7 @@ using namespace godot;
 void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("loadROM", "path"), &GodotBridge::loadROM);
     ClassDB::bind_method(D_METHOD("ROMLoaded"), &GodotBridge::ROMLoaded);
+    ClassDB::bind_method(D_METHOD("getLevelAreas", "level_num"), &GodotBridge::getLevelAreas);
     ClassDB::bind_method(D_METHOD("extractLevel", "level_num", "area_index"),
                          &GodotBridge::extractLevel);
     ClassDB::bind_method(D_METHOD("getMeshes"), &GodotBridge::getMeshes);
@@ -33,6 +34,17 @@ void GodotBridge::loadROM(String path) {
 
 bool GodotBridge::ROMLoaded() {
     return rom.is_loaded;
+}
+
+PackedInt32Array GodotBridge::getLevelAreas(int level_num) {
+    PackedInt32Array out;
+    if (!rom.is_loaded) {
+        return out;
+    }
+    for (int area : LevelExtract::listAreas(rom, level_num)) {
+        out.push_back(area);
+    }
+    return out;
 }
 
 bool GodotBridge::extractLevel(int level_num, int area_index) {

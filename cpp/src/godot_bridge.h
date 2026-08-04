@@ -21,6 +21,8 @@ protected:
 public:
     void loadROM(String path);
     bool ROMLoaded();
+    // 已加载 ROM 中 level_num 关卡的有效区域索引（供 Area 下拉列表）。
+    PackedInt32Array getLevelAreas(int level_num);
     // 提取已加载 ROM 中 level_num（LevelNum，如 BOB=9）的 area_index 号区域。
     bool extractLevel(int level_num, int area_index);
     // 提取结果（复用 GBI 的 Mesh/Material/Texture 结构）：
