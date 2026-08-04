@@ -53,7 +53,10 @@ void loadCommonSegments(SegmentTable &seg_table, const std::vector<uint8_t> &rom
         const uint32_t rom_end = readBE32(cmd + 8);
 
         if (cmd[0] == 0x18) { // LOAD_MIO0
-            seg_table.loadMIO0Segment(seg, rom_start, rom_end);
+            if (!seg_table.loadMIO0Segment(seg, rom_start, rom_end)) {
+                printf("loadCommonSegments: failed to load MIO0 segment %d from 0x%x-0x%x\n",
+                       seg, rom_start, rom_end);
+            }
         } else if (cmd[0] == 0x17) { // LOAD_RAW
             seg_table.loadSegment(seg, rom_start, rom_end);
         }
@@ -69,7 +72,9 @@ void loadSegment2(SegmentTable &seg_table, const std::vector<uint8_t> &rom_data)
     if (is_editor_hack) {
         seg_table.loadSegment(0x02, 0x803156, 0x81BB64);
     } else {
-        seg_table.loadMIO0Segment(0x02, 0x108A40, 0x114750);
+        if (!seg_table.loadMIO0Segment(0x02, 0x108A40, 0x114750)) {
+            printf("loadSegment2: failed to load vanilla segment 2 from 0x108A40-0x114750\n");
+        }
     }
 }
 
