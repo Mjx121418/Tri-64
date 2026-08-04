@@ -32,6 +32,9 @@ void testExportObj();
 // export/<stem>_area<N>_billboards.obj/.mtl.
 void testExportBillboards();
 
+// Tests level name extraction from segment 2.
+void testLevelName();
+
 // Shared setup for the level script tests: loads the ROM, locates the scripts
 // segment and the level jump table, loads the common segments and runs the
 // level script for BOB. Returns the populated segment table and level.

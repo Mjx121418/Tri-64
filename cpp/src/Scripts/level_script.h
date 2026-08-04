@@ -189,6 +189,8 @@ public:
 
     void setLevelNum(int32_t level_num) { curr_level_num = level_num; }
     void setActNum(int32_t act_num) { curr_act_num = act_num; }
+    int32_t getCourseNum() const { return curr_course_num; }
+    int32_t getLevelNum() const { return curr_level_num; }
 };
 
 #endif /* LEVEL_SCRIPT_H */

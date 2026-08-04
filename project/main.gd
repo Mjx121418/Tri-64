@@ -19,6 +19,7 @@ extends Node3D
 @onready var wireframe_option: CheckButton = %WireframeOption
 
 # 关卡编号 = decomp include/level_table.h 的 LevelNum（BOB = 9）。
+# 名称先从 ROM 段2提取；提取失败时回退到这些硬编码名称。
 const LEVELS := [
 	[4, "Big Boo's Haunt"],
 	[5, "Cool, Cool Mountain"],
@@ -57,6 +58,7 @@ const LEVELS := [
 # 并给出明确错误，而不是整个脚本初始化失败导致按钮无响应）。
 var rom_manager: Variant = null
 var _rom_loaded := false
+var _level_names := {}  # level_num → extracted name cache
 var selected_level := 9
 var selected_area := 1
 
@@ -179,9 +181,18 @@ func _extract_and_render() -> void:
 	camera.global_position = Vector3.ZERO
 	camera.rotation_degrees = Vector3(-35, -25, 0)
 
-	status_label.text = "Level %d, Area %d: %d meshes, %d materials, %d triangles, %d objects." % [
-			selected_level, selected_area, meshes.size(), materials.size(), total_triangles,
+	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects." % [
+			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
 			objects.size()]
+
+	# Lazy update: if the ROM gave us a real name, cache it and update the dropdown.
+	var name: String = rom_manager.getLevelName()
+	if not name.is_empty() and _level_names.get(selected_level, "") != name:
+		_level_names[selected_level] = name
+		for i in level_option.item_count:
+			if level_option.get_item_metadata(i) == selected_level:
+				level_option.set_item_text(i, "%d  %s" % [selected_level, name])
+				break
 
 func _clear_model() -> void:
 	for child in model_root.get_children():

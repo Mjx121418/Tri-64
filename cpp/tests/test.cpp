@@ -20,6 +20,7 @@ int main() {
     printNodeTree(*root, 0);
 
     testRunLevelScript();
+    testLevelName();
     testDisplayList();
     testMatrixSupport();
     testExportObj();

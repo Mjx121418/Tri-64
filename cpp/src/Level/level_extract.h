@@ -25,6 +25,7 @@ struct Result {
     std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
     std::vector<ObjectSpawnInfo> objects; // 对象出生点（未来的对象列表）
     std::vector<int> areas;              // 该关卡所有有效区域索引（有 root_node）
+    std::string level_name;             // 从 ROM 段2提取的关卡名称（可为空）
 };
 
 // 提取 rom 中 level_num（LevelNum，如 BOB=9）的 area_index 号区域。
@@ -33,6 +34,9 @@ Result extract(ROM &rom, int level_num, int area_index);
 
 // 返回 level_num 关卡的所有有效区域索引（供 UI 的 Area 下拉列表使用）。
 std::vector<int> listAreas(ROM &rom, int level_num);
+
+// 仅提取关卡名称（从 seg2_course_name_table），不进行完整的几何提取。
+std::string extractLevelName(ROM &rom, int level_num);
 
 } // namespace LevelExtract
 

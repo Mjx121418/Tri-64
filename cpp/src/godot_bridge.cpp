@@ -19,6 +19,9 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("getMeshes"), &GodotBridge::getMeshes);
     ClassDB::bind_method(D_METHOD("getMaterials"), &GodotBridge::getMaterials);
     ClassDB::bind_method(D_METHOD("getObjects"), &GodotBridge::getObjects);
+    ClassDB::bind_method(D_METHOD("getLevelName"), &GodotBridge::getLevelName);
+    ClassDB::bind_method(D_METHOD("getLevelNameFor", "level_num"),
+                         &GodotBridge::getLevelNameFor);
 }
 
 GodotBridge::GodotBridge() {
@@ -131,8 +134,20 @@ Array GodotBridge::getObjects() {
         d["angle"] = Vector3(obj.start_angle.x, obj.start_angle.y, obj.start_angle.z);
         d["behavior_arg"] = static_cast<int64_t>(obj.behavior_arg);
         d["behavior"] = static_cast<int64_t>((uint32_t(obj.behavior_script.seg) << 24) |
-                                             (obj.behavior_script.offset & 0xFFFFFF));
+                                              (obj.behavior_script.offset & 0xFFFFFF));
         out.push_back(d);
     }
     return out;
+}
+
+String GodotBridge::getLevelName() {
+    return String(result_.level_name.c_str());
+}
+
+String GodotBridge::getLevelNameFor(int level_num) {
+    if (!rom.is_loaded) {
+        return String();
+    }
+    std::string name = LevelExtract::extractLevelName(rom, level_num);
+    return String(name.c_str());
 }

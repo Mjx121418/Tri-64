@@ -101,12 +101,143 @@ ScriptContext runLevelScript(ROM &rom, int level_num) {
                                   std::min(scripts_start + 0x8000, rom.data.size())));
     loadCommonSegments(ctx.seg_table, rom.data, scripts_start);
 
+    // Segment 2 contains the course name table (seg2_course_name_table).
+    // In vanilla SM64 it's MIO0-compressed at ROM 0x108A40-0x114750.
+    // In SM64 Editor hacks it's at 0x800000 with a fake MIO0 header
+    // (the uncompressed data starts at 0x803156).
+    // Detect by checking for a MIO0 header at 0x800000.
+    const bool is_editor_hack = rom.data.size() > 0x800004 &&
+        rom.data[0x800000] == 'M' && rom.data[0x800001] == 'I' &&
+        rom.data[0x800002] == 'O' && rom.data[0x800003] == '0';
+    if (is_editor_hack) {
+        ctx.seg_table.loadSegment(0x02, 0x803156, 0x81BB64);
+    } else {
+        ctx.seg_table.loadMIO0Segment(0x02, 0x108A40, 0x114750);
+    }
+
     LevelScriptVM vm(ctx.seg_table, ctx.level);
     vm.setLevelNum(level_num);
     vm.execute(SegmentedAddress { 0x15, static_cast<uint32_t>(table_offset) });
 
     ctx.ok = true;
     return ctx;
+}
+
+// SM64 US character encoding → ASCII for course name strings.
+// The course names use: space, 0-9, A-Z, ', -, comma, period, null.
+std::string decodeSM64String(const uint8_t *data, size_t max_len) {
+    std::string result;
+    for (size_t i = 0; i < max_len; i++) {
+        uint8_t c = data[i];
+        if (c == 0xFF) break; // null terminator
+        if (c >= 0x00 && c <= 0x09) {
+            result += static_cast<char>('0' + c);
+        } else if (c >= 0x0A && c <= 0x23) {
+            result += static_cast<char>('A' + (c - 0x0A));
+        } else if (c >= 0x24 && c <= 0x3D) {
+            result += static_cast<char>('a' + (c - 0x24));
+        } else if (c == 0x3E) {
+            result += '\'';
+        } else if (c == 0x3F) {
+            result += '.';
+        } else if (c == 0x6F) {
+            result += ',';
+        } else if (c == 0x9E) {
+            result += ' ';
+        } else if (c == 0x9F) {
+            result += '-';
+        } else {
+            result += '?'; // unknown character
+        }
+    }
+    return result;
+}
+
+// Static LevelNum → CourseNum mapping, derived from decomp's level_table.h.
+// Courses not listed here have COURSE_NONE (0) and no entry in the name table.
+static int32_t levelNumToCourseNum(int32_t level_num) {
+    switch (level_num) {
+        case 4:  return 5;   // BBH
+        case 5:  return 4;   // CCM
+        case 7:  return 6;   // HMC
+        case 8:  return 8;   // SSL
+        case 9:  return 1;   // BOB
+        case 10: return 10;  // SL
+        case 11: return 11;  // WDW
+        case 12: return 3;   // JRB
+        case 13: return 13;  // THI
+        case 14: return 14;  // TTC
+        case 15: return 15;  // RR
+        case 17: case 30: return 16; // BITDW / BOWSER_1
+        case 18: return 22;  // VCUTM
+        case 19: case 33: return 17; // BITFS / BOWSER_2
+        case 20: return 24;  // SA
+        case 21: case 34: return 18; // BITS / BOWSER_3
+        case 22: return 7;   // LLL
+        case 23: return 9;   // DDD
+        case 24: return 2;   // WF
+        case 27: return 19;  // PSS
+        case 28: return 20;  // COTMC
+        case 29: return 21;  // TOTWC
+        case 31: return 23;  // WMOTR
+        case 36: return 12;  // TTM
+        default: return 0;   // COURSE_NONE (castle, grounds, unknown, etc.)
+    }
+}
+
+// seg2_course_name_table is at offset 0x10F68 within decompressed segment 2
+// (segmented address 0x0210F68).  It's an array of 27 segmented pointers (u32 each).
+// Segment 2 is always loaded at seg 0x02 by runLevelScript().
+constexpr uint32_t kCourseNameTableOffset = 0x10F68;
+
+std::string readCourseName(SegmentTable &seg_table, int32_t level_num) {
+    const int32_t course_num = levelNumToCourseNum(level_num);
+    if (course_num <= 0 || course_num > 25) {
+        return {};
+    }
+
+    const int16_t seg2 = 0x02;
+
+    // Bounds check: the segment must be large enough for the table + the
+    // requested entry's 4-byte pointer.
+    const size_t table_offset = (course_num - 1) * 4;
+    auto seg_data = seg_table.data(SegmentedAddress { seg2, 0 });
+    if (seg_data.size() <= kCourseNameTableOffset + table_offset + 4) {
+        return {};
+    }
+
+    auto table_data = seg_data.subspan(kCourseNameTableOffset, table_offset + 4);
+    const uint8_t *ptr_bytes = table_data.data() + table_offset;
+    uint32_t str_seg_addr = readBE32(ptr_bytes);
+    if (str_seg_addr == 0) {
+        return {};
+    }
+
+    const uint32_t str_offset = str_seg_addr & 0xFFFFFF;
+    if (str_offset + 256 > seg_data.size()) {
+        return {};
+    }
+    auto str_data = seg_data.subspan(str_offset, 256);
+    if (str_data.size() < 1) {
+        return {};
+    }
+
+    std::string raw = decodeSM64String(str_data.data(), str_data.size());
+
+    // SM64 course name strings have leading spaces and a number prefix like
+    // " 1 BOB-OMB BATTLEFIELD" or "   BOWSER IN THE DARK WORLD".
+    // Strip leading spaces and the course number prefix.
+    size_t start = 0;
+    while (start < raw.size() && raw[start] == ' ') {
+        start++;
+    }
+    while (start < raw.size() && raw[start] >= '0' && raw[start] <= '9') {
+        start++;
+    }
+    while (start < raw.size() && raw[start] == ' ') {
+        start++;
+    }
+    return raw.substr(start);
 }
 
 Result extract(ROM &rom, int level_num, int area_index) {
@@ -181,6 +312,7 @@ Result extract(ROM &rom, int level_num, int area_index) {
     }
 
     result.objects = area.object_infos;
+    result.level_name = readCourseName(ctx.seg_table, level_num);
     result.ok = true;
     return result;
 }
@@ -197,6 +329,14 @@ std::vector<int> listAreas(ROM &rom, int level_num) {
         }
     }
     return areas;
+}
+
+std::string extractLevelName(ROM &rom, int level_num) {
+    ScriptContext ctx = runLevelScript(rom, level_num);
+    if (!ctx.ok) {
+        return {};
+    }
+    return readCourseName(ctx.seg_table, level_num);
 }
 
 } // namespace LevelExtract
