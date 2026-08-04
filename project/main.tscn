@@ -145,5 +145,6 @@ text = "No ROM loaded."
 
 [node name="RomFileDialog" type="FileDialog" parent="UI" unique_id=1383238674]
 unique_name_in_owner = true
+oversampling_override = 1.0
 title = "Open ROM"
 ok_button_text = "Open"

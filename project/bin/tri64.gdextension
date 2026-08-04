@@ -7,4 +7,6 @@ reloadable = true
 [libraries]
 
 macos.debug = "./libtri64.dylib"
+macos.release = "./libtri64.dylib"
 windows.debug.x86_64 = "./tri64.windows.x86_64.dll"
+windows.release.x86_64 = "./tri64.windows.x86_64.dll"

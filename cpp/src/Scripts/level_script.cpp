@@ -1,6 +1,6 @@
 #include "level_script.h"
 #include <bit>
-#include <print>
+#include <cstdio>
 
 namespace {
 
@@ -34,7 +34,7 @@ void LevelScriptVM::execute(SegmentedAddress entry) {
     int64_t executed = 0;
     while (script_status == SCRIPT_RUNNING) {
         if (++executed > MAX_INSTRUCTIONS) {
-            std::println("LevelScriptVM: script did not terminate after {} instructions, aborting.", executed);
+            printf("LevelScriptVM: script did not terminate after %lld instructions, aborting.\n", (long long)executed);
             break;
         }
         ExecuteCommand();
@@ -113,8 +113,8 @@ void LevelScriptVM::ExecuteCommand() {
         case 0x3B: cmdCreateWhirlpool(); break;
         case 0x3C: cmdGetOrSetVar(); break;
         default:
-            std::println("LevelScriptVM: unknown command {:#04x} at seg {:#04x} offset {:#07x}, aborting.",
-                         current_command.opcode, current_command.addr.seg, current_command.addr.offset);
+            printf("LevelScriptVM: unknown command 0x%02x at seg %02x offset %07x, aborting.\n",
+                       current_command.opcode, current_command.addr.seg, current_command.addr.offset);
             script_status = SCRIPT_PAUSED;
     }
 }
@@ -376,7 +376,7 @@ void LevelScriptVM::cmdLoadMIO0() {
     uint32_t rom_start = current_command.cmdGet<uint32_t>(4);
     uint32_t rom_end = current_command.cmdGet<uint32_t>(8);
     if (!seg_table.loadMIO0Segment(seg, rom_start, rom_end)) {
-        std::println("Bad MIO0 segment at {:#x}", seg);
+        printf("Bad MIO0 segment at 0x%x\n", seg);
     }
 
     getNextCommand();
@@ -392,7 +392,7 @@ void LevelScriptVM::cmdLoadMIO0Texture() {
     uint32_t rom_start = current_command.cmdGet<uint32_t>(4);
     uint32_t rom_end = current_command.cmdGet<uint32_t>(8);
     if (!seg_table.loadMIO0Segment(seg, rom_start, rom_end)) {
-        std::println("Bad MIO0 segment at {:#x}", seg);
+        printf("Bad MIO0 segment at 0x%x\n", seg);
     }
 
     getNextCommand();

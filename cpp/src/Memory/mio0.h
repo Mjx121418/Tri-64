@@ -1,6 +1,7 @@
 #ifndef MIO0_H
 #define MIO0_H
 
+#include <cstdint>
 #include <expected>
 #include <span>
 #include <vector>

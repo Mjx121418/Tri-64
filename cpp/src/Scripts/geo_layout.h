@@ -4,6 +4,7 @@
 #include "Level/graph_node.h"
 #include "Memory/segment.h"
 #include <array>
+#include <cstdint>
 
 class GeoLayoutProcessor {
     struct Frame {

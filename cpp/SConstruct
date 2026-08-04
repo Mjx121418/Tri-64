@@ -1,3 +1,6 @@
+import os
+import shutil
+
 env = Environment(tools = ['default', 'compilation_db'])
 
 # For reference:
@@ -50,3 +53,52 @@ compilation_database = env.CompilationDatabase('compile_commands.json', library)
 Default([library, compilation_database])
 
 env.Alias('test', [test, compilation_database])
+
+# ---------------------------------------------------------------------------
+# Windows (x86_64) 交叉编译目标：scons windows
+# 与 mac 构建相同的方式（环境 + 预编译的 godot-cpp 库），仅把编译器换成
+# mingw 交叉工具链（需先安装：brew install mingw-w64）。
+# 产出 ../project/bin/tri64.windows.x86_64.dll，配合 tri64.gdextension 的
+# windows.debug.x86_64 条目使用。首次构建较慢（godot-cpp 要为 Windows
+# 编译一次），之后增量。
+# ---------------------------------------------------------------------------
+mingw_cxx = shutil.which('x86_64-w64-mingw32-g++') or 'x86_64-w64-mingw32-g++'
+mingw_cc = shutil.which('x86_64-w64-mingw32-gcc') or 'x86_64-w64-mingw32-gcc'
+
+godot_cpp_win_lib = 'godot-cpp/bin/libgodot-cpp.windows.template_debug.x86_64.a'
+
+
+# 递归调用 godot-cpp 的 scons 构建 Windows 静态库（macOS 上自动走 MinGW 交叉编译）。
+def build_godot_cpp_windows(target, source, env):
+    if not os.path.exists(mingw_cxx):
+        print('mingw-w64 cross compiler not found; install it with: brew install mingw-w64')
+        return 1
+    return os.system('scons -C godot-cpp platform=windows arch=x86_64 target=template_debug')
+
+
+env.Command(godot_cpp_win_lib, [], build_godot_cpp_windows)
+
+win_env = Environment(
+    CC=mingw_cc,
+    CXX=mingw_cxx,
+    SHLINK=mingw_cxx,
+    CXXFLAGS=['-std=c++26'],
+    # -static：把 libwinpthread/libgcc/libstdc++ 全静态链进去，产物只依赖
+    # 系统 DLL（KERNEL32 + UCRT），无需随游戏分发 mingw 运行库。
+    LINKFLAGS=['-shared', '-static', '-static-libgcc', '-static-libstdc++'],
+    CPPPATH=["src/", "tests/", "src/chart",
+             godot_cpp_path + "/include", godot_cpp_path + "/gen/include"],
+    LIBPATH=[godot_cpp_path + "/bin"],
+    LIBS=["libgodot-cpp.windows.template_debug.x86_64"],
+)
+win_env['SHOBJSUFFIX'] = '.win.o'  # 宿主 darwin 的共享对象后缀是 .os，会与 mac 构建冲突
+win_env['SHLIBSUFFIX'] = '.dll'
+win_env['SHLIBPREFIX'] = ''
+
+windows_dll = win_env.SharedLibrary(
+    target="../project/bin/tri64.windows.x86_64.dll",
+    source=sources,
+)
+win_env.Depends(windows_dll, godot_cpp_win_lib)
+
+env.Alias('windows', windows_dll)

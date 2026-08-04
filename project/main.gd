@@ -47,9 +47,19 @@ const LEVELS := [
 	[30, "Wing Mario Over the Rainbow"],
 ]
 
-var rom_manager := GodotBridge.new()
+# 延迟创建 GodotBridge：只在用到时才实例化，且通过类名字符串查找，
+# 这样即使 GDExtension 未加载，UI 也能正常工作（按钮至少能打开文件对话框，
+# 并给出明确错误，而不是整个脚本初始化失败导致按钮无响应）。
+var rom_manager: Variant = null
 var _rom_loaded := false
 var selected_level := 9
+
+func _ensure_bridge() -> bool:
+	if rom_manager == null:
+		if not ClassDB.class_exists("GodotBridge"):
+			return false
+		rom_manager = ClassDB.instantiate("GodotBridge")
+	return rom_manager != null
 
 func _ready() -> void:
 	open_rom_button.pressed.connect(_on_open_rom_pressed)
@@ -71,9 +81,12 @@ func _ready() -> void:
 	status_label.text = "No ROM loaded. Click \"Open ROM\" to select a .z64 file."
 
 func _on_open_rom_pressed() -> void:
-	file_dialog.popup_centered(Vector2i(900, 600))
+	file_dialog.popup_centered_ratio(0.8)
 
 func _on_rom_file_selected(path: String) -> void:
+	if not _ensure_bridge():
+		status_label.text = "GDExtension (GodotBridge) is not loaded; cannot open the ROM."
+		return
 	rom_manager.loadROM(path)
 	if not rom_manager.ROMLoaded():
 		status_label.text = "Failed to open: %s" % path.get_file()
@@ -97,6 +110,9 @@ func _on_shadows_toggled(enabled: bool) -> void:
 
 ## 用 GodotBridge 提取所选关卡并构建 3D 网格（无需导出 OBJ）。
 func _extract_and_render() -> void:
+	if not _ensure_bridge():
+		status_label.text = "GDExtension (GodotBridge) is not loaded; cannot extract the level."
+		return
 	if not rom_manager.extractLevel(selected_level, 1):
 		status_label.text = "Extraction failed for level %d." % selected_level
 		return

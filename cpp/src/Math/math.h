@@ -1,6 +1,7 @@
 #ifndef MATH_H
 #define MATH_H
 
+#include <cstdint>
 #include <concepts>
 #include <cstdio>
 #include <span>
