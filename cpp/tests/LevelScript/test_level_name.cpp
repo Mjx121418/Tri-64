@@ -16,11 +16,12 @@ void testLevelName() {
         if (!rom.is_loaded) continue;
 
         printf("== %s ==\n", candidate);
-        // Test a few levels: BOB(9), CCM(5), WF(24), BBH(4), LLL(22),
-        // VCUTM(18), CastleGrounds(16, no course), Castle(6, no course)
+        auto all_names = LevelExtract::loadAllLevelNames(rom);
+        printf("  all level names (one-shot): %zu entries\n", all_names.size());
         for (int lv : {9, 5, 24, 4, 22, 18, 16, 6}) {
-            std::string name = LevelExtract::extractLevelName(rom, lv);
-            printf("  LevelNum %2d -> '%s'\n", lv, name.c_str());
+            auto it = all_names.find(lv);
+            printf("  LevelNum %2d -> '%s'\n", lv,
+                   it != all_names.end() ? it->second.c_str() : "");
         }
     }
 }

@@ -60,6 +60,19 @@ void loadCommonSegments(SegmentTable &seg_table, const std::vector<uint8_t> &rom
     }
 }
 
+// Load segment 2 (contains seg2_course_name_table) into the segment table
+// at seg 0x02.  Detects SM64 Editor hacks by the MIO0 header at 0x800000.
+void loadSegment2(SegmentTable &seg_table, const std::vector<uint8_t> &rom_data) {
+    const bool is_editor_hack = rom_data.size() > 0x800004 &&
+        rom_data[0x800000] == 'M' && rom_data[0x800001] == 'I' &&
+        rom_data[0x800002] == 'O' && rom_data[0x800003] == '0';
+    if (is_editor_hack) {
+        seg_table.loadSegment(0x02, 0x803156, 0x81BB64);
+    } else {
+        seg_table.loadMIO0Segment(0x02, 0x108A40, 0x114750);
+    }
+}
+
 void collectDisplayLists(const GraphNode &node, std::vector<SegmentedAddress> &out) {
     if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
         out.push_back(std::get<GraphNodeDisplayList>(node.data).display_list);
@@ -100,20 +113,7 @@ ScriptContext runLevelScript(ROM &rom, int level_num) {
                               static_cast<uint32_t>(
                                   std::min(scripts_start + 0x8000, rom.data.size())));
     loadCommonSegments(ctx.seg_table, rom.data, scripts_start);
-
-    // Segment 2 contains the course name table (seg2_course_name_table).
-    // In vanilla SM64 it's MIO0-compressed at ROM 0x108A40-0x114750.
-    // In SM64 Editor hacks it's at 0x800000 with a fake MIO0 header
-    // (the uncompressed data starts at 0x803156).
-    // Detect by checking for a MIO0 header at 0x800000.
-    const bool is_editor_hack = rom.data.size() > 0x800004 &&
-        rom.data[0x800000] == 'M' && rom.data[0x800001] == 'I' &&
-        rom.data[0x800002] == 'O' && rom.data[0x800003] == '0';
-    if (is_editor_hack) {
-        ctx.seg_table.loadSegment(0x02, 0x803156, 0x81BB64);
-    } else {
-        ctx.seg_table.loadMIO0Segment(0x02, 0x108A40, 0x114750);
-    }
+    loadSegment2(ctx.seg_table, rom.data);
 
     LevelScriptVM vm(ctx.seg_table, ctx.level);
     vm.setLevelNum(level_num);
@@ -337,6 +337,27 @@ std::string extractLevelName(ROM &rom, int level_num) {
         return {};
     }
     return readCourseName(ctx.seg_table, level_num);
+}
+
+std::map<int, std::string> loadAllLevelNames(ROM &rom) {
+    std::map<int, std::string> names;
+    if (!rom.is_loaded) return names;
+
+    SegmentTable seg_table;
+    seg_table.rom_span = std::span(rom.data);
+    loadSegment2(seg_table, rom.data);
+
+    constexpr int kLevels[] = {
+        4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+        20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 33, 34, 36
+    };
+    for (int lv : kLevels) {
+        std::string name = readCourseName(seg_table, lv);
+        if (!name.empty()) {
+            names[lv] = name;
+        }
+    }
+    return names;
 }
 
 } // namespace LevelExtract

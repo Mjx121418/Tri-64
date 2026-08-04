@@ -22,6 +22,7 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("getLevelName"), &GodotBridge::getLevelName);
     ClassDB::bind_method(D_METHOD("getLevelNameFor", "level_num"),
                          &GodotBridge::getLevelNameFor);
+    ClassDB::bind_method(D_METHOD("getAllLevelNames"), &GodotBridge::getAllLevelNames);
 }
 
 GodotBridge::GodotBridge() {
@@ -150,4 +151,16 @@ String GodotBridge::getLevelNameFor(int level_num) {
     }
     std::string name = LevelExtract::extractLevelName(rom, level_num);
     return String(name.c_str());
+}
+
+Dictionary GodotBridge::getAllLevelNames() {
+    Dictionary out;
+    if (!rom.is_loaded) {
+        return out;
+    }
+    auto names = LevelExtract::loadAllLevelNames(rom);
+    for (const auto &[lv, name] : names) {
+        out[static_cast<int64_t>(lv)] = String(name.c_str());
+    }
+    return out;
 }

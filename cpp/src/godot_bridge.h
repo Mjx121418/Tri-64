@@ -42,6 +42,8 @@ public:
     String getLevelName();
     // 查询指定关卡的名称（运行关卡脚本提取 cur_course_num，查 seg2）。
     String getLevelNameFor(int level_num);
+    // 一次性从 segment 2 加载所有已知关卡名称，返回 { level_num: name } 字典。
+    Dictionary getAllLevelNames();
     GodotBridge();
 };
 

@@ -7,6 +7,7 @@
 #include "ROM.h"
 #include "Scripts/level_script.h"
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,10 @@ std::vector<int> listAreas(ROM &rom, int level_num);
 
 // 仅提取关卡名称（从 seg2_course_name_table），不进行完整的几何提取。
 std::string extractLevelName(ROM &rom, int level_num);
+
+// 一次性加载 segment 2 并提取所有已知关卡的名称，无需运行关卡脚本。
+// 返回 LevelNum → 名称 的映射，提取失败的关卡不在映射中。
+std::map<int, std::string> loadAllLevelNames(ROM &rom);
 
 } // namespace LevelExtract
 

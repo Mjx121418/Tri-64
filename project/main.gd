@@ -58,7 +58,6 @@ const LEVELS := [
 # 并给出明确错误，而不是整个脚本初始化失败导致按钮无响应）。
 var rom_manager: Variant = null
 var _rom_loaded := false
-var _level_names := {}  # level_num → extracted name cache
 var selected_level := 9
 var selected_area := 1
 
@@ -104,6 +103,7 @@ func _on_rom_file_selected(path: String) -> void:
 	_rom_loaded = true
 	level_option.disabled = false
 	rom_name_label.text = path.get_file()
+	_populate_levels_from_rom()
 	_populate_areas()
 	_extract_and_render()
 
@@ -112,6 +112,25 @@ func _on_level_selected(index: int) -> void:
 	if _rom_loaded:
 		_populate_areas()
 		_extract_and_render()
+
+## 从 ROM 一次性加载所有关卡名称并填充下拉列表（替代硬编码名称）。
+func _populate_levels_from_rom() -> void:
+	if not _ensure_bridge():
+		return
+	var names: Dictionary = rom_manager.getAllLevelNames()
+	var selected := selected_level
+	level_option.clear()
+	for level in LEVELS:
+		var lv: int = level[0]
+		var name: String = names.get(lv, "")
+		if name.is_empty():
+			name = level[1]
+		level_option.add_item("%d  %s" % [lv, name])
+		level_option.set_item_metadata(level_option.item_count - 1, lv)
+	for i in level_option.item_count:
+		if level_option.get_item_metadata(i) == selected:
+			level_option.select(i)
+			break
 
 ## 用 getLevelAreas 查询当前关卡的有效区域，填充 Area 下拉列表。
 func _populate_areas() -> void:
@@ -184,15 +203,6 @@ func _extract_and_render() -> void:
 	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects." % [
 			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
 			objects.size()]
-
-	# Lazy update: if the ROM gave us a real name, cache it and update the dropdown.
-	var name: String = rom_manager.getLevelName()
-	if not name.is_empty() and _level_names.get(selected_level, "") != name:
-		_level_names[selected_level] = name
-		for i in level_option.item_count:
-			if level_option.get_item_metadata(i) == selected_level:
-				level_option.set_item_text(i, "%d  %s" % [selected_level, name])
-				break
 
 func _clear_model() -> void:
 	for child in model_root.get_children():
