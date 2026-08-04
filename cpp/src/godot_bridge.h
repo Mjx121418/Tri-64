@@ -44,6 +44,8 @@ public:
     String getLevelNameFor(int level_num);
     // 一次性从 segment 2 加载所有已知关卡名称，返回 { level_num: name } 字典。
     Dictionary getAllLevelNames();
+    // Mario 的初始位置与朝向，返回 { pos: Vector3, angle_y: float }。
+    Dictionary getMarioStartPos();
     GodotBridge();
 };
 

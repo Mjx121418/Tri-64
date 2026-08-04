@@ -38,6 +38,9 @@ struct Level {
     std::array<Area, 8> areas;
     std::array<std::unique_ptr<GraphNode>, 0x100> loaded_graph_node;
     GraphNodeStart object_parent;
+    Vec3<int16_t> mario_start_pos {};
+    int16_t mario_start_angle_y {0};
+    int8_t mario_start_area {0};
 };
 
 #endif /* AREA_H */

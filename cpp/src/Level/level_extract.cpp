@@ -312,6 +312,10 @@ Result extract(ROM &rom, int level_num, int area_index) {
     }
 
     result.objects = area.object_infos;
+    result.mario_start_pos = { static_cast<float>(ctx.level.mario_start_pos.x),
+                               static_cast<float>(ctx.level.mario_start_pos.y),
+                               static_cast<float>(ctx.level.mario_start_pos.z) };
+    result.mario_start_angle_y = ctx.level.mario_start_angle_y;
     result.level_name = readCourseName(ctx.seg_table, level_num);
     result.ok = true;
     return result;

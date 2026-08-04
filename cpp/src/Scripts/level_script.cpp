@@ -555,6 +555,9 @@ void LevelScriptVM::cmdUnloadArea() {
 }
 
 void LevelScriptVM::cmdSetMarioStartPos() {
+    level.mario_start_area = current_command.cmdGet<uint8_t>(2);
+    level.mario_start_angle_y = current_command.cmdGet<int16_t>(4) * 0x8000 / 180;
+    level.mario_start_pos = readVec3s(current_command.data, 6);
     getNextCommand();
 }
 

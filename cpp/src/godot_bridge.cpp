@@ -23,6 +23,7 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("getLevelNameFor", "level_num"),
                          &GodotBridge::getLevelNameFor);
     ClassDB::bind_method(D_METHOD("getAllLevelNames"), &GodotBridge::getAllLevelNames);
+    ClassDB::bind_method(D_METHOD("getMarioStartPos"), &GodotBridge::getMarioStartPos);
 }
 
 GodotBridge::GodotBridge() {
@@ -163,4 +164,12 @@ Dictionary GodotBridge::getAllLevelNames() {
         out[static_cast<int64_t>(lv)] = String(name.c_str());
     }
     return out;
+}
+
+Dictionary GodotBridge::getMarioStartPos() {
+    Dictionary d;
+    d["pos"] = Vector3(result_.mario_start_pos.x, result_.mario_start_pos.y,
+                        result_.mario_start_pos.z);
+    d["angle_y"] = static_cast<double>(result_.mario_start_angle_y);
+    return d;
 }

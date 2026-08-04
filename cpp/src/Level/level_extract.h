@@ -27,6 +27,8 @@ struct Result {
     std::vector<ObjectSpawnInfo> objects; // 对象出生点（未来的对象列表）
     std::vector<int> areas;              // 该关卡所有有效区域索引（有 root_node）
     std::string level_name;             // 从 ROM 段2提取的关卡名称（可为空）
+    Vec3<float> mario_start_pos {};     // Mario 的初始位置（关卡脚本 cmdSetMarioStartPos）
+    float mario_start_angle_y {0};      // Mario 的初始朝向（Y 轴旋转角度，弧度）
 };
 
 // 提取 rom 中 level_num（LevelNum，如 BOB=9）的 area_index 号区域。

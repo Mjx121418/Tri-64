@@ -196,8 +196,9 @@ func _extract_and_render() -> void:
 		model_root.add_child(mi)
 		total_triangles += md.indices.size() / 3
 
-	# 相机停在原点（0,0,0），手动飞行探索
-	camera.global_position = Vector3.ZERO
+	# Place the camera at Mario's start position if available.
+	var mario = rom_manager.getMarioStartPos()
+	camera.global_position = mario.pos
 	camera.rotation_degrees = Vector3(-35, -25, 0)
 
 	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects." % [
