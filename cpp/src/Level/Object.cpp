@@ -2,6 +2,7 @@
 
 #include "Level/graph_node.h"
 #include "Math/math.h"
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <optional>
@@ -107,28 +108,32 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
         if constexpr (std::is_same_v<T, GraphNodeDisplayList>) {
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeScale>) {
-            current = mtxfMul(current, mtxfScale(d.scale));
+            // 缩放节点：游戏用 mtxf_scale_vec3f（= diag(s) × mtx，保留平移行），
+            // 即预乘。在 decomp 的矩阵约定下 (A·B)·v = B·(A·v)。
+            current = mtxfMul(mtxfScale(d.scale), current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeTranslation>) {
+            // 平移节点：游戏 mtxf_mul(new, T, current)，预乘（父空间平移）
             current = mtxfMul(
-                current, mtxfTranslation(d.translation.x, d.translation.y, d.translation.z));
+                mtxfTranslation(d.translation.x, d.translation.y, d.translation.z), current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeRotation>) {
-            current = mtxfMul(current, mtxfRotationZXY(d.rotation));
+            current = mtxfMul(mtxfRotationZXY(d.rotation), current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeTranslationRotation>) {
+            // mtxf_rotate_zxy_and_translate = 先旋转后平移（T × R），再预乘
             const Mtxf tr = mtxfMul(
                 mtxfTranslation(d.translation.x, d.translation.y, d.translation.z),
                 mtxfRotationZXY(d.rotation));
-            current = mtxfMul(current, tr);
+            current = mtxfMul(tr, current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeBillboard>) {
             current = mtxfMul(
-                current, mtxfTranslation(d.translation.x, d.translation.y, d.translation.z));
+                mtxfTranslation(d.translation.x, d.translation.y, d.translation.z), current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeAnimatedPart>) {
             current = mtxfMul(
-                current, mtxfTranslation(d.translation.x, d.translation.y, d.translation.z));
+                mtxfTranslation(d.translation.x, d.translation.y, d.translation.z), current);
             node_dl = d.display_list;
         }
     }, node.data);
@@ -136,6 +141,30 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
     if (node_dl) {
         out.push_back(DisplayListWithTransform {*node_dl, current});
     }
+
+    // 开关节点（GEO_SWITCH_CASE）：只取选中的 case。静态导出没有动画，
+    // 默认取 case 0（避免把所有动画帧叠加）。
+    if (std::holds_alternative<GraphNodeSwitchCase>(node.data)) {
+        const auto &sw = std::get<GraphNodeSwitchCase>(node.data);
+        if (!node.children.empty()) {
+            const int16_t idx = sw.selected_case >= 0 ? sw.selected_case : 0;
+            collectDisplayListsWithTransform(
+                *node.children[std::min<size_t>(idx, node.children.size() - 1)], current, out);
+        }
+        return;
+    }
+
+    // LOD 节点（GEO_RENDER_RANGE）：取包含相机距离 0 的档位（近景）。
+    if (std::holds_alternative<GraphNodeLevelOfDetail>(node.data)) {
+        const auto &lod = std::get<GraphNodeLevelOfDetail>(node.data);
+        if (lod.min_distance <= 0 && 0 < lod.max_distance) {
+            for (const auto &child : node.children) {
+                collectDisplayListsWithTransform(*child, current, out);
+            }
+        }
+        return;
+    }
+
     for (const auto &child : node.children) {
         collectDisplayListsWithTransform(*child, current, out);
     }
@@ -244,7 +273,8 @@ void expandSpecialObjects(const std::vector<Collision::SpecialObject> &special_o
         ObjectSpawnInfo info;
         info.model_id = model;
         info.start_pos = {s.x, s.y, s.z};
-        info.start_angle = {0, s.yaw, 0}; // yaw 已是 SM64 角度单位
+        // 出生数据里的 yaw 是 256 一全圈，需转成 SM64 角度单位（同游戏 convert_rotation）。
+        info.start_angle = {0, convertRotation(s.yaw), 0};
         info.area_index = area_index;
         info.active_area_index = area_index;
         out.push_back(info);

@@ -53,6 +53,24 @@ float sm64AngleToRadians(int16_t angle) {
     return angle * (2.0f * 3.14159265358979323846f) / 65536.0f;
 }
 
+int16_t convertRotation(int16_t inRotation) {
+    // 与 decomp 的 convert_rotation 一致（macro_special_objects.c:15）
+    uint16_t rotation = static_cast<uint16_t>(static_cast<uint16_t>(inRotation) & 0xFF) << 8;
+    if (rotation == 0x3F00) {
+        rotation = 0x4000;
+    }
+    if (rotation == 0x7F00) {
+        rotation = 0x8000;
+    }
+    if (rotation == 0xBF00) {
+        rotation = 0xC000;
+    }
+    if (rotation == 0xFF00) {
+        rotation = 0x0000;
+    }
+    return static_cast<int16_t>(rotation);
+}
+
 Mtxf mtxfTranslation(float x, float y, float z) {
     Mtxf m = mtxfIdentity();
     m[3][0] = x;

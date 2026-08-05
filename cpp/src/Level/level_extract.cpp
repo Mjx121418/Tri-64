@@ -83,6 +83,29 @@ void collectDisplayLists(const GraphNode &node, std::vector<SegmentedAddress> &o
     if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
         out.push_back(std::get<GraphNodeDisplayList>(node.data).display_list);
     }
+
+    // 开关节点：只取选中的 case（静态导出 = case 0）
+    if (std::holds_alternative<GraphNodeSwitchCase>(node.data)) {
+        const auto &sw = std::get<GraphNodeSwitchCase>(node.data);
+        if (!node.children.empty()) {
+            const int16_t idx = sw.selected_case >= 0 ? sw.selected_case : 0;
+            collectDisplayLists(*node.children[std::min<size_t>(idx, node.children.size() - 1)],
+                                out);
+        }
+        return;
+    }
+
+    // LOD 节点：取包含相机距离 0 的档位（近景）
+    if (std::holds_alternative<GraphNodeLevelOfDetail>(node.data)) {
+        const auto &lod = std::get<GraphNodeLevelOfDetail>(node.data);
+        if (lod.min_distance <= 0 && 0 < lod.max_distance) {
+            for (const auto &child : node.children) {
+                collectDisplayLists(*child, out);
+            }
+        }
+        return;
+    }
+
     for (const auto &child : node.children) {
         collectDisplayLists(*child, out);
     }

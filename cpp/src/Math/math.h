@@ -51,6 +51,10 @@ Mtxf mtxfMul(const Mtxf &a, const Mtxf &b);
 // SM64 角度单位 → 弧度（全圈 = 65536，0x8000 = 180°）
 float sm64AngleToRadians(int16_t angle);
 
+// 宏/特殊对象出生数据的 yaw（256 一全圈）→ SM64 角度单位。
+// 与 decomp 的 convert_rotation（macro_special_objects.c）一致。
+int16_t convertRotation(int16_t inRotation);
+
 // 平移 / 缩放矩阵
 Mtxf mtxfTranslation(float x, float y, float z);
 Mtxf mtxfScale(float s);

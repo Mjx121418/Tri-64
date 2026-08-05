@@ -327,7 +327,8 @@ void GeoLayoutProcessor::cmdNodeAnimatedPart() {
     SegmentedAddress display_list;
 
     int32_t drawing_layer {readInt<uint8_t>(command_data, 1)};
-    Vec3<int16_t> translation = readVec3s(command_data, 3);
+    // GEO_ANIMATED_PART = CMD_BBH(0x13, layer, x), CMD_HH(y, z), CMD_PTR(dl)
+    Vec3<int16_t> translation = readVec3s(command_data, 2);
     display_list.setAddress(readInt<uint32_t>(command_data, 8));
 
     node->flags = (drawing_layer << 8) | GRAPH_RENDER_ACTIVE;
