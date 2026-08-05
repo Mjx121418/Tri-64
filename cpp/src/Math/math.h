@@ -38,11 +38,8 @@ Vec3<int16_t> readVec3s(std::span<const uint8_t> data, size_t offset);
 Vec3<int16_t> readVec3sAngle(std::span<const uint8_t> data, size_t offset);
 Vec3<float> readVec3sToVec3f(std::span<const uint8_t> data, size_t offset);
 
-template<Number T>
-using Mat4 = T[4][4];
-
 // 4x4 浮点矩阵（行主序，平移在 m[3][0..2]）。与 GBI::Mtxf 同一布局，
-// 供 DL 解释器与对象模型变换烘焙共用。
+// 供 DL 解释器与对象模型变换烘焙共用。统一用这一个矩阵类型。
 using Mtxf = std::array<std::array<float, 4>, 4>;
 
 // 单位阵

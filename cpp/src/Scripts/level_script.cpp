@@ -408,6 +408,8 @@ void LevelScriptVM::cmdInitLevel() {
         level.areas[i].root_node.reset();
         level.areas[i].object_infos.clear();
         level.areas[i].macro_objects.clear();
+        level.areas[i].terrain_addr = {};
+        level.areas[i].rooms_addr = {};
     }
 
     getNextCommand();
@@ -420,6 +422,8 @@ void LevelScriptVM::cmdClearLevel() {
         area.root_node.reset();
         area.object_infos.clear();
         area.macro_objects.clear();
+        area.terrain_addr = {};
+        area.rooms_addr = {};
     }
 
     getNextCommand();
@@ -573,10 +577,20 @@ void LevelScriptVM::cmd2D() {
 }
 
 void LevelScriptVM::cmdSetTerrainData() {
+    // TERRAIN(terrainData)：记录碰撞数据地址（解码在 Collision 模块完成）。
+    if (current_area_index != -1) {
+        level.areas[current_area_index].terrain_addr =
+            segAddress(current_command.cmdGet<uint32_t>(4));
+    }
     getNextCommand();
 }
 
 void LevelScriptVM::cmdSetRooms() {
+    // ROOMS(surfaceRooms)：记录房间列表地址（s8，按静态表面顺序分配）。
+    if (current_area_index != -1) {
+        level.areas[current_area_index].rooms_addr =
+            segAddress(current_command.cmdGet<uint32_t>(4));
+    }
     getNextCommand();
 }
 

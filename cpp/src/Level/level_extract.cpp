@@ -267,6 +267,11 @@ Result extract(ROM &rom, int level_num, int area_index) {
     }
     const Area &area = ctx.level.areas[area_index];
 
+    // 解码碰撞数据（TERRAIN/ROOMS 命令地址）
+    if (area.terrain_addr.seg >= 0 && area.terrain_addr.seg <= 31) {
+        result.collision = Collision::decode(ctx.seg_table, area.terrain_addr, area.rooms_addr);
+    }
+
     // 收集该区域的所有 DL，合并进一个 GBI::Mesh（去重键与 OBJ 导出一致：
     // 材质内容 + 解析出的纹理源图像）。
     std::vector<SegmentedAddress> dls;
@@ -291,9 +296,11 @@ Result extract(ROM &rom, int level_num, int area_index) {
         }
     }
 
-    // 对象出生点 = OBJECT 命令 + MACRO_OBJECTS 展开（preset → 模型 id）。
+    // 对象出生点 = OBJECT 命令 + MACRO_OBJECTS 展开 + 碰撞特殊对象展开。
     std::vector<ObjectSpawnInfo> objects = area.object_infos;
     ObjectExtract::expandMacroObjects(area.macro_objects, static_cast<int8_t>(area_index), objects);
+    ObjectExtract::expandSpecialObjects(result.collision.special_objects,
+                                        static_cast<int8_t>(area_index), objects);
 
     // 对象模型：每个唯一 model id 只解码一次（复用同模型的所有对象实例）。
     // model_id 0（MODEL_NONE，如传送点）没有几何，跳过。

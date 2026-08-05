@@ -41,6 +41,9 @@ public:
     Array getMaterials();
     Array getObjects();
     Array getObjectModels();
+    // 碰撞三角形（当前区域的静态碰撞）：{ vertices: PackedVector3Array,
+    // normals, indices: PackedInt32Array }。平坦着色，每三角形 3 个顶点。
+    Dictionary getCollisionTriangles();
     // 当前提取的关卡名称（从 ROM 段2的 seg2_course_name_table 提取）。
     // 必须在 extractLevel 之后调用，否则返回空字符串。
     String getLevelName();

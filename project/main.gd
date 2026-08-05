@@ -17,6 +17,7 @@ extends Node3D
 @onready var lighting_option: CheckButton = %LightingOption
 @onready var shadows_option: CheckButton = %ShadowsOption
 @onready var wireframe_option: CheckButton = %WireframeOption
+@onready var render_mode_option: OptionButton = %RenderModeOption
 
 # 关卡编号 = decomp include/level_table.h 的 LevelNum（BOB = 9）。
 # 名称先从 ROM 段2提取；提取失败时回退到这些硬编码名称。
@@ -61,6 +62,11 @@ var _rom_loaded := false
 var selected_level := 9
 var selected_area := 1
 
+# 渲染模式：0 = 几何三角形（静态网格 + 对象），1 = 碰撞三角形。
+const RENDER_GEOMETRY := 0
+const RENDER_COLLISION := 1
+var render_mode := RENDER_GEOMETRY
+
 func _ensure_bridge() -> bool:
 	if rom_manager == null:
 		if not ClassDB.class_exists("GodotBridge"):
@@ -79,6 +85,11 @@ func _ready() -> void:
 	shadows_option.toggled.connect(_on_shadows_toggled)
 	level_option.item_selected.connect(_on_level_selected)
 	area_option.item_selected.connect(_on_area_selected)
+	render_mode_option.item_selected.connect(_on_render_mode_selected)
+
+	render_mode_option.add_item("Geometry")
+	render_mode_option.add_item("Collision")
+	render_mode_option.select(RENDER_GEOMETRY)
 
 	for level in LEVELS:
 		level_option.add_item("%d  %s" % [level[0], level[1]])
@@ -159,7 +170,12 @@ func _on_lighting_toggled(enabled: bool) -> void:
 func _on_shadows_toggled(enabled: bool) -> void:
 	sun.shadow_enabled = enabled
 
-## 用 GodotBridge 提取所选关卡并构建 3D 网格（无需导出 OBJ）。
+func _on_render_mode_selected(index: int) -> void:
+	render_mode = index
+	if _rom_loaded:
+		_render_current()
+
+## 用 GodotBridge 提取所选关卡，然后按当前渲染模式渲染。
 func _extract_and_render() -> void:
 	if not _ensure_bridge():
 		status_label.text = "GDExtension (GodotBridge) is not loaded; cannot extract the level."
@@ -167,9 +183,25 @@ func _extract_and_render() -> void:
 	if not rom_manager.extractLevel(selected_level, selected_area):
 		status_label.text = "Extraction failed for level %d." % selected_level
 		return
+	_render_current()
+	_place_camera()
 
+func _render_current() -> void:
 	_clear_model()
+	if render_mode == RENDER_COLLISION:
+		_render_collision()
+	else:
+		_render_geometry()
 
+## 相机只在切换关卡/区域时重新放置；切换渲染模式不移动相机。
+func _place_camera() -> void:
+	var mario = rom_manager.getMarioStartPos()
+	camera.global_position = mario.pos
+	camera.global_position = Vector3(0, 0, 0)
+	camera.rotation_degrees = Vector3(-35, -25, 0)
+
+## 渲染几何三角形：静态网格 + 对象模型（含特殊对象）。
+func _render_geometry() -> void:
 	var materials: Array = rom_manager.getMaterials()
 	var meshes: Array = rom_manager.getMeshes()
 	var objects: Array = rom_manager.getObjects()
@@ -221,15 +253,37 @@ func _extract_and_render() -> void:
 		model_root.add_child(oi)
 		rendered_objects += 1
 
-	# Place the camera at Mario's start position if available.
-	var mario = rom_manager.getMarioStartPos()
-	camera.global_position = mario.pos
-	camera.global_position = Vector3(0, 0, 0)
-	camera.rotation_degrees = Vector3(-35, -25, 0)
-
 	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects (%d rendered)." % [
 			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
 			objects.size(), rendered_objects]
+
+## 渲染碰撞三角形：受光照的蓝色网格。
+func _render_collision() -> void:
+	object_list.clear()
+	var c: Dictionary = rom_manager.getCollisionTriangles()
+	var am := ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = c.vertices
+	arrays[Mesh.ARRAY_NORMAL] = c.normals
+	arrays[Mesh.ARRAY_INDEX] = c.indices
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	var mi := MeshInstance3D.new()
+	mi.mesh = am
+	mi.material_override = _build_collision_material()
+	model_root.add_child(mi)
+
+	status_label.text = "%s, Area %d: collision mode, %d triangles." % [
+			rom_manager.getLevelName(), selected_area, c.indices.size() / 3]
+
+## 碰撞三角形材质：受光照（Per-Pixel）的蓝色，双面显示。
+func _build_collision_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	mat.albedo_color = Color(0.25, 0.45, 1.0)
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return mat
 
 func _clear_model() -> void:
 	for child in model_root.get_children():

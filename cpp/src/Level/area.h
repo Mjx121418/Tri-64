@@ -40,6 +40,8 @@ struct Area {
     uint16_t terrianType;
     std::unique_ptr<GraphNode> root_node;
     // Collision
+    SegmentedAddress terrain_addr {}; // TERRAIN 命令（0x2E）的碰撞数据地址
+    SegmentedAddress rooms_addr {};   // ROOMS 命令（0x2F）的房间列表地址
     // macroObjects
     std::vector<ObjectSpawnInfo> object_infos;
     std::vector<MacroObjectSpawnInfo> macro_objects; // MACRO_OBJECTS 原始条目

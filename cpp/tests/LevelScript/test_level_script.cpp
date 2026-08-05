@@ -222,6 +222,7 @@ void testObjectModels() {
             size_t with_model = 0;
             size_t goombas = 0;
             size_t bobombs = 0;
+            size_t bubble_trees = 0;
             for (const auto &obj : r.objects) {
                 if (obj.model_id != 0) {
                     with_model++;
@@ -232,10 +233,14 @@ void testObjectModels() {
                 if (obj.model_id == 0xBC) { // MODEL_BLACK_BOBOMB
                     bobombs++;
                 }
+                if (obj.model_id == 0x17) { // MODEL_BOB_BUBBLY_TREE（碰撞特殊对象）
+                    bubble_trees++;
+                }
             }
             printf("test_object_models: level %d: objects=%zu (model!=0: %zu), unique models=%zu"
-                   " (goombas=%zu, bobombs=%zu)\n",
-                   level, r.objects.size(), with_model, r.object_models.size(), goombas, bobombs);
+                   " (goombas=%zu, bobombs=%zu, bubble_trees=%zu)\n",
+                   level, r.objects.size(), with_model, r.object_models.size(), goombas, bobombs,
+                   bubble_trees);
             for (const auto &[mid, model] : r.object_models) {
                 printf("  model 0x%02X: %zu verts, %zu tris, %zu materials\n", mid,
                        model.mesh.vertices.size(), model.mesh.indices.size() / 3,
@@ -254,6 +259,10 @@ void testObjectModels() {
             }
             if (level == 9 && is_vanilla && goombas == 0) {
                 printf("test_object_models: FAIL: vanilla BOB has no goombas\n");
+            }
+            // 原版 BOB 的碰撞特殊对象（special_bubble_tree）应展开成模型 0x17
+            if (level == 9 && is_vanilla && bubble_trees == 0) {
+                printf("test_object_models: FAIL: vanilla BOB has no special-object trees\n");
             }
         }
     }

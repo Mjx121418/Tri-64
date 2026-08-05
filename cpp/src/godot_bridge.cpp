@@ -91,6 +91,7 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("getMaterials"), &GodotBridge::getMaterials);
     ClassDB::bind_method(D_METHOD("getObjects"), &GodotBridge::getObjects);
     ClassDB::bind_method(D_METHOD("getObjectModels"), &GodotBridge::getObjectModels);
+    ClassDB::bind_method(D_METHOD("getCollisionTriangles"), &GodotBridge::getCollisionTriangles);
     ClassDB::bind_method(D_METHOD("getLevelName"), &GodotBridge::getLevelName);
     ClassDB::bind_method(D_METHOD("getLevelNameFor", "level_num"),
                          &GodotBridge::getLevelNameFor);
@@ -172,6 +173,33 @@ Array GodotBridge::getObjectModels() {
         out.push_back(d);
     }
     return out;
+}
+
+// 当前区域的静态碰撞三角形（平坦着色蓝色）。
+Dictionary GodotBridge::getCollisionTriangles() {
+    Dictionary d;
+    const Collision::TriangleMesh mesh = Collision::buildTriangleMesh(result_.collision);
+
+    PackedVector3Array verts;
+    PackedVector3Array normals;
+    PackedInt32Array indices;
+    verts.resize(static_cast<int>(mesh.positions.size()));
+    normals.resize(static_cast<int>(mesh.normals.size()));
+    for (size_t i = 0; i < mesh.positions.size(); i++) {
+        verts.set(i, Vector3(mesh.positions[i].x, mesh.positions[i].y, mesh.positions[i].z));
+    }
+    for (size_t i = 0; i < mesh.normals.size(); i++) {
+        normals.set(i, Vector3(mesh.normals[i].x, mesh.normals[i].y, mesh.normals[i].z));
+    }
+    indices.resize(static_cast<int>(mesh.indices.size()));
+    for (size_t i = 0; i < mesh.indices.size(); i++) {
+        indices.set(i, static_cast<int32_t>(mesh.indices[i]));
+    }
+
+    d["vertices"] = verts;
+    d["normals"] = normals;
+    d["indices"] = indices;
+    return d;
 }
 
 String GodotBridge::getLevelName() {

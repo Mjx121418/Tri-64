@@ -5,11 +5,12 @@
 #include "Level/dl_interpreter.h"
 #include "Level/texture.h"
 #include "Memory/segment.h"
+#include "Scripts/Collision.h"
 #include <cstdint>
 #include <map>
 #include <vector>
 
-// 对象相关逻辑（对象模型解码 + MACRO_OBJECTS 展开），与关卡几何提取
+// 对象相关逻辑（对象模型解码 + MACRO_OBJECTS/特殊对象展开），与关卡几何提取
 // （LevelExtract）分离，避免 level_extract.cpp 过大。
 namespace ObjectExtract {
 
@@ -33,6 +34,11 @@ ObjectModel decodeModel(const SegmentTable &seg_table, const GraphNode *node);
 // 跳过 MODEL_NONE / 生成器（preset 表来自 decomp 的 macro_presets.inc.c）。
 void expandMacroObjects(const std::vector<MacroObjectSpawnInfo> &macro_objects,
                         int8_t area_index, std::vector<ObjectSpawnInfo> &out);
+
+// 把碰撞数据里的特殊对象（TERRAIN_LOAD_OBJECTS）展开成对象出生点：
+// preset → 模型 id 解析（special_presets.inc.c），跳过 MODEL_NONE。
+void expandSpecialObjects(const std::vector<Collision::SpecialObject> &special_objects,
+                          int8_t area_index, std::vector<ObjectSpawnInfo> &out);
 
 } // namespace ObjectExtract
 
