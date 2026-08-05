@@ -1,6 +1,7 @@
 #ifndef LEVEL_EXTRACT_H
 #define LEVEL_EXTRACT_H
 
+#include "Level/Object.h"
 #include "Level/dl_interpreter.h"
 #include "Level/texture.h"
 #include "Memory/segment.h"
@@ -17,6 +18,7 @@
 // LevelNum 分发到目标关卡）→ 遍历该关卡的 Area 场景图收集 DL → DL 解释器
 // 生成网格 → 跨 DL 合并（复用 GBI::Mesh/Material，按内容 + 纹理源图像去重）
 // → 解码每材质纹理为 RGBA8（复用 GBI::Texture）。
+// 对象模型解码与 MACRO_OBJECTS 展开在 ObjectExtract（Level/Object.*）完成。
 namespace LevelExtract {
 
 struct Result {
@@ -25,6 +27,7 @@ struct Result {
     GBI::Mesh mesh;                      // 合并后的网格（含材质表与纹理源图像）
     std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
     std::vector<ObjectSpawnInfo> objects; // 对象出生点（未来的对象列表）
+    std::map<int16_t, ObjectExtract::ObjectModel> object_models; // 对象模型缓存（按 model id 去重）
     std::vector<int> areas;              // 该关卡所有有效区域索引（有 root_node）
     std::string level_name;             // 从 ROM 段2提取的关卡名称（可为空）
     Vec3<float> mario_start_pos {};     // Mario 的初始位置（关卡脚本 cmdSetMarioStartPos）

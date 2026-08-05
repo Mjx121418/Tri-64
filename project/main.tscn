@@ -73,12 +73,12 @@ layout_mode = 2
 focus_mode = 0
 disabled = true
 
-[node name="AreaLabel" type="Label" parent="UI/TopBar/HBox"]
+[node name="AreaLabel" type="Label" parent="UI/TopBar/HBox" unique_id=2101412698]
 layout_mode = 2
-vertical_alignment = 1
 text = "Area:"
+vertical_alignment = 1
 
-[node name="AreaOption" type="OptionButton" parent="UI/TopBar/HBox"]
+[node name="AreaOption" type="OptionButton" parent="UI/TopBar/HBox" unique_id=335791403]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(90, 0)
 layout_mode = 2

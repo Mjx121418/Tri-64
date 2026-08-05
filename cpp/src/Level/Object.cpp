@@ -1,0 +1,210 @@
+#include "Level/Object.h"
+
+#include "Level/graph_node.h"
+#include "Math/math.h"
+#include <array>
+#include <cmath>
+#include <optional>
+#include <variant>
+
+namespace ObjectExtract {
+
+namespace {
+
+// MACRO_OBJECTS 的 preset id → 模型 id（按 decomp 的 enum MacroPresets 顺序，
+// 从 include/macro_presets.inc.c + model_ids.h 生成；0 = MODEL_NONE/生成器，
+// 这些对象没有几何，跳过）。
+constexpr std::array<int16_t, 366> kMacroPresetModels {
+    0x74, 0x74, 0x76, 0x76, 0xD7, 0x74, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x74, 0x74, 0x74, 0x74, 0x74, 0x7A, 0x7C, 0xC9, 0xC3,
+    0xBB, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0xC0, 0x00, 0x00, 0x00, 0xDF,
+    0x80, 0xC0, 0xC2, 0xC2, 0x7D, 0xB5, 0xB4, 0xCE, 0x78, 0xD4, 0xD4, 0xD4,
+    0xD4, 0x00, 0xD4, 0xD4, 0x74, 0x8C, 0x76, 0x55, 0x55, 0x55, 0x55, 0x81,
+    0x89, 0x89, 0x89, 0x89, 0x89, 0x89, 0x89, 0x89, 0x89, 0x81, 0x81, 0xD9,
+    0x82, 0xCF, 0x81, 0x81, 0x81, 0x81, 0xBE, 0x89, 0x74, 0x54, 0x59, 0x74,
+    0x58, 0xB4, 0xDC, 0x81, 0xBB, 0xBB, 0x74, 0x74, 0x74, 0x56, 0x57, 0x74,
+    0x58, 0x00, 0x00, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x6B, 0x00,
+    0x54, 0x68, 0x00, 0xBC, 0x80, 0xC3, 0x80, 0xBC, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x54, 0x74, 0x55, 0x56, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x74, 0x74, 0x57, 0x56, 0x00, 0x00, 0xC7, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x55, 0x55, 0x54, 0xDC, 0x74,
+    0x57, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x54, 0x55, 0x55,
+    0x74, 0x57, 0x57, 0x57, 0x55, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x56, 0x56, 0x56,
+    0x54, 0x54, 0x54, 0x54, 0x55, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x00, 0x00, 0x65, 0xB3, 0x00, 0x00,
+    0x68, 0x68, 0x69, 0x58, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x56,
+    0x56, 0x64, 0x74, 0x67, 0x66, 0x74, 0x68, 0xBF, 0x6B, 0x64, 0x64, 0x68,
+    0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x64, 0x64, 0x00, 0x00, 0x65, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x54, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x40,
+    0x41, 0x42, 0x43, 0x44, 0x39, 0x3A, 0x74, 0x74, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x74, 0x89, 0x89, 0x89, 0x89, 0x89, 0x74, 0x74, 0x74, 0x74,
+    0x74, 0x74, 0x36, 0x37, 0x38, 0x39, 0x41, 0x74, 0x74, 0x3D, 0x3E, 0x3F,
+    0x40, 0x74, 0x74, 0x74, 0x74, 0x74,
+};
+
+// 把图节点变换（缩放/旋转/平移）烘焙进网格顶点与法线。
+void applyTransform(GBI::Mesh &mesh, const Mtxf &m) {
+    for (auto &v : mesh.vertices) {
+        const Vec3<float> p = transformPoint(m, {v.position[0], v.position[1], v.position[2]});
+        v.position[0] = p.x;
+        v.position[1] = p.y;
+        v.position[2] = p.z;
+        const Vec3<float> n = transformNormal(m, {v.normal[0], v.normal[1], v.normal[2]});
+        v.normal[0] = n.x;
+        v.normal[1] = n.y;
+        v.normal[2] = n.z;
+    }
+}
+
+struct DisplayListWithTransform {
+    SegmentedAddress dl;
+    Mtxf transform;
+};
+
+// 遍历对象模型的 geo 图节点，累积缩放/旋转/平移，收集 (DL, 变换) 对。
+// 相机朝向类节点（billboard / animated part）按静态导出一律只烘焙平移，
+// 不做朝向相机的处理（未来支持 billboard 渲染时再扩展）。
+void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
+                                      std::vector<DisplayListWithTransform> &out) {
+    Mtxf current = parent;
+    std::optional<SegmentedAddress> node_dl;
+
+    std::visit([&](const auto &d) {
+        using T = std::decay_t<decltype(d)>;
+        if constexpr (std::is_same_v<T, GraphNodeDisplayList>) {
+            node_dl = d.display_list;
+        } else if constexpr (std::is_same_v<T, GraphNodeScale>) {
+            current = mtxfMul(current, mtxfScale(d.scale));
+            node_dl = d.display_list;
+        } else if constexpr (std::is_same_v<T, GraphNodeTranslation>) {
+            current = mtxfMul(
+                current, mtxfTranslation(d.translation.x, d.translation.y, d.translation.z));
+            node_dl = d.display_list;
+        } else if constexpr (std::is_same_v<T, GraphNodeRotation>) {
+            current = mtxfMul(current, mtxfRotationZXY(d.rotation));
+            node_dl = d.display_list;
+        } else if constexpr (std::is_same_v<T, GraphNodeTranslationRotation>) {
+            const Mtxf tr = mtxfMul(
+                mtxfTranslation(d.translation.x, d.translation.y, d.translation.z),
+                mtxfRotationZXY(d.rotation));
+            current = mtxfMul(current, tr);
+            node_dl = d.display_list;
+        } else if constexpr (std::is_same_v<T, GraphNodeBillboard>) {
+            current = mtxfMul(
+                current, mtxfTranslation(d.translation.x, d.translation.y, d.translation.z));
+            node_dl = d.display_list;
+        } else if constexpr (std::is_same_v<T, GraphNodeAnimatedPart>) {
+            current = mtxfMul(
+                current, mtxfTranslation(d.translation.x, d.translation.y, d.translation.z));
+            node_dl = d.display_list;
+        }
+    }, node.data);
+
+    if (node_dl) {
+        out.push_back(DisplayListWithTransform {*node_dl, current});
+    }
+    for (const auto &child : node.children) {
+        collectDisplayListsWithTransform(*child, current, out);
+    }
+}
+
+} // namespace
+
+void mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src) {
+    const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
+    merged.vertices.insert(merged.vertices.end(), src.vertices.begin(), src.vertices.end());
+    merged.indices.reserve(merged.indices.size() + src.indices.size());
+    for (uint32_t idx : src.indices) {
+        merged.indices.push_back(base + idx);
+    }
+
+    const size_t tri_count = src.indices.size() / 3;
+    merged.material_ids.reserve(merged.material_ids.size() + tri_count);
+    for (size_t t = 0; t < tri_count; t++) {
+        const uint32_t mi = src.material_ids[t];
+        const GBI::Material &m = src.materials[mi];
+        const uint32_t img = src.material_images[mi];
+        uint32_t mid = 0;
+        for (; mid < merged.materials.size(); mid++) {
+            if (merged.materials[mid] == m && merged.material_images[mid] == img) {
+                break;
+            }
+        }
+        if (mid == merged.materials.size()) {
+            merged.materials.push_back(m);
+            merged.material_images.push_back(img);
+        }
+        merged.material_ids.push_back(mid);
+    }
+}
+
+ObjectModel decodeModel(const SegmentTable &seg_table, const GraphNode *node) {
+    ObjectModel model;
+    if (!node) {
+        return model;
+    }
+
+    std::vector<DisplayListWithTransform> dls;
+    collectDisplayListsWithTransform(*node, mtxfIdentity(), dls);
+    if (dls.empty()) {
+        return model;
+    }
+
+    GBI::Mesh merged;
+    for (const auto &dlt : dls) {
+        // Treasure World 等 hack 的对象模型 geo 里可能有空/无效 DL 地址
+        // （0x00000000 / 0xFFFFFFFF），跳过而不是去解码（见 docs/engine-notes.md）。
+        if (dlt.dl.seg < 0 || dlt.dl.seg > 31 || (dlt.dl.seg == 0 && dlt.dl.offset == 0)) {
+            continue;
+        }
+        GBI::DLInterpreter interp(seg_table);
+        GBI::Mesh &decoded = interp.run(dlt.dl);
+        applyTransform(decoded, dlt.transform);
+        mergeMesh(merged, std::move(decoded));
+    }
+    if (merged.indices.empty()) {
+        return model;
+    }
+
+    model.mesh = std::move(merged);
+    model.textures.resize(model.mesh.materials.size());
+    for (size_t m = 0; m < model.mesh.materials.size(); m++) {
+        if (model.mesh.materials[m].textured && model.mesh.material_images[m] != 0) {
+            auto tex = GBI::decodeTexture(model.mesh.materials[m],
+                                          segAddress(model.mesh.material_images[m]), seg_table);
+            if (tex) {
+                model.textures[m] = std::move(*tex);
+            }
+        }
+    }
+    return model;
+}
+
+void expandMacroObjects(const std::vector<MacroObjectSpawnInfo> &macro_objects, int8_t area_index,
+                        std::vector<ObjectSpawnInfo> &out) {
+    for (const auto &m : macro_objects) {
+        if (m.preset < 0 || static_cast<size_t>(m.preset) >= kMacroPresetModels.size()) {
+            continue;
+        }
+        const int16_t model = kMacroPresetModels[m.preset];
+        if (model == 0) {
+            continue; // MODEL_NONE / 生成器（如 goomba 生成器、coin 编队）
+        }
+        ObjectSpawnInfo info;
+        info.model_id = model;
+        info.start_pos = m.pos;
+        info.start_angle = {0, m.yaw, 0};
+        info.area_index = area_index;
+        info.active_area_index = area_index;
+        info.behavior_arg = static_cast<uint32_t>(static_cast<uint16_t>(m.bhv_param));
+        out.push_back(info);
+    }
+}
+
+} // namespace ObjectExtract

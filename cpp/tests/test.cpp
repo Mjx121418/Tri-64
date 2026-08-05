@@ -21,6 +21,7 @@ int main() {
 
     testRunLevelScript();
     testLevelName();
+    testObjectModels();
     testDisplayList();
     testMatrixSupport();
     testExportObj();

@@ -17,11 +17,21 @@ struct WarpNode {
 struct ObjectSpawnInfo {
     Vec3<int16_t> start_pos;
     Vec3<int16_t> start_angle;
+    int16_t model_id {0}; // OBJECT 命令第 3 字节：模型 id（0 = MODEL_NONE）
     int8_t area_index;
     int8_t active_area_index;
     uint32_t behavior_arg;
     SegmentedAddress behavior_script;
     // GraphNode;
+};
+
+// MACRO_OBJECTS 命令（0x39）里的原始条目：preset 索引 + 出生数据。
+// preset → 模型 id 的解析在 LevelExtract 完成（LevelScriptVM 不关心模型）。
+struct MacroObjectSpawnInfo {
+    int16_t preset {0};
+    int16_t yaw {0};       // SM64 角度单位（0x8000 = 180°）
+    Vec3<int16_t> pos {};
+    int16_t bhv_param {0};
 };
 
 struct Area {
@@ -32,6 +42,7 @@ struct Area {
     // Collision
     // macroObjects
     std::vector<ObjectSpawnInfo> object_infos;
+    std::vector<MacroObjectSpawnInfo> macro_objects; // MACRO_OBJECTS 原始条目
 };
 
 struct Level {

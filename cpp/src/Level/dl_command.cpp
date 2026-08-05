@@ -13,28 +13,6 @@ DecodedCommand decodeDLCommand(SegmentedAddress addr, const SegmentTable &seg_ta
     return cmd;
 }
 
-Mtxf mtxfIdentity() {
-    Mtxf m {};
-    for (int i = 0; i < 4; i++) {
-        m[i][i] = 1.0f;
-    }
-    return m;
-}
-
-Mtxf mtxfMul(const Mtxf &a, const Mtxf &b) {
-    Mtxf out {};
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 4; j++) {
-            float sum = 0.0f;
-            for (int k = 0; k < 4; k++) {
-                sum += a[i][k] * b[k][j];
-            }
-            out[i][j] = sum;
-        }
-    }
-    return out;
-}
-
 Mtxf decodeMtx(SegmentedAddress addr, const SegmentTable &seg_table) {
     std::span<const uint8_t> d = seg_table.data(addr, 64);
     Mtxf m {};

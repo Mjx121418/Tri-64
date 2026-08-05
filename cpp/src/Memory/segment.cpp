@@ -44,6 +44,14 @@ void SegmentTable::loadSegment(int16_t seg, uint32_t rom_start, uint32_t rom_end
     
     segments[seg].is_compressed = false;
     segments[seg].decompressed_data.clear();
+    // 防御性边界检查：hack 的 LOAD_RAW 命令可能越界（否则 span 会指向
+    // 越界内存，后续读取导致未定义行为/崩溃）。
+    if (rom_start > rom_span.size() || rom_end > rom_span.size() || rom_start > rom_end) {
+        printf("loadSegment: invalid range seg=%d rom=0x%x-0x%x (rom size 0x%zx)\n", seg,
+               rom_start, rom_end, rom_span.size());
+        segments[seg].data = {};
+        return;
+    }
     segments[seg].data = std::span<uint8_t>(rom_span.begin() + rom_start, rom_span.begin() + rom_end);
 }
 

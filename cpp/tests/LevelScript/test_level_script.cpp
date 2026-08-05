@@ -2,6 +2,7 @@
 
 #include "Level/area.h"
 #include "Level/dl_interpreter.h"
+#include "Level/level_extract.h"
 #include "Level/texture.h"
 #include "Memory/segment.h"
 #include "ROM.h"
@@ -191,6 +192,70 @@ void testRunLevelScript() {
             }
         }
         printf("loaded graph nodes (models): %zu\n", loaded_models);
+    }
+}
+
+// 对象驱动的 Bowser 关卡（17 BITDW / 19 BITFS / 21 BITS）静态几何极少，
+// 大部分内容是 OBJECT 命令生成的对象模型。验证 model_id 被记录，且
+// 每个唯一模型只解码一次（对象实例共享模型资源）。
+void testObjectModels() {
+    const auto roms = findRoms();
+    if (roms.empty()) {
+        return;
+    }
+
+    for (const auto &path : roms) {
+        ROM rom;
+        rom.load(path);
+        if (!rom.is_loaded) {
+            continue;
+        }
+
+        for (int level : {9, 17, 19, 21}) {
+            LevelExtract::Result r = LevelExtract::extract(rom, level, 1);
+            if (!r.ok) {
+                printf("test_object_models: level %d extract failed: %s\n", level,
+                       r.error.c_str());
+                continue;
+            }
+
+            size_t with_model = 0;
+            size_t goombas = 0;
+            size_t bobombs = 0;
+            for (const auto &obj : r.objects) {
+                if (obj.model_id != 0) {
+                    with_model++;
+                }
+                if (obj.model_id == 0xC0) { // MODEL_GOOMBA（经 MACRO_OBJECTS 展开）
+                    goombas++;
+                }
+                if (obj.model_id == 0xBC) { // MODEL_BLACK_BOBOMB
+                    bobombs++;
+                }
+            }
+            printf("test_object_models: level %d: objects=%zu (model!=0: %zu), unique models=%zu"
+                   " (goombas=%zu, bobombs=%zu)\n",
+                   level, r.objects.size(), with_model, r.object_models.size(), goombas, bobombs);
+            for (const auto &[mid, model] : r.object_models) {
+                printf("  model 0x%02X: %zu verts, %zu tris, %zu materials\n", mid,
+                       model.mesh.vertices.size(), model.mesh.indices.size() / 3,
+                       model.mesh.materials.size());
+            }
+
+            // 同一模型只解码一次：去重后的模型数不能超过引用模型的对象数
+            if (r.object_models.size() > with_model) {
+                printf("test_object_models: FAIL: more models than objects referencing them\n");
+            }
+            // BOB 的 MACRO_OBJECTS 应展开出对象：原版有 goomba/黑炸弹，
+            // hack（如 Treasure World）可能移除 goomba，但至少应有炸弹。
+            const bool is_vanilla = path.filename().string().find("baserom") != std::string::npos;
+            if (level == 9 && bobombs == 0) {
+                printf("test_object_models: FAIL: BOB has no bobombs\n");
+            }
+            if (level == 9 && is_vanilla && goombas == 0) {
+                printf("test_object_models: FAIL: vanilla BOB has no goombas\n");
+            }
+        }
     }
 }
 

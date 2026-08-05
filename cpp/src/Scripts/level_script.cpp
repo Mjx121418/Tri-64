@@ -407,6 +407,7 @@ void LevelScriptVM::cmdInitLevel() {
         level.areas[i].flag = 0;
         level.areas[i].root_node.reset();
         level.areas[i].object_infos.clear();
+        level.areas[i].macro_objects.clear();
     }
 
     getNextCommand();
@@ -418,6 +419,7 @@ void LevelScriptVM::cmdClearLevel() {
     for (auto &area : level.areas) {
         area.root_node.reset();
         area.object_infos.clear();
+        area.macro_objects.clear();
     }
 
     getNextCommand();
@@ -519,6 +521,7 @@ void LevelScriptVM::cmdPlaceObject() {
 
     if (current_area_index != -1 && ((acts & act_mask) || acts == 0x1F)) {
         ObjectSpawnInfo info;
+        info.model_id = current_command.cmdGet<uint8_t>(3); // OBJECT 命令第 3 字节
         info.start_pos = readVec3s(current_command.data, 4);
         info.start_angle.x = (readInt<int16_t>(current_command.data, 10) * 0x8000) / 180;
         info.start_angle.y = (readInt<int16_t>(current_command.data, 12) * 0x8000) / 180;
@@ -618,6 +621,31 @@ void LevelScriptVM::cmd38() {
 }
 
 void LevelScriptVM::cmdSetMacroObjects() {
+    // MACRO_OBJECTS(objList)：objList 是当前关卡段里的 s16 数组。
+    // 每个条目 5 个 s16：w0 = (preset+0x1F) | (yaw<<9)，w1..3 = XYZ，
+    // w4 = bhvParam；以 -1（或 presetID < 0）结束。
+    // 只记录原始条目，preset → 模型 id 的解析留给 LevelExtract。
+    if (current_area_index != -1) {
+        const SegmentedAddress list_addr = segAddress(current_command.cmdGet<uint32_t>(4));
+        auto data = seg_table.data(list_addr);
+        size_t i = 0;
+        while (i + 5 * 2 <= data.size()) {
+            const int16_t w0 = readInt<int16_t>(data, i);
+            if (w0 == -1 || ((w0 & 0x1FF) - 31) < 0) {
+                break;
+            }
+            MacroObjectSpawnInfo info;
+            info.preset = (w0 & 0x1FF) - 31;
+            info.yaw = ((w0 >> 9) & 0x7F) << 9;
+            info.pos.x = readInt<int16_t>(data, i + 2);
+            info.pos.y = readInt<int16_t>(data, i + 4);
+            info.pos.z = readInt<int16_t>(data, i + 6);
+            info.bhv_param = readInt<int16_t>(data, i + 8);
+            level.areas[current_area_index].macro_objects.push_back(info);
+            i += 5 * 2;
+        }
+    }
+
     getNextCommand();
 }
 

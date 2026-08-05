@@ -196,18 +196,65 @@ func _extract_and_render() -> void:
 		model_root.add_child(mi)
 		total_triangles += md.indices.size() / 3
 
+	# 对象模型：同一 model id 的 ArrayMesh/材质只构建一次，所有实例共享。
+	# model 0（MODEL_NONE，如传送点）没有几何，跳过。
+	var object_models: Array = rom_manager.getObjectModels()
+	var model_cache := {}
+	for md in object_models:
+		model_cache[int(md.model)] = _build_object_mesh(md)
+
+	var rendered_objects := 0
+	for obj in objects:
+		var model_id: int = obj.model
+		if model_id == 0 or not model_cache.has(model_id):
+			continue
+		var entry: Dictionary = model_cache[model_id]
+		if entry.is_empty():
+			continue
+		var oi := MeshInstance3D.new()
+		oi.mesh = entry.mesh
+		oi.position = obj.pos
+		oi.rotation = obj.angle
+		var surface_materials: Array = entry.surface_materials
+		for s in surface_materials.size():
+			oi.set_surface_override_material(s, surface_materials[s])
+		model_root.add_child(oi)
+		rendered_objects += 1
+
 	# Place the camera at Mario's start position if available.
 	var mario = rom_manager.getMarioStartPos()
 	camera.global_position = mario.pos
+	camera.global_position = Vector3(0, 0, 0)
 	camera.rotation_degrees = Vector3(-35, -25, 0)
 
-	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects." % [
+	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects (%d rendered)." % [
 			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
-			objects.size()]
+			objects.size(), rendered_objects]
 
 func _clear_model() -> void:
 	for child in model_root.get_children():
 		child.queue_free()
+
+## 构建对象模型（getObjectModels 单个条目）：多个材质面合并为一个
+## ArrayMesh，返回 { mesh, surface_materials }。同一模型的所有对象实例
+## 共享这份资源。
+func _build_object_mesh(md: Dictionary) -> Dictionary:
+	var am := ArrayMesh.new()
+	var surface_materials: Array[StandardMaterial3D] = []
+	var material_cache := {}
+	for me in md.meshes:
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = me.vertices
+		arrays[Mesh.ARRAY_NORMAL] = me.normals
+		arrays[Mesh.ARRAY_TEX_UV] = me.uvs
+		arrays[Mesh.ARRAY_INDEX] = me.indices
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var mi: int = me.material
+		if not material_cache.has(mi):
+			material_cache[mi] = _build_material(md.materials[mi])
+		surface_materials.append(material_cache[mi])
+	return {"mesh": am, "surface_materials": surface_materials}
 
 ## 根据材质字典构建 StandardMaterial3D。
 func _build_material(md: Dictionary) -> StandardMaterial3D:

@@ -32,11 +32,15 @@ public:
     //   getMaterials() 与 getMeshes 的 material 一一对应：
     //                  { textured: bool, color: Color, tex_width, tex_height:
     //                  int, tex_pixels: PackedByteArray(RGBA8) }
-    //   getObjects()   对象出生点：{ pos: Vector3, angle: Vector3,
-    //                  behavior_arg: int, behavior: int }
+    //   getObjects()   对象出生点：{ pos: Vector3, angle: Vector3(弧度),
+    //                  model: int, behavior_arg: int, behavior: int }
+    //   getObjectModels() 对象模型（按 model id 去重，所有实例共享）：
+    //                  每个 { model: int, meshes: [...] 同 getMeshes 格式,
+    //                  materials: [...] 同 getMaterials 格式 }
     Array getMeshes();
     Array getMaterials();
     Array getObjects();
+    Array getObjectModels();
     // 当前提取的关卡名称（从 ROM 段2的 seg2_course_name_table 提取）。
     // 必须在 extractLevel 之后调用，否则返回空字符串。
     String getLevelName();

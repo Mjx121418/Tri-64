@@ -10,6 +10,77 @@
 
 using namespace godot;
 
+namespace {
+
+// 每个材质一个网格字典（与 OBJ 导出的 usemtl 分组一致），方便每个
+// MeshInstance3D 单独挂材质。
+Array meshDicts(const GBI::Mesh &mesh) {
+    Array out;
+    for (size_t m = 0; m < mesh.materials.size(); m++) {
+        Dictionary d;
+        PackedVector3Array verts;
+        PackedVector3Array normals;
+        PackedVector2Array uvs;
+        PackedInt32Array indices;
+
+        for (size_t t = 0; t < mesh.material_ids.size(); t++) {
+            if (mesh.material_ids[t] != m) {
+                continue;
+            }
+            const int32_t base = verts.size();
+            for (uint32_t k = 0; k < 3; k++) {
+                const GBI::MeshVertex &v = mesh.vertices[mesh.indices[t * 3 + k]];
+                verts.push_back(Vector3(v.position[0], v.position[1], v.position[2]));
+                normals.push_back(Vector3(v.normal[0], v.normal[1], v.normal[2]));
+                uvs.push_back(Vector2(v.uv[0], v.uv[1]));
+                indices.push_back(base + static_cast<int32_t>(k));
+            }
+        }
+        if (indices.is_empty()) {
+            continue;
+        }
+
+        d["vertices"] = verts;
+        d["normals"] = normals;
+        d["uvs"] = uvs;
+        d["indices"] = indices;
+        d["material"] = static_cast<int64_t>(m);
+        out.push_back(d);
+    }
+    return out;
+}
+
+// 与 meshDicts 的 material 一一对应：{ textured, color, tex_width, tex_height,
+// tex_pixels }。textures 与 mesh.materials 并行。
+Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &textures) {
+    Array out;
+    for (size_t m = 0; m < mesh.materials.size(); m++) {
+        Dictionary d;
+        const GBI::Material &state = mesh.materials[m];
+        const bool has_tex = m < textures.size() && !textures[m].pixels.empty();
+        d["textured"] = has_tex;
+        d["color"] = Color(state.prim_color[0] / 255.0f, state.prim_color[1] / 255.0f,
+                           state.prim_color[2] / 255.0f);
+        if (has_tex) {
+            const GBI::Texture &tex = textures[m];
+            d["tex_width"] = static_cast<int64_t>(tex.width);
+            d["tex_height"] = static_cast<int64_t>(tex.height);
+            PackedByteArray pixels;
+            pixels.resize(static_cast<int>(tex.pixels.size()));
+            memcpy(pixels.ptrw(), tex.pixels.data(), tex.pixels.size());
+            d["tex_pixels"] = pixels;
+        } else {
+            d["tex_width"] = static_cast<int64_t>(0);
+            d["tex_height"] = static_cast<int64_t>(0);
+            d["tex_pixels"] = PackedByteArray();
+        }
+        out.push_back(d);
+    }
+    return out;
+}
+
+} // namespace
+
 void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("loadROM", "path"), &GodotBridge::loadROM);
     ClassDB::bind_method(D_METHOD("ROMLoaded"), &GodotBridge::ROMLoaded);
@@ -19,6 +90,7 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("getMeshes"), &GodotBridge::getMeshes);
     ClassDB::bind_method(D_METHOD("getMaterials"), &GodotBridge::getMaterials);
     ClassDB::bind_method(D_METHOD("getObjects"), &GodotBridge::getObjects);
+    ClassDB::bind_method(D_METHOD("getObjectModels"), &GodotBridge::getObjectModels);
     ClassDB::bind_method(D_METHOD("getLevelName"), &GodotBridge::getLevelName);
     ClassDB::bind_method(D_METHOD("getLevelNameFor", "level_num"),
                          &GodotBridge::getLevelNameFor);
@@ -64,68 +136,11 @@ bool GodotBridge::extractLevel(int level_num, int area_index) {
 // 每个材质一个网格（与 OBJ 导出的 usemtl 分组一致），方便每个
 // MeshInstance3D 单独挂材质。
 Array GodotBridge::getMeshes() {
-    Array out;
-    const GBI::Mesh &mesh = result_.mesh;
-    for (size_t m = 0; m < mesh.materials.size(); m++) {
-        Dictionary d;
-        PackedVector3Array verts;
-        PackedVector3Array normals;
-        PackedVector2Array uvs;
-        PackedInt32Array indices;
-
-        for (size_t t = 0; t < mesh.material_ids.size(); t++) {
-            if (mesh.material_ids[t] != m) {
-                continue;
-            }
-            const int32_t base = verts.size();
-            for (uint32_t k = 0; k < 3; k++) {
-                const GBI::MeshVertex &v = mesh.vertices[mesh.indices[t * 3 + k]];
-                verts.push_back(Vector3(v.position[0], v.position[1], v.position[2]));
-                normals.push_back(Vector3(v.normal[0], v.normal[1], v.normal[2]));
-                uvs.push_back(Vector2(v.uv[0], v.uv[1]));
-                indices.push_back(base + static_cast<int32_t>(k));
-            }
-        }
-        if (indices.is_empty()) {
-            continue;
-        }
-
-        d["vertices"] = verts;
-        d["normals"] = normals;
-        d["uvs"] = uvs;
-        d["indices"] = indices;
-        d["material"] = static_cast<int64_t>(m);
-        out.push_back(d);
-    }
-    return out;
+    return meshDicts(result_.mesh);
 }
 
 Array GodotBridge::getMaterials() {
-    Array out;
-    const GBI::Mesh &mesh = result_.mesh;
-    for (size_t m = 0; m < mesh.materials.size(); m++) {
-        Dictionary d;
-        const GBI::Material &state = mesh.materials[m];
-        const bool has_tex = m < result_.textures.size() && !result_.textures[m].pixels.empty();
-        d["textured"] = has_tex;
-        d["color"] = Color(state.prim_color[0] / 255.0f, state.prim_color[1] / 255.0f,
-                           state.prim_color[2] / 255.0f);
-        if (has_tex) {
-            const GBI::Texture &tex = result_.textures[m];
-            d["tex_width"] = static_cast<int64_t>(tex.width);
-            d["tex_height"] = static_cast<int64_t>(tex.height);
-            PackedByteArray pixels;
-            pixels.resize(static_cast<int>(tex.pixels.size()));
-            memcpy(pixels.ptrw(), tex.pixels.data(), tex.pixels.size());
-            d["tex_pixels"] = pixels;
-        } else {
-            d["tex_width"] = static_cast<int64_t>(0);
-            d["tex_height"] = static_cast<int64_t>(0);
-            d["tex_pixels"] = PackedByteArray();
-        }
-        out.push_back(d);
-    }
-    return out;
+    return materialDicts(result_.mesh, result_.textures);
 }
 
 Array GodotBridge::getObjects() {
@@ -133,10 +148,27 @@ Array GodotBridge::getObjects() {
     for (const auto &obj : result_.objects) {
         Dictionary d;
         d["pos"] = Vector3(obj.start_pos.x, obj.start_pos.y, obj.start_pos.z);
-        d["angle"] = Vector3(obj.start_angle.x, obj.start_angle.y, obj.start_angle.z);
+        // SM64 角度单位 → 弧度，供 Godot 的旋转直接使用
+        d["angle"] = Vector3(sm64AngleToRadians(obj.start_angle.x),
+                             sm64AngleToRadians(obj.start_angle.y),
+                             sm64AngleToRadians(obj.start_angle.z));
+        d["model"] = static_cast<int64_t>(obj.model_id);
         d["behavior_arg"] = static_cast<int64_t>(obj.behavior_arg);
         d["behavior"] = static_cast<int64_t>((uint32_t(obj.behavior_script.seg) << 24) |
                                               (obj.behavior_script.offset & 0xFFFFFF));
+        out.push_back(d);
+    }
+    return out;
+}
+
+// 对象模型按 model id 去重，每个模型一份（网格 + 材质），所有实例共享。
+Array GodotBridge::getObjectModels() {
+    Array out;
+    for (const auto &[model_id, model] : result_.object_models) {
+        Dictionary d;
+        d["model"] = static_cast<int64_t>(model_id);
+        d["meshes"] = meshDicts(model.mesh);
+        d["materials"] = materialDicts(model.mesh, model.textures);
         out.push_back(d);
     }
     return out;

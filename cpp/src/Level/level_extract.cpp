@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <map>
 #include <span>
 
 namespace LevelExtract {
@@ -275,33 +276,7 @@ Result extract(ROM &rom, int level_num, int area_index) {
     for (const auto &dl : dls) {
         GBI::DLInterpreter interp(ctx.seg_table);
         GBI::Mesh &mesh = interp.run(dl);
-
-        const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
-        merged.vertices.insert(merged.vertices.end(), mesh.vertices.begin(),
-                               mesh.vertices.end());
-        merged.indices.reserve(merged.indices.size() + mesh.indices.size());
-        for (uint32_t idx : mesh.indices) {
-            merged.indices.push_back(base + idx);
-        }
-
-        const size_t tri_count = mesh.indices.size() / 3;
-        merged.material_ids.reserve(merged.material_ids.size() + tri_count);
-        for (size_t t = 0; t < tri_count; t++) {
-            const uint32_t mi = mesh.material_ids[t];
-            const GBI::Material &m = mesh.materials[mi];
-            const uint32_t img = mesh.material_images[mi];
-            uint32_t mid = 0;
-            for (; mid < merged.materials.size(); mid++) {
-                if (merged.materials[mid] == m && merged.material_images[mid] == img) {
-                    break;
-                }
-            }
-            if (mid == merged.materials.size()) {
-                merged.materials.push_back(m);
-                merged.material_images.push_back(img);
-            }
-            merged.material_ids.push_back(mid);
-        }
+        ObjectExtract::mergeMesh(merged, std::move(mesh));
     }
 
     // 每材质解码一个 RGBA8 纹理（与 merged.materials 并行；解码失败留空）
@@ -316,7 +291,27 @@ Result extract(ROM &rom, int level_num, int area_index) {
         }
     }
 
-    result.objects = area.object_infos;
+    // 对象出生点 = OBJECT 命令 + MACRO_OBJECTS 展开（preset → 模型 id）。
+    std::vector<ObjectSpawnInfo> objects = area.object_infos;
+    ObjectExtract::expandMacroObjects(area.macro_objects, static_cast<int8_t>(area_index), objects);
+
+    // 对象模型：每个唯一 model id 只解码一次（复用同模型的所有对象实例）。
+    // model_id 0（MODEL_NONE，如传送点）没有几何，跳过。
+    std::map<int16_t, ObjectExtract::ObjectModel> object_models;
+    for (const auto &obj : objects) {
+        if (obj.model_id <= 0 || object_models.contains(obj.model_id)) {
+            continue;
+        }
+        ObjectExtract::ObjectModel model =
+            ObjectExtract::decodeModel(ctx.seg_table, ctx.level.loaded_graph_node[obj.model_id].get());
+        if (model.mesh.indices.empty()) {
+            continue;
+        }
+        object_models[obj.model_id] = std::move(model);
+    }
+    result.object_models = std::move(object_models);
+
+    result.objects = std::move(objects);
     result.mario_start_pos = { static_cast<float>(ctx.level.mario_start_pos.x),
                                static_cast<float>(ctx.level.mario_start_pos.y),
                                static_cast<float>(ctx.level.mario_start_pos.z) };
