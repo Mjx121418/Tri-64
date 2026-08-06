@@ -23,7 +23,7 @@ struct SegmentedAddress {
     uint32_t offset {0};
 
     void setAddress(uint32_t seg_addr);
-    bool isNull();
+    bool isNull() const;
     void operator+=(const uint32_t step);
 };
 

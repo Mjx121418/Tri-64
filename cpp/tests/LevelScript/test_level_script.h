@@ -51,4 +51,9 @@ struct LevelScriptSetup {
 
 LevelScriptSetup setupLevelScript(const std::filesystem::path &rom_path);
 
+// Collects every ROM the test should run: the vanilla baserom plus any ROM
+// hack named "Super Mario Treasure World*.z64" (relative to the test's
+// working directory, so no absolute paths are baked in).
+std::vector<std::filesystem::path> findRoms();
+
 #endif /* TEST_LEVEL_SCRIPT_H */

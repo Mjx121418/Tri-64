@@ -1,4 +1,5 @@
 #include "Geo/test_geo.h"
+#include "LevelScript/test_behavior_script.h"
 #include "LevelScript/test_collision.h"
 #include "LevelScript/test_level_script.h"
 #include "Memory/segment.h"
@@ -24,6 +25,7 @@ int main() {
     testLevelName();
     testObjectModels();
     testCollision();
+    testBehaviorScript();
     testDisplayList();
     testMatrixSupport();
     testExportObj();

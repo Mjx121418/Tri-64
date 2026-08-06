@@ -83,9 +83,8 @@ void loadCommonSegments(SegmentTable &seg_table, const std::vector<uint8_t> &rom
     }
 }
 
-// Collects every ROM the test should run: the vanilla baserom plus any ROM
-// hack named "Super Mario Treasure World*.z64" (relative to the test's
-// working directory, so no absolute paths are baked in).
+} // namespace
+
 std::vector<std::filesystem::path> findRoms() {
     std::vector<std::filesystem::path> roms;
     for (const char *candidate : { "baserom.us.z64", "tests/baserom.us.z64" }) {
@@ -117,8 +116,6 @@ void collectDisplayLists(const GraphNode &node, std::vector<SegmentedAddress> &o
         collectDisplayLists(*child, out);
     }
 }
-
-} // namespace
 
 LevelScriptSetup setupLevelScript(const std::filesystem::path &rom_path) {
     LevelScriptSetup setup;

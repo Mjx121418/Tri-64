@@ -1,0 +1,145 @@
+#include "test_behavior_script.h"
+
+#include "Level/area.h"
+#include "Math/math.h"
+#include "Memory/segment.h"
+#include "Scripts/behavior_script.h"
+#include "test_level_script.h"
+
+#include <cstdint>
+#include <cstdio>
+#include <filesystem>
+#include <span>
+#include <vector>
+
+namespace {
+
+// 在段 0x13 的 span 里按命令形状扫描 bhvDoor：
+//   BEGIN + SET_INT + OR_INT + LOAD_ANIMATIONS(0x27, 门动画 0x030156C0) +
+//   ANIMATE(0x28) + LOAD_COLLISION_DATA(0x2A, 门碰撞 0x0301CE78)
+// 两版 ROM 的门行为地址不同（原版 0x13000B0C，Treasure World 0x13000B08），
+// 不能写死，所以按命令 + 数据指针匹配。返回匹配的 BEGIN 命令所在偏移。
+int32_t findDoorBehavior(const std::span<uint8_t> &seg13) {
+    const auto word = [&](size_t i) -> uint32_t {
+        return readInt<uint32_t>(seg13, i);
+    };
+
+    for (size_t i = 0; i + 32 <= seg13.size(); i += 4) {
+        const uint32_t w0 = word(i);      // BEGIN
+        const uint32_t w1 = word(i + 4);  // SET_INT
+        const uint32_t w2 = word(i + 8);  // OR_INT
+        const uint32_t w3 = word(i + 12); // LOAD_ANIMATIONS
+        const uint32_t w4 = word(i + 16); // 门动画数组（段 3）
+        const uint32_t w5 = word(i + 20); // ANIMATE
+        const uint32_t w6 = word(i + 24); // LOAD_COLLISION_DATA
+        const uint32_t w7 = word(i + 28); // 门碰撞（段 3）
+        if ((w0 >> 24) != 0x00 || (w1 >> 24) != 0x10 || (w2 >> 24) != 0x11 ||
+            (w3 >> 24) != 0x27 || w4 != 0x030156C0 || (w5 >> 24) != 0x28 ||
+            (w6 >> 24) != 0x2A || w7 != 0x0301CE78) {
+            continue;
+        }
+        return static_cast<int32_t>(i);
+    }
+    return -1;
+}
+
+void testDoorBehavior(const LevelScriptSetup &setup) {
+    const std::span<uint8_t> seg13 =
+        setup.seg_table.data(SegmentedAddress { 0x13, 0 });
+    if (seg13.empty()) {
+        printf("  [SKIP] no behavior segment 0x13\n");
+        return;
+    }
+
+    const int32_t begin_off = findDoorBehavior(seg13);
+    if (begin_off < 0) {
+        printf("  [FAIL] could not locate a door behavior in segment 0x13\n");
+        return;
+    }
+    const SegmentedAddress door { 0x13, static_cast<uint32_t>(begin_off) };
+    printf("  door behavior @ 0x%04x%06x\n", door.seg, door.offset);
+
+    const BehaviorScript::Info info = BehaviorScript::analyze(setup.seg_table, door);
+    if (!info.ok) {
+        printf("  [FAIL] analyze returned ok=false for the door behavior\n");
+        return;
+    }
+    if (info.animate_index != 0 || info.animations.seg != 0x03 || info.animations.isNull() ||
+        info.collision_data.seg != 0x03 || info.collision_data.isNull()) {
+        printf("  [FAIL] door animations/animate/collision: anims=seg%#04x off%#06x "
+               "idx=%d collision=seg%#04x off%#06x\n",
+               info.animations.seg, info.animations.offset, info.animate_index,
+               info.collision_data.seg, info.collision_data.offset);
+        return;
+    }
+    if (info.hitbox_radius != 80 || info.hitbox_height != 100) {
+        printf("  [FAIL] door hitbox %dx%d (expected 80x100)\n", info.hitbox_radius,
+               info.hitbox_height);
+        return;
+    }
+    printf("  door anims=0x%04x%06x idx=%d collision=0x%04x%06x hitbox=%dx%d ok\n",
+           info.animations.seg, info.animations.offset, info.animate_index,
+           info.collision_data.seg, info.collision_data.offset, info.hitbox_radius,
+           info.hitbox_height);
+}
+
+void testRobustness(const LevelScriptSetup &setup) {
+    // 对关卡所有对象的行为脚本做健壮性走查：不崩溃；合法脚本返回 ok。
+    size_t analyzed = 0;
+    size_t failed = 0;
+    for (const auto &area : setup.level.areas) {
+        for (const auto &obj : area.object_infos) {
+            if (obj.behavior_script.isNull()) {
+                continue;
+            }
+            const BehaviorScript::Info info =
+                BehaviorScript::analyze(setup.seg_table, obj.behavior_script);
+            analyzed++;
+            if (!info.ok) {
+                failed++;
+                printf("  [note] object model %d behavior 0x%04x%06x -> !ok\n", obj.model_id,
+                       obj.behavior_script.seg, obj.behavior_script.offset);
+            }
+        }
+    }
+
+    // 段 0x13 开头的第一个行为（原版/两版都是一个表面对象）。
+    const BehaviorScript::Info first = BehaviorScript::analyze(
+        setup.seg_table, SegmentedAddress { 0x13, 0 });
+    printf("  robustness: %zu object behaviors walked (%zu !ok), first-behavior ok=%d "
+           "obj_list=%d hitbox=%dx%d\n",
+           analyzed, failed, first.ok, first.obj_list, first.hitbox_radius,
+           first.hitbox_height);
+
+    // 越界/空地址要优雅地返回 !ok（不崩溃）。
+    const BehaviorScript::Info bad =
+        BehaviorScript::analyze(setup.seg_table, SegmentedAddress { 0x13, 0xFFFFFF });
+    if (bad.ok) {
+        printf("  [FAIL] out-of-bounds behavior address returned ok\n");
+        failed++;
+    }
+    if (failed != 0) {
+        printf("  [FAIL] %zu robustness failures\n", failed);
+    }
+}
+
+} // namespace
+
+void testBehaviorScript() {
+    const auto roms = findRoms();
+    if (roms.empty()) {
+        printf("test_behavior_script: no ROM found (baserom.us.z64 or "
+               "Super Mario Treasure World*.z64)\n");
+        return;
+    }
+
+    for (const auto &rom : roms) {
+        printf("== behavior script: %s ==\n", rom.filename().string().c_str());
+        LevelScriptSetup setup = setupLevelScript(rom);
+        if (!setup.ok) {
+            continue;
+        }
+        testDoorBehavior(setup);
+        testRobustness(setup);
+    }
+}

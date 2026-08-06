@@ -12,7 +12,7 @@ SegmentedAddress segAddress(uint32_t seg_addr) {
     return addr;
 }
 
-bool SegmentedAddress::isNull() {
+bool SegmentedAddress::isNull() const {
     return (seg < 0) || (seg > 31);
 }
 
