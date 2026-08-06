@@ -1,11 +1,13 @@
 #include "test_behavior_script.h"
 
 #include "Level/area.h"
+#include "Level/level_extract.h"
 #include "Math/math.h"
 #include "Memory/segment.h"
 #include "Scripts/behavior_script.h"
 #include "test_level_script.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -125,6 +127,37 @@ void testRobustness(const LevelScriptSetup &setup) {
 
 } // namespace
 
+// 验证门模型烘焙了动画 frame-0：门 geo 是 TRANS(78) + SCALE(0.25) +
+// AP(-300)，帧 0 动画再加 -300（pivot 变 -600），面板局部 x 从 [0,154]
+// 移到 [-75,79]（居中于原点，与门自身 ±80 碰撞对齐）。
+void testDoorFrame0(LevelScriptSetup &setup) {
+    constexpr int32_t kCastleGrounds = 16; // LEVEL_CASTLE_GROUNDS
+    LevelExtract::Result r = LevelExtract::extract(setup.rom, kCastleGrounds, 1);
+    if (!r.ok) {
+        printf("  [note] castle grounds extract failed: %s\n", r.error.c_str());
+        return;
+    }
+    // 城堡门 = special_castle_door_warp → MODEL_CASTLE_CASTLE_DOOR = 0x26，
+    // 行为 bhvDoorWarp（GOTO 进 bhvDoor 的 LOAD_ANIMATIONS + ANIMATE(0)）。
+    const auto it = r.object_models.find(0x26);
+    if (it == r.object_models.end()) {
+        printf("  [note] no castle door model (0x26) in castle grounds\n");
+        return;
+    }
+    float minx = 1e9f, maxx = -1e9f;
+    for (const auto &v : it->second.mesh.vertices) {
+        minx = std::min(minx, v.position[0]);
+        maxx = std::max(maxx, v.position[0]);
+    }
+    printf("  castle door model 0x26: %zu verts, x in [%.1f, %.1f]\n",
+           it->second.mesh.vertices.size(), minx, maxx);
+    if (minx < -30 && maxx > 30) {
+        printf("  castle door centered (frame-0 applied)\n");
+    } else {
+        printf("  [FAIL] castle door not centered (frame-0 not applied)\n");
+    }
+}
+
 void testBehaviorScript() {
     const auto roms = findRoms();
     if (roms.empty()) {
@@ -141,5 +174,6 @@ void testBehaviorScript() {
         }
         testDoorBehavior(setup);
         testRobustness(setup);
+        testDoorFrame0(setup);
     }
 }

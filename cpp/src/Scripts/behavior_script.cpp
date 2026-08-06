@@ -107,11 +107,12 @@ Info analyze(const SegmentTable &seg_table, SegmentedAddress entry) {
                 offset += 4;
                 break;
 
-            // 0x01 DELAY / 0x25 DELAY_VAR: 静态走查直接推进（延迟只推迟后续命令）
+            // 0x01 DELAY / 0x25 DELAY_VAR: 出生帧脚本停在第一个 DELAY（返回
+            // BHV_PROC_BREAK），之后的命令不是出生状态，终止走查。
             case 0x01:
             case 0x25:
-                offset += 4;
-                break;
+                info.ok = true;
+                return info;
 
             // 0x02 CALL(addr): 压入返回地址后跳转
             case 0x02: {
@@ -219,11 +220,8 @@ Info analyze(const SegmentTable &seg_table, SegmentedAddress entry) {
                 offset += 4;
                 break;
             case 0x22:
-                info.hide = true;
-                offset += 4;
-                break;
             case 0x35:
-                info.disable_rendering = true;
+                info.hidden = true;
                 offset += 4;
                 break;
 

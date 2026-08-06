@@ -1,9 +1,14 @@
 #include "Level/level_extract.h"
 
+#include "Scripts/behavior_script.h"
+#include "Scripts/level_script.h"
+#include "Scripts/preset_tables.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <map>
+#include <optional>
 #include <span>
 
 namespace LevelExtract {
@@ -113,6 +118,42 @@ void collectDisplayLists(const GraphNode &node, std::vector<SegmentedAddress> &o
 
 } // namespace
 
+// 游戏主段（代码+数据，含宏/特殊对象 preset 表）由启动入口（asm/entry.s）
+// DMA 到 RDRAM 0x80200000，ROM 起 0x1000；段 0 基址 0x80000000，故游戏里
+// 的 seg-0 地址 = 主段内偏移 + 0x200000。关卡脚本不加载它，这里按主段内
+// 偏移线性载入 seg 0。主段 ROM 范围由入口的 BSS 清零指令推出（清除从
+// _mainSegmentNoloadStart 起 _mainSegmentNoloadSize 字节）。
+bool loadMainSegment(SegmentTable &seg_table, const std::vector<uint8_t> &rom) {
+    // 入口序言：lui t0, 0x8034 ; lui t1, 0x0002（BSS 清零循环初始化）
+    constexpr std::array<uint8_t, 4> kEntrySignature { 0x3C, 0x08, 0x80, 0x34 };    const size_t pos = findPattern(rom, kEntrySignature);
+    if (pos == rom.size() || pos + 12 > rom.size()) {
+        printf("loadMainSegment: could not locate the boot entry\n");
+        return false;
+    }
+    // 必须紧跟 lui t1, 0x0002（BSS 大小高 16 位），排除误报
+    if (rom[pos + 4] != 0x3C || rom[pos + 5] != 0x09 || rom[pos + 6] != 0x00 || rom[pos + 7] != 0x02) {
+        printf("loadMainSegment: boot entry signature mismatch\n");
+        return false;
+    }
+
+    const uint32_t lui = readBE32(rom.data() + pos);          // lui t0, <bss_start_hi>
+    const uint32_t addiu = readBE32(rom.data() + pos + 8);    // addiu t0, t0, <bss_start_lo>
+    const uint32_t bss_start = ((lui & 0xFFFF) << 16) + static_cast<int16_t>(addiu & 0xFFFF);
+    constexpr uint32_t kMainVirtualBase = 0x80200000;
+    if (bss_start < kMainVirtualBase) {
+        printf("loadMainSegment: implausible BSS start 0x%x\n", bss_start);
+        return false;
+    }
+    const uint32_t main_size = bss_start - kMainVirtualBase;
+    if (pos + main_size > rom.size()) {
+        printf("loadMainSegment: main range 0x%zx-0x%zx out of ROM\n", pos, pos + main_size);
+        return false;
+    }
+    seg_table.loadSegment(0x00, static_cast<uint32_t>(pos), static_cast<uint32_t>(pos + main_size));
+    printf("loadMainSegment: main @ ROM 0x%zx, %u bytes -> seg 0\n", pos, main_size);
+    return true;
+}
+
 // 定位脚本段、加载公共段、运行目标关卡的关卡脚本，返回构建好的段表与场景图。
 // rom 必须在调用期间保持有效（seg_table.rom_span 指向 rom.data）。
 struct ScriptContext {
@@ -143,6 +184,7 @@ ScriptContext runLevelScript(ROM &rom, int level_num) {
                                   std::min(scripts_start + 0x8000, rom.data.size())));
     loadCommonSegments(ctx.seg_table, rom.data, scripts_start);
     loadSegment2(ctx.seg_table, rom.data);
+    loadMainSegment(ctx.seg_table, rom.data);
 
     LevelScriptVM vm(ctx.seg_table, ctx.level);
     vm.setLevelNum(level_num);
@@ -320,20 +362,37 @@ Result extract(ROM &rom, int level_num, int area_index) {
     }
 
     // 对象出生点 = OBJECT 命令 + MACRO_OBJECTS 展开 + 碰撞特殊对象展开。
+    // 宏/特殊对象 preset 表从主段（段 0）解析出 model/param/behavior。
+    const std::vector<PresetTables::MacroPreset> macro_presets =
+        PresetTables::parseMacroPresets(ctx.seg_table);
+    const std::vector<PresetTables::SpecialPreset> special_presets =
+        PresetTables::parseSpecialPresets(ctx.seg_table);
+
     std::vector<ObjectSpawnInfo> objects = area.object_infos;
-    ObjectExtract::expandMacroObjects(area.macro_objects, static_cast<int8_t>(area_index), objects);
+    ObjectExtract::expandMacroObjects(area.macro_objects, static_cast<int8_t>(area_index),
+                                      macro_presets, objects);
     ObjectExtract::expandSpecialObjects(result.collision.special_objects,
-                                        static_cast<int8_t>(area_index), objects);
+                                        static_cast<int8_t>(area_index), special_presets, objects);
 
     // 对象模型：每个唯一 model id 只解码一次（复用同模型的所有对象实例）。
-    // model_id 0（MODEL_NONE，如传送点）没有几何，跳过。
+    // model_id 0（MODEL_NONE，如传送点）没有几何，跳过。有动画行为的对象
+    // （LOAD_ANIMATIONS + ANIMATE）在烘焙时叠加动画 frame-0 值（如门）。
     std::map<int16_t, ObjectExtract::ObjectModel> object_models;
     for (const auto &obj : objects) {
         if (obj.model_id <= 0 || object_models.contains(obj.model_id)) {
             continue;
         }
-        ObjectExtract::ObjectModel model =
-            ObjectExtract::decodeModel(ctx.seg_table, ctx.level.loaded_graph_node[obj.model_id].get());
+        std::optional<ObjectExtract::Frame0Animator> frame0;
+        if (!obj.behavior_script.isNull()) {
+            const BehaviorScript::Info bi =
+                BehaviorScript::analyze(ctx.seg_table, obj.behavior_script);
+            if (bi.ok && bi.animate_index >= 0 && !bi.animations.isNull()) {
+                frame0.emplace(ctx.seg_table, bi.animations, bi.animate_index);
+            }
+        }
+        ObjectExtract::ObjectModel model = ObjectExtract::decodeModel(
+            ctx.seg_table, ctx.level.loaded_graph_node[obj.model_id].get(),
+            frame0 ? &*frame0 : nullptr);
         if (model.mesh.indices.empty()) {
             continue;
         }

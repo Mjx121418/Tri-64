@@ -148,6 +148,7 @@ LevelScriptSetup setupLevelScript(const std::filesystem::path &rom_path) {
     // Same common-segment setup the game performs in level_main_scripts_entry
     // (we enter at the level jump table, skipping the menu).
     loadCommonSegments(setup.seg_table, setup.rom.data, scripts_start);
+    LevelExtract::loadMainSegment(setup.seg_table, setup.rom.data);
 
     LevelScriptVM vm(setup.seg_table, setup.level);
     vm.setLevelNum(LEVEL_BOB);

@@ -7,7 +7,6 @@
 #include "Memory/segment.h"
 #include "ROM.h"
 #include "Scripts/Collision.h"
-#include "Scripts/level_script.h"
 #include <cstdint>
 #include <map>
 #include <string>
@@ -49,6 +48,12 @@ std::string extractLevelName(ROM &rom, int level_num);
 // 一次性加载 segment 2 并提取所有已知关卡的名称，无需运行关卡脚本。
 // 返回 LevelNum → 名称 的映射，提取失败的关卡不在映射中。
 std::map<int, std::string> loadAllLevelNames(ROM &rom);
+
+// 载入游戏的主段（段 0x00）到 seg_table.seg 0。主段是游戏代码+数据段，由
+// 启动入口 DMA 到 RDRAM 0x80200000（ROM 0x1000 起），关卡脚本不加载它。
+// 段 0 按"主段内部偏移"线性载入：段 0 偏移 0 = 主段起始。返回是否成功。
+// 宏/特殊对象 preset 表就位于主段内（见 Scripts/preset_tables.h）。
+bool loadMainSegment(SegmentTable &seg_table, const std::vector<uint8_t> &rom);
 
 } // namespace LevelExtract
 

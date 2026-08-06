@@ -23,17 +23,16 @@ struct Info {
     bool ok {false};              // 脚本能被解释到底（进入过 BREAK/DEACTIVATE）
     int16_t obj_list {-1};        // BEGIN(objList) 的对象列表编号
     int16_t model_id {-1};        // 最后一次 SET_MODEL（行为覆盖模型 id）
+    bool hidden {false};          // HIDE / DISABLE_RENDERING（出生即不可见）
+    bool billboard {false};       // BILLBOARD
+    bool scale_seen {false};      // 出现过 SCALE
+    int16_t scale_percent {100};  // SCALE 的百分比
     SegmentedAddress animations {}; // LOAD_ANIMATIONS 的动画数组地址
     int16_t animate_index {-1};   // 第一个 ANIMATE 的动画索引（出生即播放的动画）
     SegmentedAddress collision_data {}; // LOAD_COLLISION_DATA 的碰撞数据地址
     int16_t hitbox_radius {0};    // SET_HITBOX(_WITH_OFFSET) 半径
     int16_t hitbox_height {0};    // SET_HITBOX(_WITH_OFFSET) 高度
     int16_t hitbox_down_offset {0}; // SET_HITBOX_WITH_OFFSET 下移量
-    bool billboard {false};       // BILLBOARD
-    bool hide {false};            // HIDE
-    bool disable_rendering {false}; // DISABLE_RENDERING
-    bool scale_seen {false};      // 出现过 SCALE
-    int16_t scale_percent {100};  // SCALE 的百分比
     std::vector<SegmentedAddress> spawned_behaviors; // SPAWN_CHILD/SPAWN_OBJ/... 目标行为
 };
 
