@@ -164,8 +164,24 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "No ROM loaded."
 
+[node name="CameraPosPanel" type="PanelContainer" parent="UI"]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -360.0
+offset_top = 48.0
+offset_bottom = 70.0
+grow_horizontal = 0
+
+[node name="CameraPosLabel" type="Label" parent="UI/CameraPosPanel"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Cam: (0, 0, 0)"
+
 [node name="RomFileDialog" type="FileDialog" parent="UI" unique_id=1383238674]
 unique_name_in_owner = true
 oversampling_override = 1.0
 title = "Open ROM"
 ok_button_text = "Open"
+
+[connection signal="item_selected" from="UI/LeftPanel/VBox/ObjectList" to="." method="_on_object_list_item_selected"]

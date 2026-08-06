@@ -11,6 +11,7 @@ extends Node3D
 @onready var area_option: OptionButton = %AreaOption
 @onready var camera: Camera3D = %Camera3D
 @onready var model_root: Node3D = $ModelRoot
+@onready var camera_pos_label: Label = %CameraPosLabel
 
 @onready var sun: DirectionalLight3D = %Sun
 @onready var textures_option: CheckButton = %TexturesOption
@@ -208,7 +209,10 @@ func _render_geometry() -> void:
 
 	object_list.clear()
 	for obj in objects:
-		object_list.add_item("obj @ (%.0f, %.0f, %.0f)" % [obj.pos.x, obj.pos.y, obj.pos.z])
+		var label := "obj 0x%02X @ (%.0f, %.0f, %.0f)" % [
+				obj.model, obj.pos.x, obj.pos.y, obj.pos.z]
+		object_list.add_item(label)
+		object_list.set_item_metadata(object_list.item_count - 1, obj.pos)
 
 	var total_triangles := 0
 	for i in meshes.size():
@@ -338,3 +342,17 @@ func _has_alpha(img: Image) -> bool:
 			if img.get_pixel(x, y).a < 0.99:
 				return true
 	return false
+
+## 每帧更新相机位置读数（调试导航用），显示当前位置与朝向的目标点。
+func _process(_delta: float) -> void:
+	var pos := camera.global_position
+	var fwd := -camera.transform.basis.z
+	var target := pos + fwd * 1000.0
+	camera_pos_label.text = "Cam (%d, %d, %d)  look->(%d, %d, %d)" % [
+			roundi(pos.x), roundi(pos.y), roundi(pos.z),
+			roundi(target.x), roundi(target.y), roundi(target.z)]
+
+## 点击对象列表：把相机瞬移到该对象的精确位置（便于逐个核对）。
+func _on_object_list_item_selected(index: int) -> void:
+	var pos: Vector3 = object_list.get_item_metadata(index)
+	camera.global_position = pos
