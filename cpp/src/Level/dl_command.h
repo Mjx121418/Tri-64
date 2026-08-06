@@ -175,6 +175,9 @@ struct DecodedCommand {
     uint8_t rdpSize() const { return (w0 >> 19) & 0x3; }
     uint8_t tileNum() const { return (w1 >> 24) & 0x7; } // w1 bits 24-26
     uint16_t tileTMEM() const { return w0 & 0x1FF; }     // 仅 G_SETTILE：tmem（64 位字）
+    // G_SETTILE 的 S/T clamp/mirror 模式（2 位）：0=G_TX_WRAP 1=G_TX_MIRROR 2=G_TX_CLAMP
+    uint8_t tileClampS() const { return (w1 >> 8) & 0x3; }
+    uint8_t tileClampT() const { return (w1 >> 18) & 0x3; }
 
     // --- G_MOVEMEM ---
     // SM64 角色：按 dmem 索引（G_MV_*：视口/灯光/矩阵等）把 DRAM 数据拷入

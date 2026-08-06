@@ -320,6 +320,10 @@ func _build_material(md: Dictionary) -> StandardMaterial3D:
 		var img := Image.create_from_data(md.tex_width, md.tex_height, false,
 				Image.FORMAT_RGBA8, md.tex_pixels)
 		mat.albedo_texture = ImageTexture.create_from_image(img)
+		# G_SETTILE 的 S/T clamp 模式：任一轴 WRAP 才开启重复，否则关闭
+		# （Godot 的重复标志是两轴共用的；SM64 图块两轴模式基本一致）。
+		mat.set_flag(BaseMaterial3D.FLAG_USE_TEXTURE_REPEAT,
+				md.repeat_s or md.repeat_t)
 		if _has_alpha(img):
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	else:

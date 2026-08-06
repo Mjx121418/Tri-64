@@ -125,6 +125,10 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_SETTILE:
         material_.tile_fmt = cmd.rdpFmt();
         material_.tile_siz = cmd.rdpSize();
+        // G_SETTILE 的 S/T clamp/mirror 模式（0=WRAP 1=MIRROR 2=CLAMP）。
+        // 导出到 Godot 的 texture_repeat：CLAMP 关闭重复，否则开启。
+        material_.tex_clamp_s = cmd.tileClampS() == 2;
+        material_.tex_clamp_t = cmd.tileClampT() == 2;
         // 防御性绑定：记录该 tile 的 tmem 地址（LOAD 时绑定图像用）
         state_.tile_tmem[cmd.tileNum()] = cmd.tileTMEM();
         break;
@@ -343,6 +347,9 @@ void DLInterpreter::appendVertex(const Vtx &v) {
         mv.uv[0] /= material_.tex_width();
         mv.uv[1] /= material_.tex_height();
     }
+    // N64 纹理由上到下（t=0 是顶部）；Godot/OBJ 的 v=0 是底部。翻转 v 轴，
+    // 否则所有纹理都上下颠倒（树木/蟾蜍这类方向性纹理尤其明显）。
+    mv.uv[1] = 1.0f - mv.uv[1];
     mv.color[0] = v.coordinate_or_normal[0];
     mv.color[1] = v.coordinate_or_normal[1];
     mv.color[2] = v.coordinate_or_normal[2];

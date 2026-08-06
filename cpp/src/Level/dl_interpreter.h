@@ -42,6 +42,8 @@ struct Material {
     uint16_t tex_th {0};          // 纹理纵坐标最大值
     uint16_t tex_dxt {0};            // G_LOADBLOCK 的 DXT（w1 低 12 位，编码源图像行宽）
     bool textured {false};           // 几何模式 G_TEXTURE_ENABLE（G_TEXTURE 开关）
+    bool tex_clamp_s {false};        // G_SETTILE 的 S 方向 G_TX_CLAMP（否则 WRAP/MIRROR）
+    bool tex_clamp_t {false};        // G_SETTILE 的 T 方向 G_TX_CLAMP
 
     bool operator==(const Material &o) const {
         return combine_w0 == o.combine_w0 && combine_w1 == o.combine_w1
@@ -55,7 +57,8 @@ struct Material {
             && tex_sl == o.tex_sl && tex_tl == o.tex_tl
             && tex_sh == o.tex_sh && tex_th == o.tex_th
             && tex_dxt == o.tex_dxt
-            && textured == o.textured;
+            && textured == o.textured
+            && tex_clamp_s == o.tex_clamp_s && tex_clamp_t == o.tex_clamp_t;
     }
 
     uint16_t tex_width() const {

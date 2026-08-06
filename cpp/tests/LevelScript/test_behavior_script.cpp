@@ -158,6 +158,49 @@ void testDoorFrame0(LevelScriptSetup &setup) {
     }
 }
 
+// 验证树模型的纹理映射：材质记录 G_SETTILE 的 S/T CLAMP（导出 repeat 关闭），
+// 且 v 轴按 Godot 约定翻转（模型最低点的 uv.y 最小、最高点最大 —— N64 t=0
+// 顶部应落在 Godot 的 uv.y=1 顶部，而不是颠倒）。
+void testTreeUV(LevelScriptSetup &setup) {
+    constexpr int32_t kCastleGrounds = 16;
+    LevelExtract::Result r = LevelExtract::extract(setup.rom, kCastleGrounds, 1);
+    if (!r.ok) {
+        printf("  [note] castle grounds extract failed: %s\n", r.error.c_str());
+        return;
+    }
+    const auto it = r.object_models.find(0x17); // MODEL_BOB_BUBBLY_TREE
+    if (it == r.object_models.end()) {
+        printf("  [note] no bubble tree model (0x17) in castle grounds\n");
+        return;
+    }
+    const GBI::Mesh &mesh = it->second.mesh;
+    bool all_clamp = true;
+    for (const auto &m : mesh.materials) {
+        all_clamp = all_clamp && m.tex_clamp_s && m.tex_clamp_t;
+    }
+    printf("  tree model 0x17: %zu materials, all S/T clamp=%d\n", mesh.materials.size(),
+           all_clamp);
+
+    float min_y = 1e9f, min_y_uv = 0, max_y = -1e9f, max_y_uv = 0;
+    for (const auto &v : mesh.vertices) {
+        if (v.position[1] < min_y) {
+            min_y = v.position[1];
+            min_y_uv = v.uv[1];
+        }
+        if (v.position[1] > max_y) {
+            max_y = v.position[1];
+            max_y_uv = v.uv[1];
+        }
+    }
+    printf("  tree: minY=%.0f uv_y=%.2f, maxY=%.0f uv_y=%.2f\n", min_y, min_y_uv, max_y, max_y_uv);
+    if (!all_clamp || min_y_uv > 0.5f || max_y_uv < 0.5f) {
+        printf("  [FAIL] tree texture mapping: clamp=%d minY_uv=%.2f maxY_uv=%.2f\n", all_clamp,
+               min_y_uv, max_y_uv);
+    } else {
+        printf("  tree texture upright + clamped\n");
+    }
+}
+
 void testBehaviorScript() {
     const auto roms = findRoms();
     if (roms.empty()) {
@@ -175,5 +218,6 @@ void testBehaviorScript() {
         testDoorBehavior(setup);
         testRobustness(setup);
         testDoorFrame0(setup);
+        testTreeUV(setup);
     }
 }

@@ -61,6 +61,9 @@ Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &text
         d["textured"] = has_tex;
         d["color"] = Color(state.prim_color[0] / 255.0f, state.prim_color[1] / 255.0f,
                            state.prim_color[2] / 255.0f);
+        // G_SETTILE 的 S/T clamp 模式 → Godot texture_repeat（true=重复/平铺）。
+        d["repeat_s"] = !state.tex_clamp_s;
+        d["repeat_t"] = !state.tex_clamp_t;
         if (has_tex) {
             const GBI::Texture &tex = textures[m];
             d["tex_width"] = static_cast<int64_t>(tex.width);
