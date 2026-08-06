@@ -347,9 +347,9 @@ void DLInterpreter::appendVertex(const Vtx &v) {
         mv.uv[0] /= material_.tex_width();
         mv.uv[1] /= material_.tex_height();
     }
-    // N64 纹理由上到下（t=0 是顶部）；Godot/OBJ 的 v=0 是底部。翻转 v 轴，
-    // 否则所有纹理都上下颠倒（树木/蟾蜍这类方向性纹理尤其明显）。
-    mv.uv[1] = 1.0f - mv.uv[1];
+    // 注意：不翻转 v 轴。Godot 的 ArrayMesh ARRAY_TEX_UV 用 v=0 为顶部（与
+    // 图像第 0 行一致），N64 的 t=0 也是顶部，直接映射即可；翻转会导致所有
+    // 纹理上下颠倒（树木最明显，见 docs/engine-notes.md）。
     mv.color[0] = v.coordinate_or_normal[0];
     mv.color[1] = v.coordinate_or_normal[1];
     mv.color[2] = v.coordinate_or_normal[2];

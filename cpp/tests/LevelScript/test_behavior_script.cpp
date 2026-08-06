@@ -159,8 +159,8 @@ void testDoorFrame0(LevelScriptSetup &setup) {
 }
 
 // 验证树模型的纹理映射：材质记录 G_SETTILE 的 S/T CLAMP（导出 repeat 关闭），
-// 且 v 轴按 Godot 约定翻转（模型最低点的 uv.y 最小、最高点最大 —— N64 t=0
-// 顶部应落在 Godot 的 uv.y=1 顶部，而不是颠倒）。
+// 且 v 轴不翻转 —— Godot 的 ArrayMesh UV 用 v=0 为顶部（与 N64 t=0 顶部一致），
+// 模型最低点应落在纹理底部（高 v = 树干）、最高点在纹理顶部（低 v = 树冠）。
 void testTreeUV(LevelScriptSetup &setup) {
     constexpr int32_t kCastleGrounds = 16;
     LevelExtract::Result r = LevelExtract::extract(setup.rom, kCastleGrounds, 1);
@@ -193,7 +193,7 @@ void testTreeUV(LevelScriptSetup &setup) {
         }
     }
     printf("  tree: minY=%.0f uv_y=%.2f, maxY=%.0f uv_y=%.2f\n", min_y, min_y_uv, max_y, max_y_uv);
-    if (!all_clamp || min_y_uv > 0.5f || max_y_uv < 0.5f) {
+    if (!all_clamp || min_y_uv < 0.5f || max_y_uv > 0.5f) {
         printf("  [FAIL] tree texture mapping: clamp=%d minY_uv=%.2f maxY_uv=%.2f\n", all_clamp,
                min_y_uv, max_y_uv);
     } else {
