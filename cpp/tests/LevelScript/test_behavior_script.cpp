@@ -201,6 +201,36 @@ void testTreeUV(LevelScriptSetup &setup) {
     }
 }
 
+// 验证原生选动画的对象（goomba）应用了 frame-0：行为只有 LOAD_ANIMATIONS、无
+// ANIMATE，动画（索引 0）由 goomba_update 固定设置。其 part 0（最外层 AP）有
+// transY=90（geo 缩放 0.25 → 世界 +22.5）与 rotY=0x3FFF（约 90°）；不应用时
+// goomba 的 body 底部在 -14（陷入地面）且朝向错误。
+void testGoombaFrame0(LevelScriptSetup &setup) {
+    constexpr int32_t kBob = 9;
+    LevelExtract::Result r = LevelExtract::extract(setup.rom, kBob, 1);
+    if (!r.ok) {
+        printf("  [note] BOB extract failed: %s\n", r.error.c_str());
+        return;
+    }
+    const auto it = r.object_models.find(0xC0); // MODEL_GOOMBA
+    if (it == r.object_models.end()) {
+        printf("  [note] no goomba model (0xC0) in BOB\n");
+        return;
+    }
+    float miny = 1e9f, maxy = -1e9f;
+    for (const auto &v : it->second.mesh.vertices) {
+        miny = std::min(miny, v.position[1]);
+        maxy = std::max(maxy, v.position[1]);
+    }
+    printf("  goomba model 0xC0: %zu verts, y in [%.1f, %.1f]\n",
+           it->second.mesh.vertices.size(), miny, maxy);
+    if (miny < 0.0f) {
+        printf("  [FAIL] goomba sinks below origin (frame-0 lift not applied)\n");
+    } else {
+        printf("  goomba lifted above origin (frame-0 applied)\n");
+    }
+}
+
 void testBehaviorScript() {
     const auto roms = findRoms();
     if (roms.empty()) {
@@ -219,5 +249,6 @@ void testBehaviorScript() {
         testRobustness(setup);
         testDoorFrame0(setup);
         testTreeUV(setup);
+        testGoombaFrame0(setup);
     }
 }

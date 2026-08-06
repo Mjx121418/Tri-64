@@ -386,8 +386,13 @@ Result extract(ROM &rom, int level_num, int area_index) {
         if (!obj.behavior_script.isNull()) {
             const BehaviorScript::Info bi =
                 BehaviorScript::analyze(ctx.seg_table, obj.behavior_script);
-            if (bi.ok && bi.animate_index >= 0 && !bi.animations.isNull()) {
-                frame0.emplace(ctx.seg_table, bi.animations, bi.animate_index);
+            // 动画是原生代码选的（LOAD_ANIMATIONS 但无 ANIMATE 命令，如 goomba
+            // 由 goomba_update 固定用索引 0）：静态导出默认取第一个动画的 frame-0
+            //（通常是静止姿态），否则部件停在裸 geo 锚点上（goomba 会陷入地面且
+            // 朝向错误，见 docs/engine-notes.md）。
+            if (bi.ok && !bi.animations.isNull()) {
+                const int16_t anim_index = (bi.animate_index >= 0) ? bi.animate_index : 0;
+                frame0.emplace(ctx.seg_table, bi.animations, anim_index);
             }
         }
         ObjectExtract::ObjectModel model = ObjectExtract::decodeModel(
