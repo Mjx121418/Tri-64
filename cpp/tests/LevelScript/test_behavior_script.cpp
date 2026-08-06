@@ -231,6 +231,27 @@ void testGoombaFrame0(LevelScriptSetup &setup) {
     }
 }
 
+// 星星（MODEL_STAR = 0x7A）只由 level_main_scripts_entry 加载（关卡脚本不加载
+// 它）；从主入口开始运行后，星星对象应能解码出网格（之前 loaded_graph_node 里
+// 没有 0x7A，星星对象被丢弃、不可见）。
+void testStarModel(LevelScriptSetup &setup) {
+    constexpr int32_t kBob = 9;
+    LevelExtract::Result r = LevelExtract::extract(setup.rom, kBob, 1);
+    if (!r.ok) {
+        printf("  [note] BOB extract failed: %s\n", r.error.c_str());
+        return;
+    }
+    const auto it = r.object_models.find(0x7A); // MODEL_STAR
+    if (it == r.object_models.end() || it->second.mesh.indices.empty()) {
+        printf("  [FAIL] star model (0x7A) not decoded in BOB\n");
+        return;
+    }
+    printf("  star model 0x7A: %zu verts, %zu tris, %zu materials\n",
+           it->second.mesh.vertices.size(), it->second.mesh.indices.size() / 3,
+           it->second.mesh.materials.size());
+    printf("  star model decoded\n");
+}
+
 void testBehaviorScript() {
     const auto roms = findRoms();
     if (roms.empty()) {
@@ -250,5 +271,6 @@ void testBehaviorScript() {
         testDoorFrame0(setup);
         testTreeUV(setup);
         testGoombaFrame0(setup);
+        testStarModel(setup);
     }
 }

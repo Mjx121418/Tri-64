@@ -176,19 +176,24 @@ ScriptContext runLevelScript(ROM &rom, int level_num) {
         ctx.error = "could not locate the level scripts segment";
         return ctx;
     }
-    const size_t table_offset = table_pos - scripts_start;
-
     ctx.seg_table.rom_span = std::span(rom.data);
     ctx.seg_table.loadSegment(0x15, static_cast<uint32_t>(scripts_start),
                               static_cast<uint32_t>(
                                   std::min(scripts_start + 0x8000, rom.data.size())));
+    // 主入口自身会加载 4/3/0x17/0x16/0x13（loadCommonSegments 冗余但无害）；
+    // 段 2 与主段是我们的补充（课程名 / preset 表）。
     loadCommonSegments(ctx.seg_table, rom.data, scripts_start);
     loadSegment2(ctx.seg_table, rom.data);
     loadMainSegment(ctx.seg_table, rom.data);
 
+    // 从 level_main_scripts_entry（脚本段首）开始运行整个主入口：它会加载公共
+    // 模型（星星/金币/1UP 等只在这里 LOAD_MODEL_FROM_GEO）、跳过文件选择菜单
+    //（menu 的 JUMP_IF(reg==0) 直接 EXIT），随后经 script_exec_level_table 按
+    // 已设置的 level_num 自然分发到目标关卡脚本，关卡脚本以 CALL_LOOP 结束
+    //（此时 VM 停止，即关卡已加载）。
     LevelScriptVM vm(ctx.seg_table, ctx.level);
     vm.setLevelNum(level_num);
-    vm.execute(SegmentedAddress { 0x15, static_cast<uint32_t>(table_offset) });
+    vm.execute(SegmentedAddress { 0x15, 0 });
 
     ctx.ok = true;
     return ctx;

@@ -145,16 +145,15 @@ LevelScriptSetup setupLevelScript(const std::filesystem::path &rom_path) {
     setup.seg_table.loadSegment(0x15, static_cast<uint32_t>(scripts_start),
                                 static_cast<uint32_t>(std::min(scripts_start + 0x8000, setup.rom.data.size())));
 
-    // Same common-segment setup the game performs in level_main_scripts_entry
-    // (we enter at the level jump table, skipping the menu).
+    // Same common-segment setup the game performs in level_main_scripts_entry.
+    // Enter at the main entry start: it loads the common models, skips the menu
+    // (JUMP_IF(reg==0) -> EXIT) and dispatches to BOB via the level table.
     loadCommonSegments(setup.seg_table, setup.rom.data, scripts_start);
     LevelExtract::loadMainSegment(setup.seg_table, setup.rom.data);
 
     LevelScriptVM vm(setup.seg_table, setup.level);
     vm.setLevelNum(LEVEL_BOB);
-
-    SegmentedAddress entry { 0x15, static_cast<uint32_t>(table_offset) };
-    vm.execute(entry);
+    vm.execute(SegmentedAddress { 0x15, 0 });
 
     setup.ok = true;
     return setup;
