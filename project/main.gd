@@ -223,6 +223,7 @@ func _render_geometry() -> void:
 		arrays[Mesh.ARRAY_VERTEX] = md.vertices
 		arrays[Mesh.ARRAY_NORMAL] = md.normals
 		arrays[Mesh.ARRAY_TEX_UV] = md.uvs
+		arrays[Mesh.ARRAY_COLOR] = md.colors
 		arrays[Mesh.ARRAY_INDEX] = md.indices
 		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
@@ -306,6 +307,7 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 		arrays[Mesh.ARRAY_VERTEX] = me.vertices
 		arrays[Mesh.ARRAY_NORMAL] = me.normals
 		arrays[Mesh.ARRAY_TEX_UV] = me.uvs
+		arrays[Mesh.ARRAY_COLOR] = me.colors
 		arrays[Mesh.ARRAY_INDEX] = me.indices
 		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var mi: int = me.material
@@ -330,8 +332,15 @@ func _build_material(md: Dictionary) -> StandardMaterial3D:
 				md.repeat_s or md.repeat_t)
 		if _has_alpha(img):
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	elif md.lit:
+		# 未纹理 + G_LIGHTING：顶点第 4 字是法线不是颜色，先烘一个简单环境色
+		#（完整光照为未来工作，见 WORKLOG）。
+		mat.albedo_color = Color(0.55, 0.55, 0.55)
 	else:
+		# 未纹理且未光照：用顶点 RGBA 作为底色（G_CC_SHADE 的顶点色），
+		# prim_color 兜底。
 		mat.albedo_color = md.color
+		mat.vertex_color_use_as_albedo = true
 	return mat
 
 ## SM64 的 IA16 圆形/遮罩纹理把形状放在 alpha 里（RGB 可能全黑），

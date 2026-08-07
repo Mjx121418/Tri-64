@@ -7,6 +7,37 @@ namespace GBI {
 namespace {
 constexpr uint64_t kMaxSteps = 10'000'000;
 constexpr size_t kMaxDLDepth = 32;
+
+// 解码 G_SETCOMBINE 的 mux（gbi.h 的 GCCc0w0/GCCc1w0/GCCc0w1/GCCc1w1 打包布局），
+// 检查颜色/alpha 的 A/B/C/D 输入是否用到 TEXEL0(1)/TEXEL1(2) —— RDP 只有此时
+// 才采样纹理。G_CC_SHADE（全 SHADE，无 TEXEL）应判为未纹理。
+bool combineUsesTexel(uint32_t mux0, uint32_t mux1) {
+    const uint32_t vals[] = {
+        (mux0 >> 20) & 0xF,  // 颜色 A
+        (mux0 >> 15) & 0x1F, // 颜色 C
+        (mux0 >> 12) & 0x7,  // alpha A
+        (mux0 >> 9) & 0x7,   // alpha C
+        (mux0 >> 5) & 0xF,   // alpha A1
+        (mux0 >> 0) & 0x1F,  // alpha C1
+        (mux1 >> 28) & 0xF,  // 颜色 B
+        (mux1 >> 17) & 0x7,  // 颜色 D
+        (mux1 >> 14) & 0x7,  // alpha B
+        (mux1 >> 11) & 0x7,  // alpha D
+        (mux1 >> 24) & 0xF,  // alpha B1
+        (mux1 >> 21) & 0x7,  // alpha A1
+        (mux1 >> 18) & 0x7,  // alpha C1
+        (mux1 >> 6) & 0x7,   // alpha D1
+        (mux1 >> 3) & 0x7,   // alpha B1
+        (mux1 >> 0) & 0x7,   // alpha D1
+    };
+    for (uint32_t v : vals) {
+        if (v == 1 || v == 2) { // G_CCMUX_TEXEL0 / G_CCMUX_TEXEL1
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 Mesh &DLInterpreter::run(SegmentedAddress dl) {
@@ -16,8 +47,10 @@ Mesh &DLInterpreter::run(SegmentedAddress dl) {
     state_.matrix_stack.push_back(mtxfIdentity());
     finished = false;
     steps_ = 0;
-    geometry_mode_ = 0;
+    // 游戏启动的默认几何模式（game_init.c:120），依赖默认光照的对象据此判定 lit。
+    geometry_mode_ = kDefaultGeometryMode;
     material_ = {};
+    material_.lit = (geometry_mode_ & G_LIGHTING) != 0;
     state_.tile_tmem = {};
     state_.tmem_images = {};
     state_.tex_scale_s = 0;
@@ -103,6 +136,8 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_SETCOMBINE:
         material_.combine_w0 = cmd.combineMux0();
         material_.combine_w1 = cmd.combineMux1();
+        material_.combine_uses_texel = combineUsesTexel(material_.combine_w0, material_.combine_w1);
+        updateTextured();
         break;
     case G_SETPRIMCOLOR:
         material_.prim_color[0] = cmd.colorR();
@@ -169,9 +204,9 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         } else {
             geometry_mode_ &= ~G_TEXTURE_ENABLE;
         }
-        material_.textured = (geometry_mode_ & G_TEXTURE_ENABLE) != 0;
         state_.tex_scale_s = (cmd.w1 >> 16) & 0xFFFF;
         state_.tex_scale_t = cmd.w1 & 0xFFFF;
+        updateTextured();
         break;
     case G_SETGEOMETRYMODE:
         handleGeometryMode(cmd, true);
@@ -246,7 +281,13 @@ void DLInterpreter::handleGeometryMode(const DecodedCommand &cmd, bool set) {
     } else {
         geometry_mode_ &= ~bits;
     }
-    material_.textured = (geometry_mode_ & G_TEXTURE_ENABLE) != 0;
+    updateTextured();
+}
+
+void DLInterpreter::updateTextured() {
+    material_.lit = (geometry_mode_ & G_LIGHTING) != 0;
+    material_.textured =
+        (geometry_mode_ & G_TEXTURE_ENABLE) != 0 && material_.combine_uses_texel;
 }
 
 uint32_t DLInterpreter::materialId(uint32_t tex_image) {

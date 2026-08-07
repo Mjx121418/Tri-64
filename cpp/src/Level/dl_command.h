@@ -75,6 +75,7 @@ enum GeometryMode : uint32_t {
     G_ZBUFFER         = 0x00000001,
     G_TEXTURE_ENABLE  = 0x00000002,
     G_SHADE           = 0x00000004,
+    G_SHADING_SMOOTH  = 0x00000200,
     G_CULL_FRONT      = 0x00001000,
     G_CULL_BACK       = 0x00002000,
     G_FOG             = 0x00010000,
@@ -82,6 +83,12 @@ enum GeometryMode : uint32_t {
     G_TEXTURE_GEN     = 0x00040000,
     G_TEXTURE_GEN_LINEAR = 0x00080000,
 };
+
+// 游戏启动时的初始几何模式（game_init.c:120）：G_SHADE | G_SHADING_SMOOTH |
+// G_CULL_BACK | G_LIGHTING。解释器按此初始化，使依赖默认光照的对象（如 goomba、
+// bully 身体）不被误判为未光照。
+inline constexpr uint32_t kDefaultGeometryMode =
+    G_SHADE | G_SHADING_SMOOTH | G_CULL_BACK | G_LIGHTING;
 
 // G_MOVEWORD 偏移（gbi.h G_MW_*）
 enum MoveWordOffset : uint16_t {

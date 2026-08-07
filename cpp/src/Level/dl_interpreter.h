@@ -41,7 +41,9 @@ struct Material {
     uint16_t tex_sh {0};          // 纹理横坐标最大值
     uint16_t tex_th {0};          // 纹理纵坐标最大值
     uint16_t tex_dxt {0};            // G_LOADBLOCK 的 DXT（w1 低 12 位，编码源图像行宽）
-    bool textured {false};           // 几何模式 G_TEXTURE_ENABLE（G_TEXTURE 开关）
+    bool textured {false};           // 有效纹理开关：G_TEXTURE_ENABLE && 材质采样 TEXEL
+    bool combine_uses_texel {false}; // G_SETCOMBINE 的颜色/alpha mux 用到 TEXEL0/1
+    bool lit {false};                // 几何模式 G_LIGHTING（未纹理材质据此选环境色）
     bool tex_clamp_s {false};        // G_SETTILE 的 S 方向 G_TX_CLAMP（否则 WRAP/MIRROR）
     bool tex_clamp_t {false};        // G_SETTILE 的 T 方向 G_TX_CLAMP
 
@@ -58,6 +60,8 @@ struct Material {
             && tex_sh == o.tex_sh && tex_th == o.tex_th
             && tex_dxt == o.tex_dxt
             && textured == o.textured
+            && combine_uses_texel == o.combine_uses_texel
+            && lit == o.lit
             && tex_clamp_s == o.tex_clamp_s && tex_clamp_t == o.tex_clamp_t;
     }
 
@@ -149,6 +153,9 @@ private:
     void drawTriangle(const DecodedCommand &cmd);
     void appendVertex(const Vtx &v);
     uint32_t materialId(uint32_t tex_image);
+    // material_.textured = G_TEXTURE_ENABLE && 材质采样 TEXEL（在 G_SETCOMBINE /
+    // G_TEXTURE / 几何模式变化后调用）。
+    void updateTextured();
 };
 
 } // namespace GBI

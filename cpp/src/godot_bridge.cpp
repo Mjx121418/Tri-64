@@ -21,6 +21,7 @@ Array meshDicts(const GBI::Mesh &mesh) {
         PackedVector3Array verts;
         PackedVector3Array normals;
         PackedVector2Array uvs;
+        PackedColorArray colors;
         PackedInt32Array indices;
 
         for (size_t t = 0; t < mesh.material_ids.size(); t++) {
@@ -33,6 +34,10 @@ Array meshDicts(const GBI::Mesh &mesh) {
                 verts.push_back(Vector3(v.position[0], v.position[1], v.position[2]));
                 normals.push_back(Vector3(v.normal[0], v.normal[1], v.normal[2]));
                 uvs.push_back(Vector2(v.uv[0], v.uv[1]));
+                // 顶点第 4 个字：未光照时为 RGBA 颜色（0-255），光照时为有符号法线
+                //（不导出颜色；未纹理材质在 Godot 里按 material.lit 决定用法）。
+                colors.push_back(Color(v.color[0] / 255.0f, v.color[1] / 255.0f,
+                                       v.color[2] / 255.0f, v.color[3] / 255.0f));
                 indices.push_back(base + static_cast<int32_t>(k));
             }
         }
@@ -43,6 +48,7 @@ Array meshDicts(const GBI::Mesh &mesh) {
         d["vertices"] = verts;
         d["normals"] = normals;
         d["uvs"] = uvs;
+        d["colors"] = colors;
         d["indices"] = indices;
         d["material"] = static_cast<int64_t>(m);
         out.push_back(d);
@@ -59,6 +65,7 @@ Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &text
         const GBI::Material &state = mesh.materials[m];
         const bool has_tex = m < textures.size() && !textures[m].pixels.empty();
         d["textured"] = has_tex;
+        d["lit"] = state.lit; // G_LIGHTING（未纹理材质：受光 → 环境色兜底）
         d["color"] = Color(state.prim_color[0] / 255.0f, state.prim_color[1] / 255.0f,
                            state.prim_color[2] / 255.0f);
         // G_SETTILE 的 S/T clamp 模式 → Godot texture_repeat（true=重复/平铺）。

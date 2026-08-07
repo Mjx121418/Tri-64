@@ -252,6 +252,38 @@ void testStarModel(LevelScriptSetup &setup) {
     printf("  star model decoded\n");
 }
 
+// 验证材质判定：纹理材质（combine 采样 TEXEL0/1，如星星的 DECALFADE/MODULATERGBA、
+// goomba 的 MODULATERGB）应被判定为 textured=true；G_CC_SHADE 等未纹理材质为
+// false。若 combine mux 解码错位，纹理材质会被误判为未纹理（回归）。
+void testMaterialDetection(LevelScriptSetup &setup) {
+    constexpr int32_t kBob = 9;
+    LevelExtract::Result r = LevelExtract::extract(setup.rom, kBob, 1);
+    if (!r.ok) {
+        printf("  [note] BOB extract failed: %s\n", r.error.c_str());
+        return;
+    }
+    for (const auto &[mid, model] : r.object_models) {
+        if (mid != 0x7A && mid != 0xC0) { // 星星 / goomba
+            continue;
+        }
+        size_t textured = 0, lit = 0;
+        for (const auto &m : model.mesh.materials) {
+            if (m.textured) {
+                textured++;
+            }
+            if (m.lit) {
+                lit++;
+            }
+        }
+        printf("  model 0x%02X: %zu materials (textured=%zu, lit=%zu)\n", mid,
+               model.mesh.materials.size(), textured, lit);
+        if (textured == 0) {
+            printf("  [FAIL] model 0x%02X has no textured material (combine mux decode wrong)\n",
+                   mid);
+        }
+    }
+}
+
 void testBehaviorScript() {
     const auto roms = findRoms();
     if (roms.empty()) {
@@ -272,5 +304,6 @@ void testBehaviorScript() {
         testTreeUV(setup);
         testGoombaFrame0(setup);
         testStarModel(setup);
+        testMaterialDetection(setup);
     }
 }
