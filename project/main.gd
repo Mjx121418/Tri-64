@@ -280,25 +280,12 @@ func _render_collision() -> void:
 	mi.material_override = _build_collision_material()
 	model_root.add_child(mi)
 
-	# 三角形边界（线框）：每个三角形 3 条边，便于看清薄/透的碰撞面（如 lavafall）。
-	var line_idx := PackedInt32Array()
-	line_idx.resize(c.indices.size() * 2)
-	var li := 0
-	for t in range(0, c.indices.size(), 3):
-		var i0: int = c.indices[t]
-		var i1: int = c.indices[t + 1]
-		var i2: int = c.indices[t + 2]
-		line_idx[li] = i0; line_idx[li + 1] = i1; li += 2
-		line_idx[li] = i1; line_idx[li + 1] = i2; li += 2
-		line_idx[li] = i2; line_idx[li + 1] = i0; li += 2
-
+	# 三角形边界（加宽线框）：Godot 的 PRIMITIVE_LINES 宽度固定 1px，改为沿每条
+	# 边画一条与三角形共面的细带（宽度 COLLISION_EDGE_WIDTH），便于看清薄/透的
+	# 碰撞面（如 lavafall）。
+	var wire := _build_collision_wireframe(c.vertices, c.indices, c.normals)
 	var lam := ArrayMesh.new()
-	var larr := []
-	larr.resize(Mesh.ARRAY_MAX)
-	larr[Mesh.ARRAY_VERTEX] = c.vertices
-	larr[Mesh.ARRAY_INDEX] = line_idx
-	lam.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, larr)
-
+	lam.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, wire)
 	var lmi := MeshInstance3D.new()
 	lmi.mesh = lam
 	lmi.material_override = _build_collision_wireframe_material()
@@ -306,6 +293,53 @@ func _render_collision() -> void:
 
 	status_label.text = "%s, Area %d: collision mode, %d triangles." % [
 			rom_manager.getLevelName(), selected_area, c.indices.size() / 3]
+
+## 把碰撞三角形每条边扩展成一条细带（共面，法线向外偏移避免与填充面 z-fight）。
+## 返回 ArrayMesh 的 arrays（PRIMITIVE_TRIANGLES）。
+const COLLISION_EDGE_WIDTH := 2.5
+
+func _build_collision_wireframe(verts: PackedVector3Array, indices: PackedInt32Array,
+		normals: PackedVector3Array) -> Array:
+	var qv := PackedVector3Array()
+	var qn := PackedVector3Array()
+	var qi := PackedInt32Array()
+	for t in range(0, indices.size(), 3):
+		var i0: int = indices[t]
+		var i1: int = indices[t + 1]
+		var i2: int = indices[t + 2]
+		var a := verts[i0]
+		var b := verts[i1]
+		var c := verts[i2]
+		var n := normals[i0]
+		_add_edge_ribbon(qv, qn, qi, a, b, n)
+		_add_edge_ribbon(qv, qn, qi, b, c, n)
+		_add_edge_ribbon(qv, qn, qi, c, a, n)
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = qv
+	arrays[Mesh.ARRAY_NORMAL] = qn
+	arrays[Mesh.ARRAY_INDEX] = qi
+	return arrays
+
+## 沿边 (p1,p2) 生成一条细带（两个三角形）：三角形平面内垂直于边的方向 e 展开
+## 半宽，整体沿法线向外偏移少许（避免与填充面 z-fight）。
+func _add_edge_ribbon(qv: PackedVector3Array, qn: PackedVector3Array,
+		qi: PackedInt32Array, p1: Vector3, p2: Vector3, n: Vector3) -> void:
+	var d := (p2 - p1).normalized()
+	var e: Vector3
+	if n.cross(d).length() < 1e-6:
+		e = Vector3.RIGHT * (COLLISION_EDGE_WIDTH * 0.5)
+	else:
+		e = n.cross(d).normalized() * (COLLISION_EDGE_WIDTH * 0.5)
+	var off := n * (COLLISION_EDGE_WIDTH * 0.25)
+	var base: int = qv.size()
+	qv.append(p1 + off + e)
+	qv.append(p2 + off + e)
+	qv.append(p2 + off - e)
+	qv.append(p1 + off - e)
+	qn.append(n); qn.append(n); qn.append(n); qn.append(n)
+	qi.append(base); qi.append(base + 1); qi.append(base + 2)
+	qi.append(base); qi.append(base + 2); qi.append(base + 3)
 
 ## 碰撞三角形材质：受光照（Per-Pixel）的蓝色，双面显示。
 func _build_collision_material() -> StandardMaterial3D:
