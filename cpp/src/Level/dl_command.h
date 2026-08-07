@@ -3,7 +3,6 @@
 
 #include "Memory/segment.h"
 #include "Math/math.h"
-#include <array>
 #include <cstdint>
 
 // GBI (Graphics Binary Interface) 命令层。

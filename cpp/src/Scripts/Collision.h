@@ -90,14 +90,14 @@ public:
     // 地址（s8 列表，按静态表面顺序逐一分配）。
     void run(SegmentedAddress terrain, SegmentedAddress rooms = {});
 
+    // 解码对象的碰撞数据（行为命令 LOAD_COLLISION_DATA 的目标流，对象本地空间）。
+    // 格式（surface_load.c load_object_collision_model）：[dummy][numVertices,
+    // vtx*3][{surfaceType, count, (v1 v2 v3 [force])}...] 直到 TERRAIN_LOAD_CONTINUE
+    // (0x41)。顶点未做对象矩阵变换（保留本地坐标；变换是运行时行为）。
+    void runObject(SegmentedAddress addr);
+
     const Data &data() const { return data_; }
 };
-
-// 解码对象的碰撞数据（行为命令 LOAD_COLLISION_DATA 的目标流，对象本地空间）。
-// 格式（surface_load.c load_object_collision_model）：[dummy][numVertices,
-// vtx*3][{surfaceType, count, (v1 v2 v3 [force])}...] 直到 TERRAIN_LOAD_CONTINUE
-// (0x41)。顶点未做对象矩阵变换（保留本地坐标；变换是运行时行为）。
-Data decodeObject(const SegmentTable &seg_table, SegmentedAddress addr);
 
 } // namespace Collision
 

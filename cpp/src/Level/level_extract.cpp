@@ -426,6 +426,7 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
 
     // 各对象的碰撞数据（行为 LOAD_COLLISION_DATA；本地空间，不做对象变换）。
     result_.object_collisions.resize(result_.objects.size());
+    Collision::CollisionDecoder collision_decoder(seg_table_);
     for (size_t i = 0; i < result_.objects.size(); i++) {
         const auto &obj = result_.objects[i];
         if (obj.behavior_script.isNull()) {
@@ -435,8 +436,8 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
         BehaviorScript::BehaviorScriptVM behavior_vm(seg_table_, bi);
         behavior_vm.run(obj.behavior_script);
         if (bi.ok && !bi.collision_data.isNull()) {
-            result_.object_collisions[i] =
-                Collision::decodeObject(seg_table_, bi.collision_data);
+            collision_decoder.runObject(bi.collision_data);
+            result_.object_collisions[i] = collision_decoder.data();
         }
     }
     result_.mario_start_pos = { static_cast<float>(level_.mario_start_pos.x),

@@ -246,18 +246,18 @@ void CollisionDecoder::run(SegmentedAddress terrain, SegmentedAddress rooms) {
     data_.ok = true;
 }
 
-Data decodeObject(const SegmentTable &seg_table, SegmentedAddress addr) {
-    Data data;
+void CollisionDecoder::runObject(SegmentedAddress addr) {
+    data_ = {};
     if (addr.seg < 0 || addr.seg > 31) {
-        data.error = "invalid collision segment";
-        return data;
+        data_.error = "invalid collision segment";
+        return;
     }
     std::span<const uint8_t> seg_data;
     try {
-        seg_data = seg_table.data(addr);
+        seg_data = seg_table_.data(addr);
     } catch (const std::out_of_range &) {
-        data.error = "collision segment not loaded";
-        return data;
+        data_.error = "collision segment not loaded";
+        return;
     }
 
     Reader reader {seg_data};
@@ -266,35 +266,35 @@ Data decodeObject(const SegmentTable &seg_table, SegmentedAddress addr) {
     // 顶点块：numVertices + 每顶点 3 个 s16（transform_object_vertices）。
     const int16_t num_vertices = reader.next();
     if (!reader.ok || num_vertices < 0) {
-        data.error = "object collision: bad vertex count";
-        return data;
+        data_.error = "object collision: bad vertex count";
+        return;
     }
-    data.vertices.reserve(static_cast<size_t>(num_vertices));
+    data_.vertices.reserve(static_cast<size_t>(num_vertices));
     for (int16_t i = 0; i < num_vertices && reader.ok; i++) {
         Vertex v;
         v.x = reader.next();
         v.y = reader.next();
         v.z = reader.next();
-        data.vertices.push_back(v);
+        data_.vertices.push_back(v);
     }
     if (!reader.ok) {
-        data.error = "object collision: vertices out of range";
-        return data;
+        data_.error = "object collision: vertices out of range";
+        return;
     }
 
     // 表面块：{surfaceType, count, (v1 v2 v3 [force])...} 直到 0x41。
     while (reader.ok) {
         const int16_t cmd = reader.next();
         if (!reader.ok) {
-            data.error = "object collision: surfaces out of range";
-            return data;
+            data_.error = "object collision: surfaces out of range";
+            return;
         }
         if (cmd == kTerrainLoadContinue) { // 0x41：数据结束
             break;
         }
         if (!isSurfaceType(cmd)) {
-            data.error = "object collision: unexpected terrain command";
-            return data;
+            data_.error = "object collision: unexpected terrain command";
+            return;
         }
         const int16_t count = reader.next();
         for (int16_t i = 0; i < count && reader.ok; i++) {
@@ -305,17 +305,16 @@ Data decodeObject(const SegmentTable &seg_table, SegmentedAddress addr) {
             s.v3 = static_cast<uint32_t>(reader.next());
             s.force = surfaceHasForce(cmd) ? reader.next() : 0;
             s.flags |= SURFACE_FLAG_DYNAMIC; // 对象碰撞 = 动态表面
-            data.surfaces.push_back(s);
+            data_.surfaces.push_back(s);
         }
         if (!reader.ok) {
-            data.error = "object collision: surface data out of range";
-            return data;
+            data_.error = "object collision: surface data out of range";
+            return;
         }
     }
 
-    finalizeSurfaces(data);
-    data.ok = true;
-    return data;
+    finalizeSurfaces(data_);
+    data_.ok = true;
 }
 
 TriangleMesh buildTriangleMesh(const Data &data) {
