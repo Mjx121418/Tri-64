@@ -263,7 +263,7 @@ func _render_geometry() -> void:
 			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
 			objects.size(), rendered_objects]
 
-## 渲染碰撞三角形：受光照的蓝色网格。
+## 渲染碰撞三角形：受光照的蓝色网格 + 三角形边界（线框）。
 func _render_collision() -> void:
 	object_list.clear()
 	var c: Dictionary = rom_manager.getCollisionTriangles()
@@ -280,6 +280,30 @@ func _render_collision() -> void:
 	mi.material_override = _build_collision_material()
 	model_root.add_child(mi)
 
+	# 三角形边界（线框）：每个三角形 3 条边，便于看清薄/透的碰撞面（如 lavafall）。
+	var line_idx := PackedInt32Array()
+	line_idx.resize(c.indices.size() * 2)
+	var li := 0
+	for t in range(0, c.indices.size(), 3):
+		var i0: int = c.indices[t]
+		var i1: int = c.indices[t + 1]
+		var i2: int = c.indices[t + 2]
+		line_idx[li] = i0; line_idx[li + 1] = i1; li += 2
+		line_idx[li] = i1; line_idx[li + 1] = i2; li += 2
+		line_idx[li] = i2; line_idx[li + 1] = i0; li += 2
+
+	var lam := ArrayMesh.new()
+	var larr := []
+	larr.resize(Mesh.ARRAY_MAX)
+	larr[Mesh.ARRAY_VERTEX] = c.vertices
+	larr[Mesh.ARRAY_INDEX] = line_idx
+	lam.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, larr)
+
+	var lmi := MeshInstance3D.new()
+	lmi.mesh = lam
+	lmi.material_override = _build_collision_wireframe_material()
+	model_root.add_child(lmi)
+
 	status_label.text = "%s, Area %d: collision mode, %d triangles." % [
 			rom_manager.getLevelName(), selected_area, c.indices.size() / 3]
 
@@ -289,6 +313,13 @@ func _build_collision_material() -> StandardMaterial3D:
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
 	mat.albedo_color = Color(0.25, 0.45, 1.0)
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return mat
+
+## 碰撞三角形边界材质：深色线条，双面显示。
+func _build_collision_wireframe_material() -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = Color(0.05, 0.12, 0.35)
 	return mat
 
 func _clear_model() -> void:
