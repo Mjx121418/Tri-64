@@ -365,8 +365,8 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     GBI::TextureDecoder tex_decoder(seg_table_);
     for (size_t m = 0; m < merged.materials.size(); m++) {
         if (merged.materials[m].textured && merged.material_images[m] != 0) {
-            if (tex_decoder.run(merged.materials[m],
-                                segAddress(merged.material_images[m]))) {
+            if (tex_decoder.run(merged.materials[m], segAddress(merged.material_images[m]),
+                                merged.material_tlut[m])) {
                 result_.textures[m] = tex_decoder.texture();
             }
         }

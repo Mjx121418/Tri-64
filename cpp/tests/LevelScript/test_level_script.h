@@ -49,6 +49,10 @@ void testLevelScriptData();
 // G_SETTILE palette/line, G_LOADTLUT, G_TEXTURE tile/lod.
 void testDlRspData();
 
+// Synthetic texture decode test: CI8/CI4 (palette/TLUT + LUT type), IA8/IA4,
+// I8/I4, RGBA32 — the formats beyond RGBA16/IA16.
+void testTextureFormats();
+
 // Shared setup for the level script tests: loads the ROM, locates the scripts
 // segment and the level jump table, loads the common segments and runs the
 // level script for BOB. Returns the populated segment table and level.

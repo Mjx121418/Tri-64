@@ -24,11 +24,13 @@ struct Texture {
 // 从材质解码纹理像素的解码器。
 //
 // tex_image = 三角形实际采样的图像（Mesh.material_images 里解析出的段地址）。
-// 数据源 = 该图像的 DRAM 数据（行主序），区域 = G_SETTILESIZE 的 4 坐标
-// （1/4 纹素），格式 = G_SETTILE。不需要模拟 RDP 的 TMEM 拷贝：对线性布局
-// 而言 "DRAM → TMEM" 的结果就是直接读 DRAM。
+// tlut_image = CI 纹理的调色板源图像（Mesh.material_tlut，G_LOADTLUT 绑定的段
+// 地址；非 CI 纹理为 0）。数据源 = 该图像的 DRAM 数据（行主序），区域 =
+// G_SETTILESIZE 的 4 坐标（1/4 纹素），格式 = G_SETTILE。不需要模拟 RDP 的
+// TMEM 拷贝：对线性布局而言 "DRAM → TMEM" 的结果就是直接读 DRAM。
 //
-// 当前支持 RGBA16（fmt=0, siz=2）与 IA16（fmt=3, siz=2）。
+// 支持：RGBA16/RGBA32（fmt 0），CI4/CI8（fmt 2，需 TLUT + OTHERMODE 的
+// TEXTLUT 类型），IA16/IA8/IA4（fmt 3），I8/I4（fmt 4）。
 class TextureDecoder {
     const SegmentTable &seg_table_;
     Texture texture_;
@@ -37,9 +39,10 @@ class TextureDecoder {
 public:
     explicit TextureDecoder(const SegmentTable &seg_table) : seg_table_(seg_table) {}
 
-    // 解码 material 引用的 tex_image 纹理。成功返回 true，texture() 可用；
-    // 失败返回 false，error() 给出原因。每次 run 重置内部结果。
-    bool run(const Material &material, SegmentedAddress tex_image);
+    // 解码 material 引用的 tex_image 纹理（CI 纹理用 tlut_image 的调色板）。
+    // 成功返回 true，texture() 可用；失败返回 false，error() 给出原因。
+    // 每次 run 重置内部结果。
+    bool run(const Material &material, SegmentedAddress tex_image, uint32_t tlut_image = 0);
 
     bool ok() const { return error_.empty(); }
     const Texture &texture() const { return texture_; }

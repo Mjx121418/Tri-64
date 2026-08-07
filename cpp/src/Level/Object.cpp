@@ -260,15 +260,18 @@ void ObjectModelDecoder::mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src) {
         const uint32_t mi = src.material_ids[t];
         const GBI::Material &m = src.materials[mi];
         const uint32_t img = src.material_images[mi];
+        const uint32_t tlut = src.material_tlut[mi];
         uint32_t mid = 0;
         for (; mid < merged.materials.size(); mid++) {
-            if (merged.materials[mid] == m && merged.material_images[mid] == img) {
+            if (merged.materials[mid] == m && merged.material_images[mid] == img
+                && merged.material_tlut[mid] == tlut) {
                 break;
             }
         }
         if (mid == merged.materials.size()) {
             merged.materials.push_back(m);
             merged.material_images.push_back(img);
+            merged.material_tlut.push_back(tlut);
         }
         merged.material_ids.push_back(mid);
     }
@@ -308,7 +311,8 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
     for (size_t m = 0; m < model_.mesh.materials.size(); m++) {
         if (model_.mesh.materials[m].textured && model_.mesh.material_images[m] != 0) {
             if (tex_decoder.run(model_.mesh.materials[m],
-                                segAddress(model_.mesh.material_images[m]))) {
+                                segAddress(model_.mesh.material_images[m]),
+                                model_.mesh.material_tlut[m])) {
                 model_.textures[m] = tex_decoder.texture();
             }
         }

@@ -414,14 +414,16 @@ void DLInterpreter::handleLoadTLUT(const DecodedCommand &cmd) {
     }
 }
 
-uint32_t DLInterpreter::materialId(uint32_t tex_image) {
+uint32_t DLInterpreter::materialId(uint32_t tex_image, uint32_t tlut) {
     for (size_t i = 0; i < mesh_.materials.size(); i++) {
-        if (mesh_.materials[i] == material_ && mesh_.material_images[i] == tex_image) {
+        if (mesh_.materials[i] == material_ && mesh_.material_images[i] == tex_image
+            && mesh_.material_tlut[i] == tlut) {
             return static_cast<uint32_t>(i);
         }
     }
     mesh_.materials.push_back(material_);
     mesh_.material_images.push_back(tex_image);
+    mesh_.material_tlut.push_back(tlut);
     return static_cast<uint32_t>(mesh_.materials.size() - 1);
 }
 
@@ -478,6 +480,8 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
         tex_image = (uint32_t(state_.tex_image.seg) << 24) |
                     (state_.tex_image.offset & 0xFFFFFF);
     }
+    // CI 调色板源（G_LOADTLUT 绑定的 tmem → 调色板图像；0 = 无）。
+    const uint32_t tlut = state_.tlut_images[state_.tile_tmem[kRenderTile]];
     uint32_t base = static_cast<uint32_t>(mesh_.vertices.size());
     appendVertex(state_.vertices[v0]);
     appendVertex(state_.vertices[v1]);
@@ -485,7 +489,7 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
     mesh_.indices.push_back(base);
     mesh_.indices.push_back(base + 1);
     mesh_.indices.push_back(base + 2);
-    mesh_.material_ids.push_back(materialId(tex_image));
+    mesh_.material_ids.push_back(materialId(tex_image, tlut));
 }
 
 void DLInterpreter::appendVertex(const Vtx &v) {

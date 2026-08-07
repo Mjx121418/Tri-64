@@ -89,6 +89,9 @@ struct Mesh {
     // 0 = 未绑定）。图像属于材质去重键（同图块配置、不同图像的三角形不能合并），
     // 但它是 drawTriangle 时从 RSP 状态解析出来的，不属于 Material 本身。
     std::vector<uint32_t> material_images;
+    // 与 materials 并行的 CI 调色板（TLUT）源图像地址（0 = 无调色板）；
+    // 同材质同纹理但调色板不同（palette 索引不同）的三角形也要分开。
+    std::vector<uint32_t> material_tlut;
 };
 
 // fast3d RSP 顶点缓冲大小
@@ -195,7 +198,7 @@ private:
     void loadVertices(const DecodedCommand &cmd);
     void drawTriangle(const DecodedCommand &cmd);
     void appendVertex(const Vtx &v);
-    uint32_t materialId(uint32_t tex_image);
+    uint32_t materialId(uint32_t tex_image, uint32_t tlut);
     // material_.textured = G_TEXTURE_ENABLE && 材质采样 TEXEL（在 G_SETCOMBINE /
     // G_TEXTURE / 几何模式变化后调用）。
     void updateTextured();

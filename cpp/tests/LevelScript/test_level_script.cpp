@@ -856,3 +856,69 @@ void testDlRspData() {
            mesh.materials.empty() ? 0u : mesh.materials[0].lut_type,
            mesh.indices.size() / 3);
 }
+
+void testTextureFormats() {
+    // 合成段：纹理图像 + CI 调色板（RGBA16 条目）。
+    std::vector<uint8_t> seg(0x400, 0);
+    auto put16 = [&](size_t o, uint16_t v) { seg[o] = (v >> 8) & 0xFF; seg[o + 1] = v & 0xFF; };
+    // CI8 纹理 @0x100：2x2 索引 [0,1,2,3]
+    seg[0x100] = 0; seg[0x101] = 1; seg[0x102] = 2; seg[0x103] = 3;
+    // 调色板 @0x200：red(0xF800), green(0x07C0), blue(0x003F), white(0xFFFF)
+    put16(0x200, 0xF800); put16(0x202, 0x07C0); put16(0x204, 0x003F); put16(0x206, 0xFFFF);
+    // IA8 纹理 @0x300：2x2 字节（I4<<4 | A4）
+    seg[0x300] = 0xF0; seg[0x301] = 0x0F; seg[0x302] = 0x80; seg[0x303] = 0xFF;
+
+    SegmentTable seg_table;
+    seg_table.rom_span = std::span(seg);
+    seg_table.loadSegment(0x0E, 0, static_cast<uint32_t>(seg.size()));
+
+    GBI::TextureDecoder td(seg_table);
+    auto makeMat = [&](uint8_t fmt, uint8_t siz, uint8_t lut) {
+        GBI::Material m;
+        m.textured = true;
+        m.tile_fmt = fmt;
+        m.tile_siz = siz;
+        m.tex_sl = 0; m.tex_tl = 0;
+        m.tex_sh = (2 - 1) * 4; m.tex_th = (2 - 1) * 4;
+        m.lut_type = lut;
+        return m;
+    };
+
+    // CI8：索引 → RGBA16 调色板
+    GBI::Material ci8 = makeMat(2, 1, GBI::G_TT_RGBA16);
+    if (!td.run(ci8, SegmentedAddress { 0x0E, 0x100 }, 0x0E000200u)) {
+        printf("test_texture_formats: FAIL CI8 decode: %s\n", td.error().c_str());
+    } else {
+        const auto &t = td.texture();
+        const uint8_t *px = t.pixels.data();
+        const bool ok = px[0] == 255 && px[1] == 0 && px[2] == 0
+                     && px[4] == 0 && px[5] == 255 && px[6] == 0
+                     && px[8] == 0 && px[9] == 0 && px[10] == 255
+                     && px[12] == 255 && px[13] == 255 && px[14] == 255;
+        printf("  CI8: pixels=(%u,%u,%u)(%u,%u,%u)(%u,%u,%u)(%u,%u,%u) %s\n",
+               px[0], px[1], px[2], px[4], px[5], px[6], px[8], px[9], px[10],
+               px[12], px[13], px[14], ok ? "OK" : "FAIL");
+        if (!ok) {
+            printf("test_texture_formats: FAIL CI8 palette lookup\n");
+        }
+    }
+
+    // IA8：I4<<4 | A4
+    GBI::Material ia8 = makeMat(3, 1, 0);
+    if (!td.run(ia8, SegmentedAddress { 0x0E, 0x300 }, 0)) {
+        printf("test_texture_formats: FAIL IA8 decode: %s\n", td.error().c_str());
+    } else {
+        const auto &t = td.texture();
+        const uint8_t *px = t.pixels.data();
+        const bool ok = px[0] == 0xF0 && px[1] == 0xF0 && px[2] == 0xF0 && px[3] == 0
+                     && px[4] == 0 && px[5] == 0 && px[6] == 0 && px[7] == 0xF0
+                     && px[8] == 0x80 && px[9] == 0x80 && px[10] == 0x80 && px[11] == 0
+                     && px[12] == 0xF0 && px[13] == 0xF0 && px[14] == 0xF0 && px[15] == 0xF0;
+        printf("  IA8: px0=(%u,%u,%u,a%u) px3=(%u,%u,%u,a%u) %s\n",
+               px[0], px[1], px[2], px[3], px[12], px[13], px[14], px[15],
+               ok ? "OK" : "FAIL");
+        if (!ok) {
+            printf("test_texture_formats: FAIL IA8 decode\n");
+        }
+    }
+}
