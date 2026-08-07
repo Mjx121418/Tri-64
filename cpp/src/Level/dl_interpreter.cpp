@@ -20,9 +20,9 @@ bool combineUsesTexel(uint32_t mux0, uint32_t mux1) {
         (mux0 >> 5) & 0xF,   // alpha A1
         (mux0 >> 0) & 0x1F,  // alpha C1
         (mux1 >> 28) & 0xF,  // 颜色 B
-        (mux1 >> 17) & 0x7,  // 颜色 D
-        (mux1 >> 14) & 0x7,  // alpha B
-        (mux1 >> 11) & 0x7,  // alpha D
+        (mux1 >> 15) & 0x7,  // 颜色 D（gbi.h GCCc0w1：shift 15）
+        (mux1 >> 12) & 0x7,  // alpha B
+        (mux1 >> 9) & 0x7,   // alpha D
         (mux1 >> 24) & 0xF,  // alpha B1
         (mux1 >> 21) & 0x7,  // alpha A1
         (mux1 >> 18) & 0x7,  // alpha C1

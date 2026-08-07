@@ -21,8 +21,14 @@ Array meshDicts(const GBI::Mesh &mesh) {
         PackedVector3Array verts;
         PackedVector3Array normals;
         PackedVector2Array uvs;
-        PackedColorArray colors;
         PackedInt32Array indices;
+
+        // 顶点第 4 个字仅在"未纹理且未光照"时是 RGBA 颜色（G_CC_SHADE 的顶点色）；
+        // 纹理/受光材质的第 4 字是法线（dl_interpreter 的 coordinate_or_normal），
+        // 喂给 Godot 的 ARRAY_COLOR 会被乘到纹素上（草会因此部分变灰）。
+        // 因此只为该情形导出颜色。
+        const bool use_vertex_colors = !mesh.materials[m].textured && !mesh.materials[m].lit;
+        PackedColorArray colors;
 
         for (size_t t = 0; t < mesh.material_ids.size(); t++) {
             if (mesh.material_ids[t] != m) {
@@ -34,10 +40,10 @@ Array meshDicts(const GBI::Mesh &mesh) {
                 verts.push_back(Vector3(v.position[0], v.position[1], v.position[2]));
                 normals.push_back(Vector3(v.normal[0], v.normal[1], v.normal[2]));
                 uvs.push_back(Vector2(v.uv[0], v.uv[1]));
-                // 顶点第 4 个字：未光照时为 RGBA 颜色（0-255），光照时为有符号法线
-                //（不导出颜色；未纹理材质在 Godot 里按 material.lit 决定用法）。
-                colors.push_back(Color(v.color[0] / 255.0f, v.color[1] / 255.0f,
-                                       v.color[2] / 255.0f, v.color[3] / 255.0f));
+                if (use_vertex_colors) {
+                    colors.push_back(Color(v.color[0] / 255.0f, v.color[1] / 255.0f,
+                                           v.color[2] / 255.0f, v.color[3] / 255.0f));
+                }
                 indices.push_back(base + static_cast<int32_t>(k));
             }
         }
@@ -48,7 +54,9 @@ Array meshDicts(const GBI::Mesh &mesh) {
         d["vertices"] = verts;
         d["normals"] = normals;
         d["uvs"] = uvs;
-        d["colors"] = colors;
+        if (use_vertex_colors) {
+            d["colors"] = colors;
+        }
         d["indices"] = indices;
         d["material"] = static_cast<int64_t>(m);
         out.push_back(d);

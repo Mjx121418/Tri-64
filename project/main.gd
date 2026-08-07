@@ -223,7 +223,8 @@ func _render_geometry() -> void:
 		arrays[Mesh.ARRAY_VERTEX] = md.vertices
 		arrays[Mesh.ARRAY_NORMAL] = md.normals
 		arrays[Mesh.ARRAY_TEX_UV] = md.uvs
-		arrays[Mesh.ARRAY_COLOR] = md.colors
+		if md.has("colors"):
+			arrays[Mesh.ARRAY_COLOR] = md.colors
 		arrays[Mesh.ARRAY_INDEX] = md.indices
 		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
@@ -307,7 +308,8 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 		arrays[Mesh.ARRAY_VERTEX] = me.vertices
 		arrays[Mesh.ARRAY_NORMAL] = me.normals
 		arrays[Mesh.ARRAY_TEX_UV] = me.uvs
-		arrays[Mesh.ARRAY_COLOR] = me.colors
+		if me.has("colors"):
+			arrays[Mesh.ARRAY_COLOR] = me.colors
 		arrays[Mesh.ARRAY_INDEX] = me.indices
 		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var mi: int = me.material
