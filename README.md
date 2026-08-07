@@ -48,7 +48,7 @@ cpp/        Extractor + Godot extension (C++26, built with SCons)
   tests/        Test suite (scons test)
 project/    Godot project (main.gd, main.tscn, GDExtension config)
 docs/       Engine.md (implementation-vs-original-engine deviations),
-            engine-notes.md (pure engine / ROM-hack quirks),
+            Quirks.md (pure engine / ROM-hack quirks),
             N64_RDP_State_Machine.md
 ```
 
@@ -92,7 +92,7 @@ then switch between the two render modes:
 Supported inputs:
 
 - Vanilla SM64 (US) and most binary ROM hacks
-- Custom segment layouts (SM64-editor hacks; see `docs/engine-notes.md` for its
+- Custom segment layouts (SM64-editor hacks; see `docs/Quirks.md` for its
   `level script command 0x17` redefinition and the "faked MIO0" segment 2)
 - Fast3D microcode (the N64's `fast3d.s`, not F3DEX2); new microcodes can be added
   without modifying the core decoder
@@ -132,11 +132,11 @@ deviation from the original engine):
 The extractor does not emulate audio, gameplay, physics, or scripting behavior
 beyond asset extraction. Runtime behavior that is C code (e.g. `cur_obj_scale`)
 and C-table collisions (rotating/bowser platforms) are documented non-goals —
-see `docs/engine-notes.md`.
+see `docs/Quirks.md`.
 
 ## Documentation
 
 - `docs/Engine.md` — how our implementation deviates from the original SM64
   engine, organized by subsystem.
-- `docs/engine-notes.md` — pure engine and ROM-hack quirks.
+- `docs/Quirks.md` — pure engine and ROM-hack quirks.
 - `docs/N64_RDP_State_Machine.md` — N64 RDP reference.

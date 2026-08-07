@@ -9,10 +9,10 @@ to it.
 
 Layout: one section per subsystem. Each entry states the **original** behavior (with a
 decomp pointer), then **ours**, then **why**. Pure engine/hack quirks (facts about the
-ROM/engine that hold regardless of our implementation) live in `docs/engine-notes.md`;
+ROM/engine that hold regardless of our implementation) live in `docs/Quirks.md`;
 this file focuses on *deviations*.
 
-> See also `docs/engine-notes.md` for engine/hack quirks (segment-2 layouts, null DL
+> See also `docs/Quirks.md` for engine/hack quirks (segment-2 layouts, null DL
 > addresses, SM64-editor command 0x17, ...) and `WORKLOG.md` for the work log.
 
 ---
@@ -64,7 +64,7 @@ decompression is done in `mio0.c`.
   emit ranges past EOF) cannot build an out-of-bounds span.
 
 **Why**: our sparse table + throwing reads are what makes the extractor safe against the
-placeholder/garbage addresses that binary hacks ship (see `engine-notes.md` "null /
+placeholder/garbage addresses that binary hacks ship (see `Quirks.md` "null /
 invalid display-list addresses").
 
 ### main segment (0x00) and preset tables
@@ -119,9 +119,9 @@ run MIPS functions; `SLEEP`/`DELAY` pause across frames.
 - **Entry point**: we run `level_main_scripts_entry` from seg 0x15 offset 0 (not the
   jump table) so common models (stars, coins, ...) load; the menu is skipped because
   `level_main_menu_entry_2`'s `JUMP_IF(reg == 0)` jumps straight to `EXIT` (reg is never
-  set before the menu). See `engine-notes.md` "running level_main_scripts_entry".
+  set before the menu). See `Quirks.md` "running level_main_scripts_entry".
 - **`LOAD_RAW` (0x17)**: SM64-editor hacks redefine this command; we special-case their
-  `0x100+seg` encoding. See `engine-notes.md`.
+  `0x100+seg` encoding. See `Quirks.md`.
 
 ---
 
@@ -163,7 +163,7 @@ emits a runtime DL (movtex water, envfx, paintings), billboards face the camera,
   command length (12 when the func flag is set) or the stream mis-aligns. (Decomp quirk.)
 - **Animated parts / billboards**: `GEO_ANIMATED_PART` frame-0 animation is baked by
   `ObjectExtract::Frame0Animator`; billboards are recorded but not made camera-facing
-  (they use the geo translation). See `engine-notes.md`.
+  (they use the geo translation). See `Quirks.md`.
 - **Root / master list / shadow / object-parent / held-object**: recorded structurally;
   the master list is empty (runtime), shadow geometry is not generated, held-object
   records `playerIndex`/`func` (Phase 2).
@@ -211,7 +211,7 @@ microcode, so all GBI encodings here are the F3D layouts.
   G_CULL_BACK|G_LIGHTING`, `game_init.c:120`). The RSP starts at 0 and the game sets it.
 - **Textured vs flat**: `textured` = the combine samples TEXEL0/1 (NOT gated on
   `G_TEXTURE_ENABLE`, because some DLs rely on a parent DL's `G_ON` that our per-DL
-  interpreter resets). See `engine-notes.md` "textured vs flat".
+  interpreter resets). See `Quirks.md` "textured vs flat".
 - **Ignored RDP state**: fog color recorded but fog not rendered; `G_SETCIMG`/`G_SETZIMG`/
   scissor/fill/rect are recognized but not used (runtime render targets/backgrounds).
 
@@ -293,12 +293,12 @@ commands):
   named accessors for the render-relevant ones (oFlags, oOpacity, oAnimState,
   oGraphYOffset, oDrawingDistance, oCollisionDistance, interactType/Subtype).
 - **Extracted data**: model, animations + first `ANIMATE` index (or default 0 for
-  native-selected animations — see `engine-notes.md`), collision data, hitbox, hurtbox,
+  native-selected animations — see `Quirks.md`), collision data, hitbox, hurtbox,
   scale, billboard/hide/disable-rendering, `SET_OBJ_PHYSICS`, `ANIMATE_TEXTURE`,
   `SPAWN_WATER_DROPLET` params, and `SPAWN_*` model ids + behaviors (the game spawns
   child objects; we record the targets).
 - **`cur_obj_scale` (runtime scale) is not applied** — only `GEO_SCALE` (geo data) and
-  the behavior `SCALE` command. See `engine-notes.md`.
+  the behavior `SCALE` command. See `Quirks.md`.
 
 ---
 
@@ -312,7 +312,7 @@ per frame.
 **Ours** —
 
 - **Frame-0 animation baked** into the model cache (`Frame0Animator`, mirrors
-  `geo_process_animated_part`). See `engine-notes.md`.
+  `geo_process_animated_part`). See `Quirks.md`.
 - **Spawn transform**: objects are placed at their spawn pos + yaw (macro objects:
   preset yaw converted to SM64 angle units; special objects: the terrain-stream yaw is
   256-per-circle, converted). Behavior-driven position deltas, `DROP_TO_FLOOR`,
@@ -333,13 +333,13 @@ per frame.
 ## 10. Binary (ROM hack) compatibility
 
 Differences that exist only because we target binary ROMs (vanilla + hacks), not the
-decomp build. Full details in `docs/engine-notes.md`:
+decomp build. Full details in `docs/Quirks.md`:
 
 - **Sparse segment table + defensive bounds checks** vs the game's benign
   `segmented_to_virtual` memory (Section 2).
 - **Preset-table fingerprinting** vs compile-time symbols (Section 2).
 - **Main-segment location by boot-entry prologue** (hacks may move it).
 - **SM64-editor command 0x17 redefinition**, **faked MIO0 segment 2**, **course-name
-  table offset** — `engine-notes.md`.
+  table offset** — `Quirks.md`.
 - **Behavior analysis requires an exact address** (behaviors have no end marker);
   we hand it the OBJECT command's behavior pointer.
