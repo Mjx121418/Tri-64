@@ -113,6 +113,7 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("getObjects"), &GodotBridge::getObjects);
     ClassDB::bind_method(D_METHOD("getObjectModels"), &GodotBridge::getObjectModels);
     ClassDB::bind_method(D_METHOD("getCollisionTriangles"), &GodotBridge::getCollisionTriangles);
+    ClassDB::bind_method(D_METHOD("getObjectCollisions"), &GodotBridge::getObjectCollisions);
     ClassDB::bind_method(D_METHOD("getLevelName"), &GodotBridge::getLevelName);
     ClassDB::bind_method(D_METHOD("getLevelNameFor", "level_num"),
                          &GodotBridge::getLevelNameFor);
@@ -230,6 +231,57 @@ Dictionary GodotBridge::getCollisionTriangles() {
     d["classes"] = classes;
     d["indices"] = indices;
     return d;
+}
+
+// 各对象的碰撞三角形（行为 LOAD_COLLISION_DATA）。顶点为对象本地空间，
+// 与对象模型共用同一个 Godot 节点变换（pos/angle，见 getObjects）。
+Array GodotBridge::getObjectCollisions() {
+    Array out;
+    for (size_t i = 0; i < result_.object_collisions.size() && i < result_.objects.size(); i++) {
+        const Collision::Data &oc = result_.object_collisions[i];
+        if (!oc.ok || oc.surfaces.empty()) {
+            continue;
+        }
+        const Collision::TriangleMesh mesh = Collision::buildTriangleMesh(oc);
+        if (mesh.indices.empty()) {
+            continue;
+        }
+        const auto &obj = result_.objects[i];
+
+        Dictionary d;
+        d["pos"] = Vector3(obj.start_pos.x, obj.start_pos.y, obj.start_pos.z);
+        d["angle"] = Vector3(sm64AngleToRadians(obj.start_angle.x),
+                             sm64AngleToRadians(obj.start_angle.y),
+                             sm64AngleToRadians(obj.start_angle.z));
+
+        PackedVector3Array verts;
+        PackedVector3Array normals;
+        PackedInt32Array classes;
+        PackedInt32Array indices;
+        verts.resize(static_cast<int>(mesh.positions.size()));
+        normals.resize(static_cast<int>(mesh.normals.size()));
+        classes.resize(static_cast<int>(mesh.classes.size()));
+        for (size_t k = 0; k < mesh.positions.size(); k++) {
+            verts.set(k, Vector3(mesh.positions[k].x, mesh.positions[k].y, mesh.positions[k].z));
+        }
+        for (size_t k = 0; k < mesh.normals.size(); k++) {
+            normals.set(k, Vector3(mesh.normals[k].x, mesh.normals[k].y, mesh.normals[k].z));
+        }
+        for (size_t k = 0; k < mesh.classes.size(); k++) {
+            classes.set(k, static_cast<int32_t>(mesh.classes[k]));
+        }
+        indices.resize(static_cast<int>(mesh.indices.size()));
+        for (size_t k = 0; k < mesh.indices.size(); k++) {
+            indices.set(k, static_cast<int32_t>(mesh.indices[k]));
+        }
+
+        d["vertices"] = verts;
+        d["normals"] = normals;
+        d["classes"] = classes;
+        d["indices"] = indices;
+        out.push_back(d);
+    }
+    return out;
 }
 
 String GodotBridge::getLevelName() {

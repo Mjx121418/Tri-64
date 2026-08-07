@@ -44,6 +44,11 @@ public:
     // 碰撞三角形（当前区域的静态碰撞）：{ vertices: PackedVector3Array,
     // normals, indices: PackedInt32Array }。平坦着色，每三角形 3 个顶点。
     Dictionary getCollisionTriangles();
+    // 对象的碰撞三角形（行为 LOAD_COLLISION_DATA，本地空间，需配合
+    // getObjects 的 pos/angle 变换到世界）：每个有碰撞数据的对象一个
+    // { pos: Vector3, angle: Vector3(弧度), vertices, normals, classes,
+    // indices }，顶点未做对象变换（与模型共用同一个 Godot 节点变换）。
+    Array getObjectCollisions();
     // 当前提取的关卡名称（从 ROM 段2的 seg2_course_name_table 提取）。
     // 必须在 extractLevel 之后调用，否则返回空字符串。
     String getLevelName();

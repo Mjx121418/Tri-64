@@ -292,12 +292,51 @@ func _render_collision() -> void:
 	lmi.material_override = _build_collision_wireframe_material()
 	model_root.add_child(lmi)
 
-	status_label.text = "%s, Area %d: collision mode, %d triangles." % [
-			rom_manager.getLevelName(), selected_area, c.indices.size() / 3]
+	# 对象碰撞三角形（行为 LOAD_COLLISION_DATA，对象本地空间）：与对象模型共用
+	# 同一个节点变换（pos/angle），放在对象实际出生位置/朝向。
+	var object_triangles := _render_object_collisions()
+
+	status_label.text = "%s, Area %d: collision mode, %d triangles, %d object collision triangles." % [
+			rom_manager.getLevelName(), selected_area, c.indices.size() / 3, object_triangles]
+
+## 渲染对象的碰撞三角形（每个有 LOAD_COLLISION_DATA 的对象一个网格），放在
+## 对象的出生位置/朝向。返回对象碰撞三角形总数。
+func _render_object_collisions() -> int:
+	var fill_mat := _build_collision_material()
+	var wire_mat := _build_collision_wireframe_material()
+	var total := 0
+	for oc in rom_manager.getObjectCollisions():
+		var am := ArrayMesh.new()
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = oc.vertices
+		arrays[Mesh.ARRAY_NORMAL] = oc.normals
+		arrays[Mesh.ARRAY_COLOR] = _build_collision_colors(oc.classes)
+		arrays[Mesh.ARRAY_INDEX] = oc.indices
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+		var mi := MeshInstance3D.new()
+		mi.mesh = am
+		mi.position = oc.pos
+		mi.rotation = oc.angle
+		mi.material_override = fill_mat
+		model_root.add_child(mi)
+		total += oc.indices.size() / 3
+
+		var wire := _build_collision_wireframe(oc.vertices, oc.indices, oc.normals)
+		var lam := ArrayMesh.new()
+		lam.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, wire)
+		var lmi := MeshInstance3D.new()
+		lmi.mesh = lam
+		lmi.position = oc.pos
+		lmi.rotation = oc.angle
+		lmi.material_override = wire_mat
+		model_root.add_child(lmi)
+	return total
 
 ## 把碰撞三角形每条边扩展成一条细带（共面，法线向外偏移避免与填充面 z-fight）。
 ## 返回 ArrayMesh 的 arrays（PRIMITIVE_TRIANGLES）。
-const COLLISION_EDGE_WIDTH := 20
+const COLLISION_EDGE_WIDTH := 10
 
 func _build_collision_wireframe(verts: PackedVector3Array, indices: PackedInt32Array,
 		normals: PackedVector3Array) -> Array:
@@ -374,7 +413,7 @@ func _build_collision_colors(classes: PackedInt32Array) -> PackedColorArray:
 func _build_collision_wireframe_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.albedo_color = Color(0.05, 0.12, 0.35)
+	mat.albedo_color = Color(0.0, 0.0, 0.0)
 	return mat
 
 func _clear_model() -> void:

@@ -96,15 +96,35 @@ void testCollision() {
 
             // 对象的碰撞数据（行为 LOAD_COLLISION_DATA）：原版 BOB 应有对象碰撞。
             size_t obj_collisions = 0;
+            size_t obj_collision_triangles = 0;
             for (const auto &oc : r.object_collisions) {
                 if (oc.ok && !oc.surfaces.empty()) {
                     obj_collisions++;
+                    // 每个有碰撞的对象都应构建出非空网格：每三角形 1 个类型
+                    //（floor/wall/ceiling）。buildTriangleMesh 会跳过越界/退化
+                    // 表面，因此三角形数 ≤ 表面数。
+                    const Collision::TriangleMesh tm = Collision::buildTriangleMesh(oc);
+                    if (tm.indices.empty() ||
+                        tm.indices.size() > oc.surfaces.size() * 3 ||
+                        tm.classes.size() != tm.indices.size() / 3) {
+                        printf("test_collision: FAIL object collision mesh invalid "
+                               "(indices=%zu surfaces=%zu classes=%zu)\n",
+                               tm.indices.size(), oc.surfaces.size(), tm.classes.size());
+                    }
+                    if (tm.indices.size() != oc.surfaces.size() * 3) {
+                        printf("test_collision: note %zu/%zu object surfaces skipped\n",
+                               oc.surfaces.size() - tm.indices.size() / 3, oc.surfaces.size());
+                    }
+                    obj_collision_triangles += tm.indices.size() / 3;
                 }
             }
-            printf("test_collision: BOB: objects=%zu with collision=%zu\n", r.objects.size(),
-                   obj_collisions);
+            printf("test_collision: BOB: objects=%zu with collision=%zu triangles=%zu\n",
+                   r.objects.size(), obj_collisions, obj_collision_triangles);
             if (is_vanilla && obj_collisions < 20) {
                 printf("test_collision: FAIL vanilla BOB has too few object collisions\n");
+            }
+            if (is_vanilla && obj_collision_triangles < 100) {
+                printf("test_collision: FAIL vanilla BOB has too few object collision triangles\n");
             }
         }
 
