@@ -140,3 +140,8 @@ see `docs/Quirks.md`.
   engine, organized by subsystem.
 - `docs/Quirks.md` — pure engine and ROM-hack quirks.
 - `docs/N64_RDP_State_Machine.md` — N64 RDP reference.
+
+## Authorship
+
+Most of the code in this repository was written by the AI model
+**deepseek-v4-flash**.
