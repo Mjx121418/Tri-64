@@ -128,6 +128,7 @@ struct RSPState {
 //   - 材质命令（SETCOMBINE/颜色/SETTILE/TEXIMAGE/TEXTURE/几何模式）→ Material 表
 class DLInterpreter {
     const SegmentTable &seg_table_;
+    CommandDecoder cmd_decoder_;
     RSPState state_;
     std::vector<SegmentedAddress> dl_stack_;
     Mesh mesh_;
@@ -138,7 +139,8 @@ class DLInterpreter {
     Material material_;          // 当前累积的材质
 
 public:
-    explicit DLInterpreter(const SegmentTable &seg_table) : seg_table_(seg_table) {}
+    explicit DLInterpreter(const SegmentTable &seg_table) :
+        seg_table_(seg_table), cmd_decoder_(seg_table) {}
 
     Mesh &run(SegmentedAddress dl);
 

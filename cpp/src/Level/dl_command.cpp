@@ -3,9 +3,9 @@
 
 namespace GBI {
 
-DecodedCommand decodeDLCommand(SegmentedAddress addr, const SegmentTable &seg_table) {
+DecodedCommand CommandDecoder::decode(SegmentedAddress addr) const {
     DecodedCommand cmd;
-    std::span<const uint8_t> d = seg_table.data(addr, 8);
+    std::span<const uint8_t> d = seg_table_.data(addr, 8);
     cmd.addr = addr;
     cmd.opcode = readInt<uint8_t>(d, 0);
     cmd.w0 = readInt<uint32_t>(d, 0);
@@ -13,8 +13,8 @@ DecodedCommand decodeDLCommand(SegmentedAddress addr, const SegmentTable &seg_ta
     return cmd;
 }
 
-Mtxf decodeMtx(SegmentedAddress addr, const SegmentTable &seg_table) {
-    std::span<const uint8_t> d = seg_table.data(addr, 64);
+Mtxf CommandDecoder::decodeMtx(SegmentedAddress addr) const {
+    std::span<const uint8_t> d = seg_table_.data(addr, 64);
     Mtxf m {};
     for (int k = 0; k < 16; k++) {
         // 布局：字节 0-31 = 各元素高 16 位，字节 32-63 = 低 16 位

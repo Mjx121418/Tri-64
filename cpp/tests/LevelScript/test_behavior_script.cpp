@@ -16,6 +16,14 @@
 
 namespace {
 
+// BehaviorScriptVM 的便捷包装：返回走查结果 Info。
+BehaviorScript::Info analyzeBehavior(const SegmentTable &seg_table, SegmentedAddress entry) {
+    BehaviorScript::Info info;
+    BehaviorScript::BehaviorScriptVM vm(seg_table, info);
+    vm.run(entry);
+    return info;
+}
+
 // 在段 0x13 的 span 里按命令形状扫描 bhvDoor：
 //   BEGIN + SET_INT + OR_INT + LOAD_ANIMATIONS(0x27, 门动画 0x030156C0) +
 //   ANIMATE(0x28) + LOAD_COLLISION_DATA(0x2A, 门碰撞 0x0301CE78)
@@ -61,7 +69,7 @@ void testDoorBehavior(const LevelScriptSetup &setup) {
     const SegmentedAddress door { 0x13, static_cast<uint32_t>(begin_off) };
     printf("  door behavior @ 0x%04x%06x\n", door.seg, door.offset);
 
-    const BehaviorScript::Info info = BehaviorScript::analyze(setup.seg_table, door);
+    const BehaviorScript::Info info = analyzeBehavior(setup.seg_table, door);
     if (!info.ok) {
         printf("  [FAIL] analyze returned ok=false for the door behavior\n");
         return;
@@ -95,7 +103,7 @@ void testRobustness(const LevelScriptSetup &setup) {
                 continue;
             }
             const BehaviorScript::Info info =
-                BehaviorScript::analyze(setup.seg_table, obj.behavior_script);
+                analyzeBehavior(setup.seg_table, obj.behavior_script);
             analyzed++;
             if (!info.ok) {
                 failed++;
@@ -106,7 +114,7 @@ void testRobustness(const LevelScriptSetup &setup) {
     }
 
     // 段 0x13 开头的第一个行为（原版/两版都是一个表面对象）。
-    const BehaviorScript::Info first = BehaviorScript::analyze(
+    const BehaviorScript::Info first = analyzeBehavior(
         setup.seg_table, SegmentedAddress { 0x13, 0 });
     printf("  robustness: %zu object behaviors walked (%zu !ok), first-behavior ok=%d "
            "obj_list=%d hitbox=%dx%d\n",
@@ -115,7 +123,7 @@ void testRobustness(const LevelScriptSetup &setup) {
 
     // 越界/空地址要优雅地返回 !ok（不崩溃）。
     const BehaviorScript::Info bad =
-        BehaviorScript::analyze(setup.seg_table, SegmentedAddress { 0x13, 0xFFFFFF });
+        analyzeBehavior(setup.seg_table, SegmentedAddress { 0x13, 0xFFFFFF });
     if (bad.ok) {
         printf("  [FAIL] out-of-bounds behavior address returned ok\n");
         failed++;

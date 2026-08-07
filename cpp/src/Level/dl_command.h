@@ -194,8 +194,20 @@ struct DecodedCommand {
     SegmentedAddress memAddress() const { return segAddress(w1); }
 };
 
-// 读取并解码 addr 处的一条命令（8 字节）
-DecodedCommand decodeDLCommand(SegmentedAddress addr, const SegmentTable &seg_table);
+// GBI 命令解码器：从段数据读取并解码一条命令（8 字节）或一个 64 字节定点矩阵。
+// 与 DLInterpreter 分离，属于独立的"命令字节 → DecodedCommand"解码层。
+class CommandDecoder {
+    const SegmentTable &seg_table_;
+
+public:
+    explicit CommandDecoder(const SegmentTable &seg_table) : seg_table_(seg_table) {}
+
+    // 读取并解码 addr 处的一条命令（8 字节）。
+    DecodedCommand decode(SegmentedAddress addr) const;
+
+    // 读取并解码一条 G_MTX 的 64 字节定点矩阵。
+    Mtxf decodeMtx(SegmentedAddress addr) const;
+};
 
 // --- GBI 数据类型 ---
 
@@ -210,10 +222,6 @@ struct Vtx {
 // 浮点矩阵（行主序，平移在最后一行 m[3][0..2]）——解释器内部使用。
 // 与 Math/math.h 的全局 Mtxf 同一布局，共用同一类型。
 using Mtxf = ::Mtxf;
-
-// 读取并解码一条 G_MTX 的 64 字节定点矩阵：
-//   字节 0-31 = 各元素高 16 位（整数部分），字节 32-63 = 低 16 位（小数部分）
-Mtxf decodeMtx(SegmentedAddress addr, const SegmentTable &seg_table);
 
 } // namespace GBI
 

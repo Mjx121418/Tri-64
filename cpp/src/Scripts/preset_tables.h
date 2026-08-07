@@ -31,9 +31,24 @@ struct SpecialPreset {
     SegmentedAddress behavior {};
 };
 
-// 解析表并返回按 preset id 索引的条目；主段未载入或定位失败返回空。
-std::vector<MacroPreset> parseMacroPresets(const SegmentTable &seg_table);
-std::vector<SpecialPreset> parseSpecialPresets(const SegmentTable &seg_table);
+// preset 表解码器（镜像 LevelScriptVM 的结构）：构造时绑定段表，run*() 重置并
+// 解析主段里的表，结果经访问器取得。主段未载入或定位失败时对应表为空。
+class PresetTableDecoder {
+    const SegmentTable &seg_table_;
+    std::vector<MacroPreset> macro_presets_;
+    std::vector<SpecialPreset> special_presets_;
+
+public:
+    explicit PresetTableDecoder(const SegmentTable &seg_table) : seg_table_(seg_table) {}
+
+    // 解析 sMacroObjectPresets，结果按 preset id 索引（顺序排列）。
+    void runMacro();
+    // 解析 sSpecialObjectPresets，结果按存储的 presetID 填入（非连续）。
+    void runSpecial();
+
+    const std::vector<MacroPreset> &macroPresets() const { return macro_presets_; }
+    const std::vector<SpecialPreset> &specialPresets() const { return special_presets_; }
+};
 
 } // namespace PresetTables
 

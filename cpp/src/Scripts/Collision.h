@@ -58,10 +58,22 @@ struct TriangleMesh {
 // 把表面（顶点索引）解析成三角形网格；越界/退化三角形跳过。
 TriangleMesh buildTriangleMesh(const Data &data);
 
-// 解码 terrain（TERRAIN 命令地址）处的碰撞数据；rooms 为可选的 ROOMS 命令
-// 地址（s8 列表，按静态表面顺序逐一分配）。解码失败时 ok=false。
-Data decode(const SegmentTable &seg_table, SegmentedAddress terrain,
-            SegmentedAddress rooms = {});
+// 碰撞（terrain）数据解码器（镜像 LevelScriptVM 的结构）：构造时绑定段表，
+// run(terrain[, rooms]) 重置并解码，结果经 data() 取得。解码失败时
+// data().ok = false、data().error 给出原因。
+class CollisionDecoder {
+    const SegmentTable &seg_table_;
+    Data data_;
+
+public:
+    explicit CollisionDecoder(const SegmentTable &seg_table) : seg_table_(seg_table) {}
+
+    // 解码 terrain（TERRAIN 命令地址）处的碰撞数据；rooms 为可选的 ROOMS 命令
+    // 地址（s8 列表，按静态表面顺序逐一分配）。
+    void run(SegmentedAddress terrain, SegmentedAddress rooms = {});
+
+    const Data &data() const { return data_; }
+};
 
 } // namespace Collision
 

@@ -246,7 +246,7 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
     }
 }
 
-void mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src) {
+void ObjectModelDecoder::mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src) {
     const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
     merged.vertices.insert(merged.vertices.end(), src.vertices.begin(), src.vertices.end());
     merged.indices.reserve(merged.indices.size() + src.indices.size());
@@ -274,17 +274,16 @@ void mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src) {
     }
 }
 
-ObjectExtract::ObjectModel decodeModel(const SegmentTable &seg_table, const GraphNode *node,
-                        ObjectExtract::Frame0Animator *frame0) {
-    ObjectExtract::ObjectModel model;
+void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0Animator *frame0) {
+    model_ = {};
     if (!node) {
-        return model;
+        return;
     }
 
     std::vector<ObjectExtract::DisplayListWithTransform> dls;
     collectDisplayListsWithTransform(*node, mtxfIdentity(), dls, frame0);
     if (dls.empty()) {
-        return model;
+        return;
     }
 
     GBI::Mesh merged;
@@ -294,30 +293,29 @@ ObjectExtract::ObjectModel decodeModel(const SegmentTable &seg_table, const Grap
         if (dlt.dl.seg < 0 || dlt.dl.seg > 31 || (dlt.dl.seg == 0 && dlt.dl.offset == 0)) {
             continue;
         }
-        GBI::DLInterpreter interp(seg_table);
+        GBI::DLInterpreter interp(seg_table_);
         GBI::Mesh &decoded = interp.run(dlt.dl);
         ObjectExtract::applyTransform(decoded, dlt.transform);
         mergeMesh(merged, std::move(decoded));
     }
     if (merged.indices.empty()) {
-        return model;
+        return;
     }
 
-    model.mesh = std::move(merged);
-    model.textures.resize(model.mesh.materials.size());
-    for (size_t m = 0; m < model.mesh.materials.size(); m++) {
-        if (model.mesh.materials[m].textured && model.mesh.material_images[m] != 0) {
-            auto tex = GBI::decodeTexture(model.mesh.materials[m],
-                                          segAddress(model.mesh.material_images[m]), seg_table);
-            if (tex) {
-                model.textures[m] = std::move(*tex);
+    model_.mesh = std::move(merged);
+    model_.textures.resize(model_.mesh.materials.size());
+    GBI::TextureDecoder tex_decoder(seg_table_);
+    for (size_t m = 0; m < model_.mesh.materials.size(); m++) {
+        if (model_.mesh.materials[m].textured && model_.mesh.material_images[m] != 0) {
+            if (tex_decoder.run(model_.mesh.materials[m],
+                                segAddress(model_.mesh.material_images[m]))) {
+                model_.textures[m] = tex_decoder.texture();
             }
         }
     }
-    return model;
 }
 
-void expandMacroObjects(const std::vector<MacroObjectSpawnInfo> &macro_objects, int8_t area_index,
+void ObjectModelDecoder::expandMacroObjects(const std::vector<MacroObjectSpawnInfo> &macro_objects, int8_t area_index,
                         const std::vector<PresetTables::MacroPreset> &presets,
                         std::vector<ObjectSpawnInfo> &out) {
     for (const auto &m : macro_objects) {
@@ -346,7 +344,7 @@ void expandMacroObjects(const std::vector<MacroObjectSpawnInfo> &macro_objects, 
     }
 }
 
-void expandSpecialObjects(const std::vector<Collision::SpecialObject> &special_objects,
+void ObjectModelDecoder::expandSpecialObjects(const std::vector<Collision::SpecialObject> &special_objects,
                           int8_t area_index, const std::vector<PresetTables::SpecialPreset> &presets,
                           std::vector<ObjectSpawnInfo> &out) {
     for (const auto &s : special_objects) {

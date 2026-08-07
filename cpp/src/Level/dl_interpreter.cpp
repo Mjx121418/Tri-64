@@ -68,7 +68,7 @@ Mesh &DLInterpreter::run(SegmentedAddress dl) {
         DecodedCommand cmd;
 
         try {
-            cmd = decodeDLCommand(pc, seg_table_);
+            cmd = cmd_decoder_.decode(pc);
         } catch (const std::out_of_range &e) {
             printf("DLInterpreter: out_of_range at %02x:%06x (pc)\n", pc.seg, pc.offset);
             break;
@@ -244,7 +244,7 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
 }
 
 void DLInterpreter::handleMtx(const DecodedCommand &cmd) {
-    Mtxf m = decodeMtx(cmd.mtxAddress(), seg_table_);
+    Mtxf m = cmd_decoder_.decodeMtx(cmd.mtxAddress());
     uint8_t params = cmd.mtxParams();
 
     if (params & MTX_PROJECTION) {

@@ -35,8 +35,30 @@ struct Result {
     float mario_start_angle_y {0};      // Mario 的初始朝向（Y 轴旋转角度，弧度）
 };
 
-// 提取 rom 中 level_num（LevelNum，如 BOB=9）的 area_index 号区域。
-// rom 必须已通过 ROM::load 加载，数据在调用期间保持有效。
+// 关卡提取管线（镜像 LevelScriptVM 的结构）：绑定 ROM，run(level_num,
+// area_index) 重置并执行完整提取，结果经 result() 取得。ROM 数据在
+// run 调用期间必须保持有效（SegmentTable 的 rom_span 指向 ROM::data）。
+class LevelExtractor {
+    ROM &rom_;
+    SegmentTable seg_table_;
+    Level level_;
+    Result result_;
+    bool ok_ {false};
+    std::string error_;
+
+    // 定位脚本段、加载公共段、运行目标关卡的关卡脚本，构建段表与场景图。
+    void runLevelScript(int level_num);
+
+public:
+    explicit LevelExtractor(ROM &rom) : rom_(rom) {}
+
+    // 提取 rom 中 level_num（LevelNum，如 BOB=9）的 area_index 号区域。
+    void run(int level_num, int area_index);
+
+    const Result &result() const { return result_; }
+};
+
+// 便捷包装：一次完整提取（供 bridge/测试使用）。
 Result extract(ROM &rom, int level_num, int area_index);
 
 // 返回 level_num 关卡的所有有效区域索引（供 UI 的 Area 下拉列表使用）。

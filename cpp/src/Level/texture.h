@@ -21,7 +21,7 @@ struct Texture {
     std::vector<uint8_t> pixels; // width*height*4, R,G,B,A
 };
 
-// 从材质解码纹理像素。
+// 从材质解码纹理像素的解码器。
 //
 // tex_image = 三角形实际采样的图像（Mesh.material_images 里解析出的段地址）。
 // 数据源 = 该图像的 DRAM 数据（行主序），区域 = G_SETTILESIZE 的 4 坐标
@@ -29,9 +29,22 @@ struct Texture {
 // 而言 "DRAM → TMEM" 的结果就是直接读 DRAM。
 //
 // 当前支持 RGBA16（fmt=0, siz=2）与 IA16（fmt=3, siz=2）。
-std::expected<Texture, std::string> decodeTexture(const Material &material,
-                                                  SegmentedAddress tex_image,
-                                                  const SegmentTable &seg_table);
+class TextureDecoder {
+    const SegmentTable &seg_table_;
+    Texture texture_;
+    std::string error_;
+
+public:
+    explicit TextureDecoder(const SegmentTable &seg_table) : seg_table_(seg_table) {}
+
+    // 解码 material 引用的 tex_image 纹理。成功返回 true，texture() 可用；
+    // 失败返回 false，error() 给出原因。每次 run 重置内部结果。
+    bool run(const Material &material, SegmentedAddress tex_image);
+
+    bool ok() const { return error_.empty(); }
+    const Texture &texture() const { return texture_; }
+    const std::string &error() const { return error_; }
+};
 
 } // namespace GBI
 

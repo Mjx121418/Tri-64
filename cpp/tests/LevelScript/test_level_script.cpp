@@ -542,6 +542,7 @@ void exportDlsToObj(const SegmentTable &seg_table, const std::vector<SegmentedAd
     static const char *kFmt[] = { "RGBA", "YUV", "CI", "IA", "I" };
     static const char *kSiz[] = { "4", "8", "16", "32" };
     std::vector<std::string> matnames(materials.size());
+    GBI::TextureDecoder tex_decoder(seg_table);
     for (size_t m = 0; m < materials.size(); m++) {
         char matname[96];
         snprintf(matname, sizeof(matname), "%s_mat%02zu_%s%s_%ux%u", name.c_str(), m,
@@ -550,8 +551,8 @@ void exportDlsToObj(const SegmentTable &seg_table, const std::vector<SegmentedAd
                  materials[m].tex_width(), materials[m].tex_height());
         matnames[m] = matname;
 
-        auto tex = GBI::decodeTexture(materials[m], segAddress(material_images[m]), seg_table);
-        if (tex) {
+        if (tex_decoder.run(materials[m], segAddress(material_images[m]))) {
+            const GBI::Texture &tex = tex_decoder.texture();
             std::filesystem::path tex_dir = "export" / std::filesystem::path("textures");
             std::filesystem::create_directories(tex_dir);
             std::filesystem::path tex_path =
@@ -564,26 +565,26 @@ void exportDlsToObj(const SegmentTable &seg_table, const std::vector<SegmentedAd
                 // 配合 OBJ 的 vt（v = t/32，t=0=纹理顶部），标准查看器中方向正确。
                 uint8_t hdr[18] = {0};
                 hdr[2] = 2; // true-color, uncompressed
-                hdr[12] = tex->width & 0xFF;
-                hdr[13] = (tex->width >> 8) & 0xFF;
-                hdr[14] = tex->height & 0xFF;
-                hdr[15] = (tex->height >> 8) & 0xFF;
+                hdr[12] = tex.width & 0xFF;
+                hdr[13] = (tex.width >> 8) & 0xFF;
+                hdr[14] = tex.height & 0xFF;
+                hdr[15] = (tex.height >> 8) & 0xFF;
                 hdr[16] = 32; // RGBA
                 hdr[17] = 0x08; // bottom-left origin + 8 alpha bits
                 fwrite(hdr, 1, 18, tf);
-                for (size_t i = 0; i + 3 < tex->pixels.size(); i += 4) {
-                    fputc(tex->pixels[i + 2], tf); // B
-                    fputc(tex->pixels[i + 1], tf); // G
-                    fputc(tex->pixels[i], tf);     // R
-                    fputc(tex->pixels[i + 3], tf); // A
+                for (size_t i = 0; i + 3 < tex.pixels.size(); i += 4) {
+                    fputc(tex.pixels[i + 2], tf); // B
+                    fputc(tex.pixels[i + 1], tf); // G
+                    fputc(tex.pixels[i], tf);     // R
+                    fputc(tex.pixels[i + 3], tf); // A
                 }
                 fclose(tf);
                 SegmentedAddress img = segAddress(material_images[m]);
-                printf("    tex: %s (%ux%u img=%02x:%06x)\n", matname, tex->width,
-                       tex->height, img.seg, img.offset);
+                printf("    tex: %s (%ux%u img=%02x:%06x)\n", matname, tex.width,
+                       tex.height, img.seg, img.offset);
             }
         } else {
-            printf("    tex: %s: %s\n", matname, tex.error().c_str());
+            printf("    tex: %s: %s\n", matname, tex_decoder.error().c_str());
         }
     }
 

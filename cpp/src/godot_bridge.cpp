@@ -148,7 +148,9 @@ bool GodotBridge::extractLevel(int level_num, int area_index) {
     if (!rom.is_loaded) {
         return false;
     }
-    result_ = LevelExtract::extract(rom, level_num, area_index);
+    LevelExtract::LevelExtractor extractor(rom);
+    extractor.run(level_num, area_index);
+    result_ = extractor.result();
     return result_.ok;
 }
 

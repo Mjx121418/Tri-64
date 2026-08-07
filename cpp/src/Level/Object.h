@@ -22,9 +22,6 @@ struct ObjectModel {
     std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
 };
 
-// 把 src 追加进 merged：顶点/索引加 base 偏移，材质按内容 + 纹理源图像去重。
-void mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src);
-
 // 动画 frame-0：每个 animated part（GEO_ANIMATED_PART）在出生帧的平移/旋转增量。
 struct Frame0Part {
     Vec3<float> translation {0, 0, 0};
@@ -56,25 +53,41 @@ private:
     void skipAttribute();
 };
 
-// 从 geo 布局图节点解码对象模型：收集 (DL, 变换) 对，跳过无效 DL 地址
-// （0x00000000 / 段越界，见 docs/engine-notes.md），把图节点变换（缩放/
-// 旋转/平移）+ 可选 frame-0 动画烘焙进顶点，合并为一个网格并解码每材质纹理。
-// node 为 null 或没有可解码 DL 时返回空模型。
-ObjectModel decodeModel(const SegmentTable &seg_table, const GraphNode *node,
-                        Frame0Animator *frame0 = nullptr);
+// 对象模型/对象出生数据解码器（镜像 LevelScriptVM 的结构）：构造时绑定段表，
+// runModel(node[, frame0]) 重置并解码一个对象模型，结果经 model() 取得。
+class ObjectModelDecoder {
+    const SegmentTable &seg_table_;
+    ObjectModel model_;
 
-// 把 MACRO_OBJECTS 原始条目展开成对象出生点：preset → 模型/行为解析
-// （presets 来自 PresetTables::parseMacroPresets），跳过 MODEL_NONE / 生成器。
-void expandMacroObjects(const std::vector<MacroObjectSpawnInfo> &macro_objects,
-                        int8_t area_index, const std::vector<PresetTables::MacroPreset> &presets,
-                        std::vector<ObjectSpawnInfo> &out);
+public:
+    explicit ObjectModelDecoder(const SegmentTable &seg_table) : seg_table_(seg_table) {}
 
-// 把碰撞数据里的特殊对象（TERRAIN_LOAD_OBJECTS）展开成对象出生点：
-// preset → 模型/行为解析（presets 来自 PresetTables::parseSpecialPresets），
-// 跳过 MODEL_NONE。
-void expandSpecialObjects(const std::vector<Collision::SpecialObject> &special_objects,
-                          int8_t area_index, const std::vector<PresetTables::SpecialPreset> &presets,
-                          std::vector<ObjectSpawnInfo> &out);
+    // 把 src 追加进 merged：顶点/索引加 base 偏移，材质按内容 + 纹理源图像去重。
+    static void mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src);
+
+    // 从 geo 布局图节点解码对象模型：收集 (DL, 变换) 对，跳过无效 DL 地址
+    // （0x00000000 / 段越界，见 docs/engine-notes.md），把图节点变换（缩放/
+    // 旋转/平移）+ 可选 frame-0 动画烘焙进顶点，合并为一个网格并解码每材质纹理。
+    // node 为 null 或没有可解码 DL 时 model() 返回空模型。
+    void runModel(const GraphNode *node, Frame0Animator *frame0 = nullptr);
+
+    const ObjectModel &model() const { return model_; }
+
+    // 把 MACRO_OBJECTS 原始条目展开成对象出生点：preset → 模型/行为解析
+    // （presets 来自 PresetTables::parseMacroPresets），跳过 MODEL_NONE / 生成器。
+    static void expandMacroObjects(const std::vector<MacroObjectSpawnInfo> &macro_objects,
+                                   int8_t area_index,
+                                   const std::vector<PresetTables::MacroPreset> &presets,
+                                   std::vector<ObjectSpawnInfo> &out);
+
+    // 把碰撞数据里的特殊对象（TERRAIN_LOAD_OBJECTS）展开成对象出生点：
+    // preset → 模型/行为解析（presets 来自 PresetTables::parseSpecialPresets），
+    // 跳过 MODEL_NONE。
+    static void expandSpecialObjects(const std::vector<Collision::SpecialObject> &special_objects,
+                                     int8_t area_index,
+                                     const std::vector<PresetTables::SpecialPreset> &presets,
+                                     std::vector<ObjectSpawnInfo> &out);
+};
 
 } // namespace ObjectExtract
 

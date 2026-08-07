@@ -78,25 +78,25 @@ struct Reader {
 
 } // namespace
 
-Data decode(const SegmentTable &seg_table, SegmentedAddress terrain, SegmentedAddress rooms) {
-    Data data;
+void CollisionDecoder::run(SegmentedAddress terrain, SegmentedAddress rooms) {
+    data_ = {};
     if (terrain.seg < 0 || terrain.seg > 31) {
-        data.error = "invalid terrain segment";
-        return data;
+        data_.error = "invalid terrain segment";
+        return;
     }
 
     std::span<const uint8_t> terrain_data;
     try {
-        terrain_data = seg_table.data(terrain);
+        terrain_data = seg_table_.data(terrain);
     } catch (const std::out_of_range &) {
-        data.error = "terrain segment not loaded";
-        return data;
+        data_.error = "terrain segment not loaded";
+        return;
     }
 
     std::span<const uint8_t> rooms_data;
     if (rooms.seg >= 0 && rooms.seg <= 31) {
         try {
-            rooms_data = seg_table.data(rooms);
+            rooms_data = seg_table_.data(rooms);
         } catch (const std::out_of_range &) {
             rooms_data = {};
         }
@@ -126,18 +126,18 @@ Data decode(const SegmentTable &seg_table, SegmentedAddress terrain, SegmentedAd
                     s.has_room = true;
                     rooms_pos++;
                 }
-                data.surfaces.push_back(s);
+                data_.surfaces.push_back(s);
             }
         } else if (cmd == kTerrainLoadVertices) {
             const int16_t count = reader.next();
-            data.vertices.clear();
-            data.vertices.reserve(static_cast<size_t>(count));
+            data_.vertices.clear();
+            data_.vertices.reserve(static_cast<size_t>(count));
             for (int16_t i = 0; i < count && reader.ok; i++) {
                 Vertex v;
                 v.x = reader.next();
                 v.y = reader.next();
                 v.z = reader.next();
-                data.vertices.push_back(v);
+                data_.vertices.push_back(v);
             }
         } else if (cmd == kTerrainLoadContinue) {
             continue;
@@ -166,7 +166,7 @@ Data decode(const SegmentTable &seg_table, SegmentedAddress terrain, SegmentedAd
                     reader.next();
                     reader.next();
                 }
-                data.special_objects.push_back(obj);
+                data_.special_objects.push_back(obj);
             }
         } else if (cmd == kTerrainLoadEnvironment) {
             const int16_t count = reader.next();
@@ -178,25 +178,24 @@ Data decode(const SegmentTable &seg_table, SegmentedAddress terrain, SegmentedAd
                 box.x2 = reader.next();
                 box.z2 = reader.next();
                 box.y = reader.next();
-                data.water_boxes.push_back(box);
+                data_.water_boxes.push_back(box);
             }
         } else {
-            data.error = "unknown terrain command 0x" + [&]() {
+            data_.error = "unknown terrain command 0x" + [&]() {
                 char buf[8];
                 std::snprintf(buf, sizeof(buf), "%02X", cmd & 0xFF);
                 return std::string(buf);
             }();
-            return data;
+            return;
         }
     }
 
     if (!reader.ok && !done) {
-        data.error = "terrain data out of range";
-        return data;
+        data_.error = "terrain data out of range";
+        return;
     }
 
-    data.ok = true;
-    return data;
+    data_.ok = true;
 }
 
 TriangleMesh buildTriangleMesh(const Data &data) {

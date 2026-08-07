@@ -113,44 +113,43 @@ int32_t locateSpecialTable(const std::span<uint8_t> &seg0) {
 
 } // namespace
 
-std::vector<MacroPreset> parseMacroPresets(const SegmentTable &seg_table) {
-    std::vector<MacroPreset> out;
-    const std::span<uint8_t> seg0 = mainData(seg_table);
+void PresetTableDecoder::runMacro() {
+    macro_presets_.clear();
+    const std::span<uint8_t> seg0 = mainData(seg_table_);
     if (seg0.empty()) {
-        return out;
+        return;
     }
     const int32_t base = locateMacroTable(seg0);
     if (base < 0) {
         fprintf(stderr, "PresetTables: could not locate sMacroObjectPresets in segment 0\n");
-        return out;
+        return;
     }
 
-    out.resize(kMacroModelAnchor.size());
-    for (size_t i = 0; i < out.size(); i++) {
+    macro_presets_.resize(kMacroModelAnchor.size());
+    for (size_t i = 0; i < macro_presets_.size(); i++) {
         const size_t e = static_cast<size_t>(base) + i * 8;
         if (e + 8 > seg0.size()) {
             break;
         }
-        out[i].behavior.setAddress(readInt<uint32_t>(seg0, e));
-        out[i].model = static_cast<int16_t>(readInt<uint16_t>(seg0, e + 4));
-        out[i].param = static_cast<int16_t>(readInt<uint16_t>(seg0, e + 6));
+        macro_presets_[i].behavior.setAddress(readInt<uint32_t>(seg0, e));
+        macro_presets_[i].model = static_cast<int16_t>(readInt<uint16_t>(seg0, e + 4));
+        macro_presets_[i].param = static_cast<int16_t>(readInt<uint16_t>(seg0, e + 6));
     }
-    return out;
 }
 
-std::vector<SpecialPreset> parseSpecialPresets(const SegmentTable &seg_table) {
-    std::vector<SpecialPreset> out;
-    const std::span<uint8_t> seg0 = mainData(seg_table);
+void PresetTableDecoder::runSpecial() {
+    special_presets_.clear();
+    const std::span<uint8_t> seg0 = mainData(seg_table_);
     if (seg0.empty()) {
-        return out;
+        return;
     }
     const int32_t base = locateSpecialTable(seg0);
     if (base < 0) {
         fprintf(stderr, "PresetTables: could not locate sSpecialObjectPresets in segment 0\n");
-        return out;
+        return;
     }
 
-    out.resize(kSpecialModelAnchor.size());
+    special_presets_.resize(kSpecialModelAnchor.size());
     // sSpecialObjectPresets 不按 presetID 连续排布（只有部分 enum 值在表里，
     // 结尾是 special_null_end = 0xFF 的哨兵，见 special_presets.inc.c）。按
     // 存储的 presetID 填入 out。
@@ -160,18 +159,17 @@ std::vector<SpecialPreset> parseSpecialPresets(const SegmentTable &seg_table) {
             break;
         }
         const uint8_t preset_id = seg0[e];
-        if (preset_id >= out.size()) {
+        if (preset_id >= special_presets_.size()) {
             break;
         }
-        out[preset_id].model = seg0[e + 3];
-        out[preset_id].type = seg0[e + 1];
-        out[preset_id].def_param = seg0[e + 2];
-        out[preset_id].behavior.setAddress(readInt<uint32_t>(seg0, e + 4));
+        special_presets_[preset_id].model = seg0[e + 3];
+        special_presets_[preset_id].type = seg0[e + 1];
+        special_presets_[preset_id].def_param = seg0[e + 2];
+        special_presets_[preset_id].behavior.setAddress(readInt<uint32_t>(seg0, e + 4));
         if (preset_id == 0xFF) { // special_null_end：表结束
             break;
         }
     }
-    return out;
 }
 
 } // namespace PresetTables

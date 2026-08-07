@@ -3,14 +3,17 @@
 
 namespace GBI {
 
-std::expected<Texture, std::string> decodeTexture(const Material &m,
-                                                  SegmentedAddress tex_image,
-                                                  const SegmentTable &seg_table) {
+bool TextureDecoder::run(const Material &m, SegmentedAddress tex_image) {
+    texture_ = {};
+    error_.clear();
+
     if (!m.textured) {
-        return std::unexpected("material is not textured");
+        error_ = "material is not textured";
+        return false;
     }
     if (m.tile_siz != 2) {
-        return std::unexpected("only 16-bit textures supported so far");
+        error_ = "only 16-bit textures supported so far";
+        return false;
     }
 
     const uint16_t w = m.tex_width();
@@ -41,13 +44,14 @@ std::expected<Texture, std::string> decodeTexture(const Material &m,
 
     // 一次读入覆盖区域所需的图像字节（16-bit 行主序）
     const size_t needed = (size_t(y0 + h) * image_width + (x0 + w)) * 2;
-    std::span<const uint8_t> d = seg_table.data(tex_image, static_cast<uint32_t>(needed));
+    std::span<const uint8_t> d = seg_table_.data(tex_image, static_cast<uint32_t>(needed));
 
     for (uint32_t y = 0; y < h; y++) {
         for (uint32_t x = 0; x < w; x++) {
             const size_t off = (size_t(y0 + y) * image_width + (x0 + x)) * 2;
             if (off + 2 > d.size()) {
-                return std::unexpected("texture image data out of range");
+                error_ = "texture image data out of range";
+                return false;
             }
             const uint16_t v = readInt<uint16_t>(d, off);
             uint8_t *p = &tex.pixels[size_t(y * w + x) * 4];
@@ -69,12 +73,13 @@ std::expected<Texture, std::string> decodeTexture(const Material &m,
                 break;
             }
             default:
-                return std::unexpected(
-                    "unsupported texture format (only RGBA16/IA16 so far)");
+                error_ = "unsupported texture format (only RGBA16/IA16 so far)";
+                return false;
             }
         }
     }
-    return tex;
+    texture_ = std::move(tex);
+    return true;
 }
 
 } // namespace GBI
