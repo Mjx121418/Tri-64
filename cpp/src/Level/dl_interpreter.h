@@ -137,6 +137,9 @@ struct RSPState {
     // 灯光槽（gsSPLight / G_MOVEMEM G_MV_L0-7）与活动灯数（G_MW_NUMLIGHT）。
     std::array<Light, 8> lights {};
     uint8_t num_lights {0};
+    // 本 DL 是否加载过灯光（gsSPLight）。逐顶层 DL 解释会重置状态，依赖父 DL
+    // 灯光（跨顶层 DL）的几何没有可用灯光：此时顶点色回退为白（不调光）。
+    bool lights_loaded {false};
     // G_MW_FOG 的 fog 系数（mult<<16 | offset，gsSPFogFactor）。
     uint16_t fog_mult {0};
     uint16_t fog_offset {0};

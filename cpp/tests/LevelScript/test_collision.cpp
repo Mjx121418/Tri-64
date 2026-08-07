@@ -154,5 +154,45 @@ void testCollision() {
                 printf("test_collision: FAIL LLL movtex: expected lava quads\n");
             }
         }
+
+        // 逐顶点光照（受光材质）：城堡外侧的灰色草地纹理（0x9004800）由绿色灯光
+        // 着色，其受光顶点应偏绿（g > r）；且不应出现全黑顶点（shade 至少含环境光）。
+        {
+            LevelExtract::Result r = LevelExtract::extract(rom, 16, 1);
+            if (r.ok) {
+                size_t lit = 0, green_tinted = 0, black = 0;
+                for (size_t m = 0; m < r.mesh.materials.size(); m++) {
+                    if (!r.mesh.materials[m].lit || r.mesh.material_images[m] != 0x9004800u) {
+                        continue;
+                    }
+                    for (size_t t = 0; t < r.mesh.material_ids.size(); t++) {
+                        if (r.mesh.material_ids[t] != m) {
+                            continue;
+                        }
+                        for (int k = 0; k < 3; k++) {
+                            const auto &c = r.mesh.vertices[r.mesh.indices[t * 3 + k]].color;
+                            lit++;
+                            if (c[1] > c[0]) {
+                                green_tinted++;
+                            }
+                            if (c[0] < 8 && c[1] < 8 && c[2] < 8) {
+                                black++;
+                            }
+                        }
+                    }
+                }
+                printf("test_collision: castle lighting: grey-grass lit vtx=%zu green=%zu black=%zu\n",
+                       lit, green_tinted, black);
+                if (is_vanilla && lit == 0) {
+                    printf("test_collision: FAIL castle grey-grass has no lit vertices\n");
+                }
+                if (is_vanilla && green_tinted == 0) {
+                    printf("test_collision: FAIL castle grey-grass not green-tinted (lighting)\n");
+                }
+                if (is_vanilla && black > 0) {
+                    printf("test_collision: FAIL castle grey-grass has black-shaded vertices\n");
+                }
+            }
+        }
     }
 }

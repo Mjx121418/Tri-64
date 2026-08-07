@@ -23,11 +23,14 @@ Array meshDicts(const GBI::Mesh &mesh) {
         PackedVector2Array uvs;
         PackedInt32Array indices;
 
-        // 顶点第 4 个字仅在"未纹理且未光照"时是 RGBA 颜色（G_CC_SHADE 的顶点色）；
-        // 纹理/受光材质的第 4 字是法线（dl_interpreter 的 coordinate_or_normal），
-        // 喂给 Godot 的 ARRAY_COLOR 会被乘到纹素上（草会因此部分变灰）。
-        // 因此只为该情形导出颜色。
-        const bool use_vertex_colors = !mesh.materials[m].textured && !mesh.materials[m].lit;
+        // 顶点色导出规则：
+        // - 受光材质（lit）：顶点第 4 字是法线，DL 解释器已把逐顶点 shade
+        //   （ambient + Σ n̂·l̂·color）烘焙进 MeshVertex.color，这里导出让 Godot
+        //   用 texture × shade（纹理）或 shade（纯色）。
+        // - 未纹理 + 未光照：顶点第 4 字是真正的 RGBA 色（G_CC_SHADE），导出。
+        // - 未纹理 + 受光：shade 作底色（同样导出）。
+        // - 纹理 + 未光照：顶点第 4 字与法线无关，不导出（纹素直接显示）。
+        const bool use_vertex_colors = mesh.materials[m].lit || !mesh.materials[m].textured;
         PackedColorArray colors;
 
         for (size_t t = 0; t < mesh.material_ids.size(); t++) {

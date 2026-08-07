@@ -184,10 +184,16 @@ microcode, so all GBI encodings here are the F3D layouts.
   applied. The 4th word is kept as the normal/color.
 - **Lights (Phase 2)**: `gsSPLight` (`G_MOVEMEM G_MV_L0-7`) is parsed into `RSPState`
   (`Light` = col/dir), and `G_MOVEWORD G_MW_NUMLIGHT`/`G_MW_LIGHTCOL`/`G_MW_FOG` are
-  parsed. **We do not compute the per-vertex shade** (the RSP's lighting overlay does):
-  lit geometry is rendered unshaded in Godot. This is the documented "lighting" gap
-  (castle-grounds grass is authored grey and colored by the level's lights — see
-  `WORKLOG.md` "Lighting"). Pre-Phase-2 `G_MOVEMEM`/`G_MOVEWORD` were ignored entirely.
+  parsed. **Per-vertex shade** is computed in the DL interpreter:
+  `Σ max(0, n̂·l̂)·color` for the directional lights (slots 0..num_lights-1) plus the
+  ambient (slot num_lights, contributed in full). `num_lights` defaults to 1 (the
+  game's persistent NUMLIGHTS_1; terrain DLs don't set G_MW_NUMLIGHT). The shade is
+  stored as the vertex color; the bridge exports it for lit materials and Godot renders
+  `texel × shade` (textured) or `shade` (flat). Note: the ambient `Ambient_t` is only 8
+  bytes (no dir), so `gsSPLight(&light.a, 2)` over-reads into the next light — the
+  ambient's "dir" bytes are the directional's color, so it is identified by slot, not
+  `dir==0`. Lit geometry with no loaded lights falls back to white (no modulation).
+  Pre-Phase-2 `G_MOVEMEM`/`G_MOVEWORD` were ignored entirely.
 - **`G_TEXTURE`**: F3D on-bit = `w0 bit 0`; tile/lod (bits 8-13) recorded. We always
   sample render tile 0 (SM64's convention); multi-tile/mipmap DLs are not emulated.
 - **`G_TEXTURE_GEN`** (environment mapping): not emulated (the star's reflection-mapped
@@ -224,10 +230,10 @@ control transparency.
   IA16/IA8/IA4, I8/I4, with 4-bit nibble packing. YUV is not implemented (RDP almost
   never uses it).
 - **Combine**: we only classify textured-vs-flat by whether the combine references
-  TEXEL0/1. The full combine math (`texel × shade`, prim/env modulation, decal, fog
-  blend) is not emulated — lit/unlit colors are approximated in Godot (unshaded,
-  vertex-color or ambient). This is why IA/RGBA shape textures (e.g. the 0x900BC00
-  overlay) decode as their raw RGB, not as the game's modulated color.
+  TEXEL0/1, and we do not emulate the full combine math (prim/env modulation, decal, fog
+  blend). Lit materials get `texel × shade` (textured) or `shade` (flat) from the
+  per-vertex lighting; unlit colors are the vertex/prim color. IA/RGBA shape textures
+  (e.g. the 0x900BC00 overlay) decode as their raw RGB.
 - **UV convention**: N64 t=0 is the texture top; Godot ARRAY_TEX_UV v=0 is also the top,
   so t maps directly to v — **no V flip** (a flip turns every texture upside down).
 - **Clamp/repeat**: from `G_SETTILE` cms/cmt; Godot has one repeat flag for both axes, so
@@ -312,9 +318,9 @@ per frame.
   256-per-circle, converted). Behavior-driven position deltas, `DROP_TO_FLOOR`,
   billboard-facing, and runtime `SCALE`/`SET_MODEL` are not applied (Phase-B work item).
 - **Camera**: recorded (Phase 2) but the renderer uses its own camera.
-- **Lights**: recorded (Phase 2) but not used for shading (unshaded render). The
-  castle-grounds grass needs `texel × shade` with the level's green lights — see
-  `WORKLOG.md` "Lighting".
+- **Lights**: parsed (Phase 2) and used for per-vertex shading (`texel × shade` for
+  textured-lit, `shade` for flat-lit), so the castle-grounds grass (authored grey,
+  colored by the green lights) and the goomba/cannon/bobomb flat parts render shaded.
 - **Movtex (Phase 2)**: water/lava quads extracted by `MovtexDecoder` (heuristic scan
   for `MovtexQuadCollection` with strict content validation). The game generates the
   animated water DLs each frame. Waterfall vertex-meshes (`MOV_TEX_TRIS` + a tri-DL with

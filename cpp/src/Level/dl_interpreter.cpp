@@ -1,5 +1,6 @@
 #include "Level/dl_interpreter.h"
 #include "Math/math.h"
+#include <cmath>
 #include <cstdio>
 
 namespace GBI {
@@ -58,7 +59,10 @@ Mesh &DLInterpreter::run(SegmentedAddress dl) {
     state_.tex_image = {};
     state_.tex_image_width = 0;
     state_.lights = {};
-    state_.num_lights = 0;
+    // 游戏的光照默认是 1 个方向光 + 环境光（NUMLIGHTS_1）；关卡地形 DL 不设置
+    // G_MW_NUMLIGHT（沿用游戏渲染 setup 的持久值），这里默认 1。
+    state_.num_lights = 1;
+    state_.lights_loaded = false;
     state_.othermode = 0;
     state_.tlut_images = {};
 
@@ -342,6 +346,7 @@ void DLInterpreter::handleMovemem(const DecodedCommand &cmd) {
         state_.lights[slot].dir[0] = static_cast<int8_t>(d[8]);
         state_.lights[slot].dir[1] = static_cast<int8_t>(d[9]);
         state_.lights[slot].dir[2] = static_cast<int8_t>(d[10]);
+        state_.lights_loaded = true;
     }
 }
 
@@ -519,10 +524,64 @@ void DLInterpreter::appendVertex(const Vtx &v) {
     // 注意：不翻转 v 轴。Godot 的 ArrayMesh ARRAY_TEX_UV 用 v=0 为顶部（与
     // 图像第 0 行一致），N64 的 t=0 也是顶部，直接映射即可；翻转会导致所有
     // 纹理上下颠倒（树木最明显，见 docs/engine-notes.md）。
-    mv.color[0] = v.coordinate_or_normal[0];
-    mv.color[1] = v.coordinate_or_normal[1];
-    mv.color[2] = v.coordinate_or_normal[2];
-    mv.color[3] = v.coordinate_or_normal[3];
+    if (material_.lit) {
+        // 受光几何：顶点第 4 字是法线，用它计算逐顶点 shade（镜像 fast3d 的
+        // 光照 overlay）：shade = Σ max(0, n̂·l̂)·color（方向光，槽 0..num-1）+
+        // 环境光（最后一个光槽，贡献全量 col）。槽 num_lights 是 gsSPLight(a)
+        // 读入的环境光（Ambient_t 只有 8 字节，dir 字段是下个灯的 colc，非 0，
+        // 不能按 dir==0 识别，只能按槽位）。
+        float r = 255.0f, g = 255.0f, b = 255.0f; // 无灯光时回退为白（不调光）
+        if (state_.lights_loaded) {
+            float nx = static_cast<int8_t>(v.coordinate_or_normal[0]) / 127.0f;
+            float ny = static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f;
+            float nz = static_cast<int8_t>(v.coordinate_or_normal[2]) / 127.0f;
+            const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (nl > 0.001f) {
+                nx /= nl;
+                ny /= nl;
+                nz /= nl;
+            }
+            r = 0.0f;
+            g = 0.0f;
+            b = 0.0f;
+            const int n = std::min<int>(state_.num_lights, 7);
+            for (int i = 0; i < n; i++) { // 方向光
+                const RSPState::Light &L = state_.lights[i];
+                if (L.col[0] == 0 && L.col[1] == 0 && L.col[2] == 0) {
+                    continue;
+                }
+                float lx = L.dir[0] / 127.0f;
+                float ly = L.dir[1] / 127.0f;
+                float lz = L.dir[2] / 127.0f;
+                const float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
+                if (ll > 0.001f) {
+                    lx /= ll;
+                    ly /= ll;
+                    lz /= ll;
+                }
+                const float dot = nx * lx + ny * ly + nz * lz;
+                if (dot > 0.0f) {
+                    r += dot * L.col[0];
+                    g += dot * L.col[1];
+                    b += dot * L.col[2];
+                }
+            }
+            // 环境光：槽 num_lights（贡献全量 col）
+            const RSPState::Light &A = state_.lights[state_.num_lights];
+            r += A.col[0];
+            g += A.col[1];
+            b += A.col[2];
+        }
+        mv.color[0] = static_cast<uint8_t>(std::min(r, 255.0f));
+        mv.color[1] = static_cast<uint8_t>(std::min(g, 255.0f));
+        mv.color[2] = static_cast<uint8_t>(std::min(b, 255.0f));
+        mv.color[3] = 255;
+    } else {
+        mv.color[0] = v.coordinate_or_normal[0];
+        mv.color[1] = v.coordinate_or_normal[1];
+        mv.color[2] = v.coordinate_or_normal[2];
+        mv.color[3] = v.coordinate_or_normal[3];
+    }
     mesh_.vertices.push_back(mv);
 }
 

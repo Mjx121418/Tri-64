@@ -84,9 +84,19 @@ bool TextureDecoder::run(const Material &m, SegmentedAddress tex_image, uint32_t
     texture_.siz = m.tile_siz;
     texture_.pixels.resize(size_t(w) * h * 4);
 
-    // 一次读入覆盖区域所需的图像字节（行主序）；地址越界/段未加载时返回错误。
-    const uint32_t row_bytes = (texel_stride * 2 + 1) / 2; // 4-bit 也够（2 纹素/字节）
-    const size_t needed = (size_t(y0 + h) * row_bytes + (x0 + w) / 2 + 1) * 2;
+    // 覆盖区域最后一个纹素实际读到的字节偏移 + 每纹素字节数（不再多读：
+    // 段尾的纹理图像刚好到段边界时，多读会让 SegmentTable::data 的边界检查抛
+    // 异常，导致纹理解码失败）。
+    const size_t last_row = y0 + h - 1;
+    const size_t last_col = x0 + w - 1;
+    size_t needed = 0;
+    switch (m.tile_siz) {
+        case 0: needed = last_row * texel_stride + last_col / 2 + 1; break; // 4-bit
+        case 1: needed = last_row * texel_stride + last_col + 1; break;     // 8-bit
+        case 2: needed = (last_row * texel_stride + last_col) * 2 + 2; break; // 16-bit
+        case 3: needed = (last_row * texel_stride + last_col) * 4 + 4; break; // 32-bit
+        default: needed = (last_row * texel_stride + last_col) * 2 + 2; break;
+    }
     std::span<const uint8_t> d;
     try {
         d = seg_table_.data(tex_image, static_cast<uint32_t>(needed));
