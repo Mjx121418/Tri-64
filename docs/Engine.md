@@ -3,9 +3,8 @@
 This file records how our C++ extraction pipeline differs from the original SM64
 engine. It is *not* an emulator: we run a static, one-shot asset extraction (geometry,
 textures, objects, collision, camera, lights, movtex, ...) and stop where the game
-would begin its per-frame loop. The decomp is the reference
-(`~/Documents/Programs/hackersm64/decomp/sm64`); decomp file paths below are relative
-to it.
+would begin its per-frame loop. The decomp is the reference (a local checkout of the SM64 decomp); decomp file
+paths below are relative to it.
 
 Layout: one section per subsystem. Each entry states the **original** behavior (with a
 decomp pointer), then **ours**, then **why**. Pure engine/hack quirks (facts about the
