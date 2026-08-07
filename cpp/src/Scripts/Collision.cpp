@@ -357,6 +357,9 @@ TriangleMesh buildTriangleMesh(const Data &data) {
         mesh.indices.push_back(base);
         mesh.indices.push_back(base + 1);
         mesh.indices.push_back(base + 2);
+
+        // 记录表面几何类型（SurfaceClass），供渲染端选择颜色。
+        mesh.classes.push_back(static_cast<uint8_t>(s.surfaceClass()));
     }
     return mesh;
 }

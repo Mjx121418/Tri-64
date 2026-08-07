@@ -272,6 +272,7 @@ func _render_collision() -> void:
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = c.vertices
 	arrays[Mesh.ARRAY_NORMAL] = c.normals
+	arrays[Mesh.ARRAY_COLOR] = _build_collision_colors(c.classes)
 	arrays[Mesh.ARRAY_INDEX] = c.indices
 	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
@@ -296,7 +297,7 @@ func _render_collision() -> void:
 
 ## 把碰撞三角形每条边扩展成一条细带（共面，法线向外偏移避免与填充面 z-fight）。
 ## 返回 ArrayMesh 的 arrays（PRIMITIVE_TRIANGLES）。
-const COLLISION_EDGE_WIDTH := 2.5
+const COLLISION_EDGE_WIDTH := 20
 
 func _build_collision_wireframe(verts: PackedVector3Array, indices: PackedInt32Array,
 		normals: PackedVector3Array) -> Array:
@@ -341,13 +342,33 @@ func _add_edge_ribbon(qv: PackedVector3Array, qn: PackedVector3Array,
 	qi.append(base); qi.append(base + 1); qi.append(base + 2)
 	qi.append(base); qi.append(base + 2); qi.append(base + 3)
 
-## 碰撞三角形材质：受光照（Per-Pixel）的蓝色，双面显示。
+## 碰撞三角形材质：受光照（Per-Pixel）蓝色，双面显示。vertex_color_use_as_albedo
+## 开启，颜色由每三角形的 SurfaceClass（floor 蓝 / wall 绿 / ceiling 红）决定。
 func _build_collision_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
-	mat.albedo_color = Color(0.25, 0.45, 1.0)
+	mat.albedo_color = Color.WHITE
+	mat.vertex_color_use_as_albedo = true
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	return mat
+
+## 每三角形 SurfaceClass → 顶点颜色（平坦着色：3 顶点共享同一颜色）。
+## classes 为每三角形 1 个值（indices.size()/3）。
+func _build_collision_colors(classes: PackedInt32Array) -> PackedColorArray:
+	var pal := [
+		Color(0.25, 0.45, 1.0), # SURFACE_CLASS_FLOOR 蓝
+		Color(0.9, 0.2, 0.2),   # SURFACE_CLASS_CEILING 红
+		Color(0.2, 0.8, 0.3),   # SURFACE_CLASS_WALL 绿
+	]
+	var colors := PackedColorArray()
+	colors.resize(classes.size() * 3)
+	for t in classes.size():
+		var col: Color = pal[classes[t]]
+		var i := t * 3
+		colors[i] = col
+		colors[i + 1] = col
+		colors[i + 2] = col
+	return colors
 
 ## 碰撞三角形边界材质：深色线条，双面显示。
 func _build_collision_wireframe_material() -> StandardMaterial3D:

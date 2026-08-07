@@ -41,6 +41,11 @@ struct Surface {
     int8_t classification {0}; // SurfaceClass
     int16_t lower_y {0};       // minY - 5
     int16_t upper_y {0};       // maxY + 5
+
+    // 该表面的几何类型（floor / wall / ceiling），由解码后的分类决定。
+    SurfaceClass surfaceClass() const {
+        return static_cast<SurfaceClass>(classification);
+    }
 };
 
 // 特殊对象（TERRAIN_LOAD_OBJECTS）。当前只解析不渲染：preset + 出生数据，
@@ -71,6 +76,9 @@ struct TriangleMesh {
     std::vector<Vec3<float>> positions;
     std::vector<Vec3<float>> normals;
     std::vector<uint32_t> indices;
+    // 每三角形 1 个值（indices.size()/3）：SurfaceClass，供渲染端选择颜色
+    //（floor 蓝 / wall 绿 / ceiling 红）。类型而非颜色，颜色由渲染端决定。
+    std::vector<uint8_t> classes;
 };
 
 // 把表面（顶点索引）解析成三角形网格；越界/退化三角形跳过。

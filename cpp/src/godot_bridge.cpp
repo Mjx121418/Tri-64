@@ -198,21 +198,27 @@ Array GodotBridge::getObjectModels() {
     return out;
 }
 
-// 当前区域的静态碰撞三角形（平坦着色蓝色）。
+// 当前区域的静态碰撞三角形（平坦着色；每三角形附带 SurfaceClass，
+// 由渲染端选择颜色）。
 Dictionary GodotBridge::getCollisionTriangles() {
     Dictionary d;
     const Collision::TriangleMesh mesh = Collision::buildTriangleMesh(result_.collision);
 
     PackedVector3Array verts;
     PackedVector3Array normals;
+    PackedInt32Array classes;
     PackedInt32Array indices;
     verts.resize(static_cast<int>(mesh.positions.size()));
     normals.resize(static_cast<int>(mesh.normals.size()));
+    classes.resize(static_cast<int>(mesh.classes.size()));
     for (size_t i = 0; i < mesh.positions.size(); i++) {
         verts.set(i, Vector3(mesh.positions[i].x, mesh.positions[i].y, mesh.positions[i].z));
     }
     for (size_t i = 0; i < mesh.normals.size(); i++) {
         normals.set(i, Vector3(mesh.normals[i].x, mesh.normals[i].y, mesh.normals[i].z));
+    }
+    for (size_t i = 0; i < mesh.classes.size(); i++) {
+        classes.set(i, static_cast<int32_t>(mesh.classes[i]));
     }
     indices.resize(static_cast<int>(mesh.indices.size()));
     for (size_t i = 0; i < mesh.indices.size(); i++) {
@@ -221,6 +227,7 @@ Dictionary GodotBridge::getCollisionTriangles() {
 
     d["vertices"] = verts;
     d["normals"] = normals;
+    d["classes"] = classes;
     d["indices"] = indices;
     return d;
 }
