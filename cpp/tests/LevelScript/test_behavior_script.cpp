@@ -87,10 +87,23 @@ void testDoorBehavior(const LevelScriptSetup &setup) {
                info.hitbox_height);
         return;
     }
-    printf("  door anims=0x%04x%06x idx=%d collision=0x%04x%06x hitbox=%dx%d ok\n",
+    printf("  door anims=0x%04x%06x idx=%d collision=0x%04x%06x hitbox=%dx%d interact=0x%X "
+           "flags=0x%X physics=%s ok\n",
            info.animations.seg, info.animations.offset, info.animate_index,
            info.collision_data.seg, info.collision_data.offset, info.hitbox_radius,
-           info.hitbox_height);
+           info.hitbox_height, info.interactType(), info.flags(),
+           info.physics_seen ? "yes" : "no");
+    // 门的行为设置了交互类型（INTERACT_DOOR = 0x8）与 OBJ_FLAG（OR_INT）
+    if (info.interactType() == 0) {
+        printf("  [FAIL] door interact type not extracted\n");
+    }
+    if (info.flags() == 0) {
+        printf("  [FAIL] door OBJ_FLAG (OR_INT) not extracted\n");
+    }
+    // 门的 SET_INT(oInteractType) 应被记录，但 hurtbox 不应（门没有 SET_HURTBOX）
+    if (info.hurtbox_radius != 0) {
+        printf("  [FAIL] door should have no hurtbox\n");
+    }
 }
 
 void testRobustness(const LevelScriptSetup &setup) {

@@ -4,6 +4,7 @@
 #include "Memory/segment.h"
 #include <array>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <span>
 #include <vector>
@@ -37,6 +38,45 @@ struct Info {
     int16_t hitbox_height {0};    // SET_HITBOX(_WITH_OFFSET) 高度
     int16_t hitbox_down_offset {0}; // SET_HITBOX_WITH_OFFSET 下移量
     std::vector<SegmentedAddress> spawned_behaviors; // SPAWN_CHILD/SPAWN_OBJ/... 目标行为
+    std::vector<int16_t> spawned_models; // 与 spawned_behaviors 平行：SPAWN_* 的模型 id
+    int16_t hurtbox_radius {0};   // 0x2E SET_HURTBOX
+    int16_t hurtbox_height {0};
+    uint32_t interact_type {0};   // 0x2F SET_INTERACT_TYPE
+    uint32_t interact_subtype {0};// 0x31 SET_INTERACT_SUBTYPE（游戏里未使用）
+    bool physics_seen {false};    // 0x30 SET_OBJ_PHYSICS
+    int16_t physics[8] {0, 0, 0, 0, 0, 0, 0, 0}; // wallR, gravity, bounce, drag, friction, buoyancy, u1, u2
+    int16_t animate_texture_rate {0}; // 0x34 ANIMATE_TEXTURE（纹理动画速率）
+    SegmentedAddress water_droplet_params {}; // 0x37 SPAWN_WATER_DROPLET 参数指针
+    // 对象字段写入全集（SET_INT / OR_INT / SET_FLOAT，field = object_fields.h 的
+    // 索引）：OR_INT 按字段累积。渲染相关字段经下面的访问器读取（oFlags 0x01、
+    // oOpacity 0x3D、oAnimState 0x1A、oGraphYOffset 0x15、oDrawingDistance 0x45、
+    // oCollisionDistance 0x43、oInteractType 0x2A、oInteractionSubtype 0x42）。
+    std::map<uint8_t, int32_t> set_int_fields;
+    std::map<uint8_t, int32_t> set_float_fields;
+
+    int32_t setInt(uint8_t field, int32_t def = 0) const {
+        const auto it = set_int_fields.find(field);
+        return it != set_int_fields.end() ? it->second : def;
+    }
+    int32_t setFloat(uint8_t field, int32_t def = 0) const {
+        const auto it = set_float_fields.find(field);
+        return it != set_float_fields.end() ? it->second : def;
+    }
+    uint32_t flags() const { return static_cast<uint32_t>(setInt(0x01)); }         // oFlags
+    int32_t opacity() const { return setInt(0x3D, 255); }                          // oOpacity
+    int32_t animState() const { return setInt(0x1A); }                             // oAnimState
+    int32_t graphYOffset() const { return setFloat(0x15); }                        // oGraphYOffset
+    int32_t drawingDistance() const { return setFloat(0x45); }                     // oDrawingDistance
+    int32_t collisionDistance() const { return setFloat(0x43); }                   // oCollisionDistance
+    // 交互类型/子类型：SET_INT(oInteractType/Subtype) 优先，其次专用命令 0x2F/0x31。
+    int32_t interactType() const {
+        const auto it = set_int_fields.find(0x2A);
+        return it != set_int_fields.end() ? it->second : static_cast<int32_t>(interact_type);
+    }
+    int32_t interactSubtype() const {
+        const auto it = set_int_fields.find(0x42);
+        return it != set_int_fields.end() ? it->second : static_cast<int32_t>(interact_subtype);
+    }
 };
 
 // 行为脚本的静态解释器类（镜像 LevelScriptVM 的结构）：构造时绑定段表与输出
@@ -120,6 +160,21 @@ class BehaviorScriptVM {
     void cmdLoadCollisionData();
     // 0x1C SPAWN_CHILD / 0x29 SPAWN_CHILD_WITH_PARAM / 0x2C SPAWN_OBJ
     void cmdSpawn();
+    // 0x2E SET_HURTBOX(radius, height)
+    void cmdSetHurtbox();
+    // 0x2F SET_INTERACT_TYPE(type) / 0x31 SET_INTERACT_SUBTYPE(subtype)
+    void cmdSetInteractType();
+    void cmdSetInteractSubtype();
+    // 0x30 SET_OBJ_PHYSICS(8×s16)
+    void cmdSetObjPhysics();
+    // 0x34 ANIMATE_TEXTURE(field, rate)
+    void cmdAnimateTexture(uint32_t word);
+    // 0x37 SPAWN_WATER_DROPLET(dropletParams)
+    void cmdSpawnWaterDroplet();
+    // 0x0E SET_FLOAT(field, value) —— 记录渲染相关字段（oDrawingDistance 等）
+    void cmdSetFloat(uint32_t word);
+    // 0x10 SET_INT / 0x11 OR_INT(field, value) —— 记录渲染相关字段（oFlags 等）
+    void cmdSetInt(uint32_t word, bool or_op);
     // 0x32 SCALE(percent)
     void cmdScale(uint32_t word);
     // 其余命令：不改变静态导出所需状态，只推进

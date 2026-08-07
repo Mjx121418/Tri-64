@@ -95,6 +95,9 @@ void BehaviorScriptVM::dispatch(uint32_t word) {
         case 0x0B:
         case 0x1D: cmdBreak(); break;
         case 0x0C: cmdCallNative(); break;
+        case 0x0E: cmdSetFloat(word); break;
+        case 0x10: cmdSetInt(word, false); break;
+        case 0x11: cmdSetInt(word, true); break;
         case 0x1B: cmdSetModel(word); break;
         case 0x21: cmdBillboard(); break;
         case 0x22:
@@ -104,6 +107,12 @@ void BehaviorScriptVM::dispatch(uint32_t word) {
         case 0x27: cmdLoadAnimations(); break;
         case 0x28: cmdAnimate(word); break;
         case 0x2A: cmdLoadCollisionData(); break;
+        case 0x2E: cmdSetHurtbox(); break;
+        case 0x2F: cmdSetInteractType(); break;
+        case 0x30: cmdSetObjPhysics(); break;
+        case 0x31: cmdSetInteractSubtype(); break;
+        case 0x34: cmdAnimateTexture(word); break;
+        case 0x37: cmdSpawnWaterDroplet(); break;
         case 0x1C:
         case 0x29:
         case 0x2C: cmdSpawn(); break;
@@ -253,10 +262,72 @@ void BehaviorScriptVM::cmdLoadCollisionData() {
 }
 
 void BehaviorScriptVM::cmdSpawn() {
+    // SPAWN_OBJ(modelID, behavior) / SPAWN_CHILD(modelID, behavior) /
+    // SPAWN_CHILD_WITH_PARAM(bhvParam, modelID, behavior)：模型 id 在 word1，
+    // 行为在 word2。
+    if (const auto model = readWord(pc_ + 4)) {
+        info_.spawned_models.push_back(static_cast<int16_t>(*model & 0xFFFF));
+    }
     if (const auto spawned = targetOf(2)) {
         info_.spawned_behaviors.push_back(*spawned);
     }
     pc_ += 12;
+}
+
+void BehaviorScriptVM::cmdSetHurtbox() {
+    const uint32_t rh = readWord(pc_ + 4).value_or(0);
+    info_.hurtbox_radius = static_cast<int16_t>(rh >> 16);
+    info_.hurtbox_height = static_cast<int16_t>(rh & 0xFFFF);
+    pc_ += 8;
+}
+
+void BehaviorScriptVM::cmdSetInteractType() {
+    info_.interact_type = readWord(pc_ + 4).value_or(0);
+    pc_ += 8;
+}
+
+void BehaviorScriptVM::cmdSetInteractSubtype() {
+    info_.interact_subtype = readWord(pc_ + 4).value_or(0);
+    pc_ += 8;
+}
+
+void BehaviorScriptVM::cmdSetObjPhysics() {
+    info_.physics_seen = true;
+    for (int i = 0; i < 4; i++) {
+        const uint32_t v = readWord(pc_ + 4 + static_cast<uint32_t>(i) * 4).value_or(0);
+        info_.physics[i * 2] = static_cast<int16_t>(v >> 16);
+        info_.physics[i * 2 + 1] = static_cast<int16_t>(v & 0xFFFF);
+    }
+    pc_ += 20;
+}
+
+void BehaviorScriptVM::cmdAnimateTexture(uint32_t word) {
+    info_.animate_texture_rate = static_cast<int16_t>(word & 0xFFFF);
+    pc_ += 4;
+}
+
+void BehaviorScriptVM::cmdSpawnWaterDroplet() {
+    if (const auto p = readWord(pc_ + 4)) {
+        info_.water_droplet_params.setAddress(*p);
+    }
+    pc_ += 8;
+}
+
+void BehaviorScriptVM::cmdSetFloat(uint32_t word) {
+    // SET_FLOAT(field, value)：field 是对象字段索引（object_fields.h）。
+    const uint32_t field = (word >> 16) & 0xFF;
+    const int32_t value = static_cast<int16_t>(word & 0xFFFF);
+    info_.set_float_fields[static_cast<uint8_t>(field)] = value;
+    pc_ += 4;
+}
+
+void BehaviorScriptVM::cmdSetInt(uint32_t word, bool or_op) {
+    // SET_INT/OR_INT(field, value)：记录到字段写入全集（OR_INT 按字段累积）。
+    const uint32_t field = (word >> 16) & 0xFF;
+    const uint32_t value = word & 0xFFFF;
+    auto &v = info_.set_int_fields[static_cast<uint8_t>(field)];
+    v = or_op ? (v | value) : static_cast<int32_t>(value);
+    pc_ += 4;
 }
 
 void BehaviorScriptVM::cmdScale(uint32_t word) {
