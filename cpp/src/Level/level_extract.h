@@ -29,6 +29,8 @@ struct Result {
     std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
     std::vector<ObjectSpawnInfo> objects; // 对象出生点（未来的对象列表）
     std::map<int16_t, ObjectExtract::ObjectModel> object_models; // 对象模型缓存（按 model id 去重）
+    std::vector<Collision::Data> object_collisions; // 与 objects 并行：各对象行为
+                                                    // LOAD_COLLISION_DATA 的碰撞（本地空间）
     Collision::Data collision;          // 解码后的碰撞数据（表面/顶点/水盒/房间/特殊对象）
     std::vector<int> areas;              // 该关卡所有有效区域索引（有 root_node）
     std::string level_name;             // 从 ROM 段2提取的关卡名称（可为空）

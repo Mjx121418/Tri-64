@@ -76,6 +76,53 @@ struct Reader {
     }
 };
 
+// 由顶点派生每表面的标志/分类/垂直范围（镜像 decomp 的 surface_load.c）：
+// - NO_CAM_COLLISION：类型 0x76/0x77/0x78/0x7A（surf_has_no_cam_collision）
+// - 分类：法线 y > 0.01 地板 / < -0.01 天花板 / 否则墙
+// - X_PROJECTION：墙且 |法线 x| > 0.707
+// - lowerY/upperY = minY-5 / maxY+5
+void finalizeSurfaces(Data &data) {
+    const auto hasNoCam = [](uint16_t t) {
+        return t == 0x76 || t == 0x77 || t == 0x78 || t == 0x7A;
+    };
+    for (auto &s : data.surfaces) {
+        if (s.v1 >= data.vertices.size() || s.v2 >= data.vertices.size()
+            || s.v3 >= data.vertices.size()) {
+            continue;
+        }
+        const Vertex &a = data.vertices[s.v1];
+        const Vertex &b = data.vertices[s.v2];
+        const Vertex &c = data.vertices[s.v3];
+        if (hasNoCam(s.type)) {
+            s.flags |= SURFACE_FLAG_NO_CAM_COLLISION;
+        }
+        // 面法线（与 buildTriangleMesh 同约定）：(b-a)×(c-a)
+        const int64_t nx = int64_t(b.y - a.y) * (c.z - a.z) - int64_t(b.z - a.z) * (c.y - a.y);
+        const int64_t ny = int64_t(b.z - a.z) * (c.x - a.x) - int64_t(b.x - a.x) * (c.z - a.z);
+        const int64_t nz = int64_t(b.x - a.x) * (c.y - a.y) - int64_t(b.y - a.y) * (c.x - a.x);
+        const double len = std::sqrt(double(nx) * nx + double(ny) * ny + double(nz) * nz);
+        if (len < 1e-6) {
+            continue;
+        }
+        const double ny_n = double(ny) / len;
+        const double nx_n = double(nx) / len;
+        if (ny_n > 0.01) {
+            s.classification = SURFACE_CLASS_FLOOR;
+        } else if (ny_n < -0.01) {
+            s.classification = SURFACE_CLASS_CEILING;
+        } else {
+            s.classification = SURFACE_CLASS_WALL;
+            if (nx_n < -0.707 || nx_n > 0.707) {
+                s.flags |= SURFACE_FLAG_X_PROJECTION;
+            }
+        }
+        const int16_t minY = std::min(a.y, std::min(b.y, c.y));
+        const int16_t maxY = std::max(a.y, std::max(b.y, c.y));
+        s.lower_y = static_cast<int16_t>(minY - 5);
+        s.upper_y = static_cast<int16_t>(maxY + 5);
+    }
+}
+
 } // namespace
 
 void CollisionDecoder::run(SegmentedAddress terrain, SegmentedAddress rooms) {
@@ -195,7 +242,80 @@ void CollisionDecoder::run(SegmentedAddress terrain, SegmentedAddress rooms) {
         return;
     }
 
+    finalizeSurfaces(data_);
     data_.ok = true;
+}
+
+Data decodeObject(const SegmentTable &seg_table, SegmentedAddress addr) {
+    Data data;
+    if (addr.seg < 0 || addr.seg > 31) {
+        data.error = "invalid collision segment";
+        return data;
+    }
+    std::span<const uint8_t> seg_data;
+    try {
+        seg_data = seg_table.data(addr);
+    } catch (const std::out_of_range &) {
+        data.error = "collision segment not loaded";
+        return data;
+    }
+
+    Reader reader {seg_data};
+    reader.next(); // 跳过前导 dummy 字（load_object_collision_model 的 collisionData++）
+
+    // 顶点块：numVertices + 每顶点 3 个 s16（transform_object_vertices）。
+    const int16_t num_vertices = reader.next();
+    if (!reader.ok || num_vertices < 0) {
+        data.error = "object collision: bad vertex count";
+        return data;
+    }
+    data.vertices.reserve(static_cast<size_t>(num_vertices));
+    for (int16_t i = 0; i < num_vertices && reader.ok; i++) {
+        Vertex v;
+        v.x = reader.next();
+        v.y = reader.next();
+        v.z = reader.next();
+        data.vertices.push_back(v);
+    }
+    if (!reader.ok) {
+        data.error = "object collision: vertices out of range";
+        return data;
+    }
+
+    // 表面块：{surfaceType, count, (v1 v2 v3 [force])...} 直到 0x41。
+    while (reader.ok) {
+        const int16_t cmd = reader.next();
+        if (!reader.ok) {
+            data.error = "object collision: surfaces out of range";
+            return data;
+        }
+        if (cmd == kTerrainLoadContinue) { // 0x41：数据结束
+            break;
+        }
+        if (!isSurfaceType(cmd)) {
+            data.error = "object collision: unexpected terrain command";
+            return data;
+        }
+        const int16_t count = reader.next();
+        for (int16_t i = 0; i < count && reader.ok; i++) {
+            Surface s;
+            s.type = static_cast<uint16_t>(cmd);
+            s.v1 = static_cast<uint32_t>(reader.next());
+            s.v2 = static_cast<uint32_t>(reader.next());
+            s.v3 = static_cast<uint32_t>(reader.next());
+            s.force = surfaceHasForce(cmd) ? reader.next() : 0;
+            s.flags |= SURFACE_FLAG_DYNAMIC; // 对象碰撞 = 动态表面
+            data.surfaces.push_back(s);
+        }
+        if (!reader.ok) {
+            data.error = "object collision: surface data out of range";
+            return data;
+        }
+    }
+
+    finalizeSurfaces(data);
+    data.ok = true;
+    return data;
 }
 
 TriangleMesh buildTriangleMesh(const Data &data) {

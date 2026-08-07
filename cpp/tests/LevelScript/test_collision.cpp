@@ -93,6 +93,19 @@ void testCollision() {
                     printf("test_collision: FAIL BOB should have no water boxes\n");
                 }
             }
+
+            // 对象的碰撞数据（行为 LOAD_COLLISION_DATA）：原版 BOB 应有对象碰撞。
+            size_t obj_collisions = 0;
+            for (const auto &oc : r.object_collisions) {
+                if (oc.ok && !oc.surfaces.empty()) {
+                    obj_collisions++;
+                }
+            }
+            printf("test_collision: BOB: objects=%zu with collision=%zu\n", r.objects.size(),
+                   obj_collisions);
+            if (is_vanilla && obj_collisions < 20) {
+                printf("test_collision: FAIL vanilla BOB has too few object collisions\n");
+            }
         }
 
         // HMC（关卡 7，区域 1）：原版带 ROOMS 数据。

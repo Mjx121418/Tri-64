@@ -17,12 +17,30 @@ namespace Collision {
 // 碰撞顶点 = 位置（与 Math 的 Vec3<int16_t> 复用同一类型）。
 using Vertex = Vec3<int16_t>;
 
+// 表面标志 / 分类（decomp surface_terrains.h / surface_load.c）
+enum SurfaceFlag : uint8_t {
+    SURFACE_FLAG_DYNAMIC          = 1 << 0, // 对象碰撞（动态）
+    SURFACE_FLAG_NO_CAM_COLLISION = 1 << 1, // 类型 0x76/0x77/0x78/0x7A
+    SURFACE_FLAG_X_PROJECTION     = 1 << 3, // 墙且 |法线x| > 0.707
+};
+
+enum SurfaceClass : int8_t {
+    SURFACE_CLASS_FLOOR    = 0, // 法线 y > 0.01
+    SURFACE_CLASS_CEILING  = 1, // 法线 y < -0.01
+    SURFACE_CLASS_WALL     = 2, // 其余
+};
+
 struct Surface {
     uint16_t type;       // SURFACE_*（命令值本身）
     uint32_t v1, v2, v3; // 顶点索引（vertices 数组，每顶点 3 个 s16）
     int16_t force;       // 力/参数（仅 surface_has_force 的类型有，否则 0）
     int8_t room;         // ROOMS 列表按序分配的房间号
     bool has_room {false};
+    // 解码后由顶点计算派生（finalizeSurfaces）：标志 / 分类 / 垂直范围。
+    uint8_t flags {0};         // SurfaceFlag
+    int8_t classification {0}; // SurfaceClass
+    int16_t lower_y {0};       // minY - 5
+    int16_t upper_y {0};       // maxY + 5
 };
 
 // 特殊对象（TERRAIN_LOAD_OBJECTS）。当前只解析不渲染：preset + 出生数据，
@@ -74,6 +92,12 @@ public:
 
     const Data &data() const { return data_; }
 };
+
+// 解码对象的碰撞数据（行为命令 LOAD_COLLISION_DATA 的目标流，对象本地空间）。
+// 格式（surface_load.c load_object_collision_model）：[dummy][numVertices,
+// vtx*3][{surfaceType, count, (v1 v2 v3 [force])}...] 直到 TERRAIN_LOAD_CONTINUE
+// (0x41)。顶点未做对象矩阵变换（保留本地坐标；变换是运行时行为）。
+Data decodeObject(const SegmentTable &seg_table, SegmentedAddress addr);
 
 } // namespace Collision
 
