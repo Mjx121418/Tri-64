@@ -286,8 +286,10 @@ void DLInterpreter::handleGeometryMode(const DecodedCommand &cmd, bool set) {
 
 void DLInterpreter::updateTextured() {
     material_.lit = (geometry_mode_ & G_LIGHTING) != 0;
-    material_.textured =
-        (geometry_mode_ & G_TEXTURE_ENABLE) != 0 && material_.combine_uses_texel;
+    // RDP 采样纹理由 G_SETCOMBINE 决定（用 TEXEL0/1 才取纹理）。有些 DL 依赖
+    // 父 DL 设置的 G_TEXTURE_ENABLE（子 DL 不再 G_ON），逐顶层 DL 解释会丢掉
+    // 该状态，故这里只以 combine 是否采样 TEXEL 为准。
+    material_.textured = material_.combine_uses_texel;
 }
 
 uint32_t DLInterpreter::materialId(uint32_t tex_image) {
