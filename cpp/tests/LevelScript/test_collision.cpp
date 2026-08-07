@@ -132,5 +132,27 @@ void testCollision() {
                 printf("test_collision: FAIL HMC should have room data\n");
             }
         }
+
+        // 移动纹理（水/熔岩）：城堡外侧（16）有水面，LLL（22）有熔岩面。
+        for (int lv : {16, 22}) {
+            LevelExtract::Result r = LevelExtract::extract(rom, lv, 1);
+            if (!r.ok) {
+                continue;
+            }
+            size_t lava = 0;
+            for (const auto &q : r.movtex.quads) {
+                if (q.texture_id == 4) { // TEXTURE_LAVA
+                    lava++;
+                }
+            }
+            printf("test_collision: movtex lv%d: quads=%zu (lava=%zu)\n", lv, r.movtex.quads.size(),
+                   lava);
+            if (is_vanilla && r.movtex.quads.empty()) {
+                printf("test_collision: FAIL lv%d movtex: no quads extracted\n", lv);
+            }
+            if (lv == 22 && is_vanilla && lava == 0) {
+                printf("test_collision: FAIL LLL movtex: expected lava quads\n");
+            }
+        }
     }
 }

@@ -353,6 +353,22 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     std::vector<SegmentedAddress> dls;
     collectDisplayLists(*area.root_node, dls);
 
+    // 移动纹理（水/熔岩）：扫描该区域引用的段（geo/DL 所在段）里的
+    // MovtexQuadCollection，提取四边形数据。
+    std::vector<int16_t> movtex_segments;
+    for (const auto &dl : dls) {
+        if (dl.seg >= 0 && dl.seg <= 31
+            && std::find(movtex_segments.begin(), movtex_segments.end(), dl.seg)
+                   == movtex_segments.end()) {
+            movtex_segments.push_back(dl.seg);
+        }
+    }
+    if (!movtex_segments.empty()) {
+        Movtex::MovtexDecoder movtex_decoder(seg_table_);
+        movtex_decoder.run(movtex_segments);
+        result_.movtex = movtex_decoder.data();
+    }
+
     GBI::Mesh &merged = result_.mesh;
     for (const auto &dl : dls) {
         GBI::DLInterpreter interp(seg_table_);
