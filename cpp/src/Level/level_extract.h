@@ -9,6 +9,7 @@
 #include "Scripts/Collision.h"
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,22 @@ struct Result {
     std::string level_name;             // 从 ROM 段2提取的关卡名称（可为空）
     Vec3<float> mario_start_pos {};     // Mario 的初始位置（关卡脚本 cmdSetMarioStartPos）
     float mario_start_angle_y {0};      // Mario 的初始朝向（Y 轴旋转角度，弧度）
+
+    // --- 关卡脚本记录的区域/关卡级数据（镜像 Level/Area，暂不渲染） ---
+    std::vector<WarpNode> warp_nodes;          // 0x26 传送节点
+    std::vector<WarpNode> painting_warp_nodes; // 0x27 画框传送节点
+    std::array<InstantWarp, 4> instant_warps {}; // 0x28 即时传送
+    std::vector<Whirlpool> whirlpools;         // 0x3B 漩涡
+    uint8_t dialog[2] {0, 0};                  // 0x30 区域对话框
+    uint16_t music_param {0};                  // 0x36 背景音乐 settingsPreset
+    uint16_t music_param2 {0};                 // 0x36 背景音乐 seq
+    int16_t unused_area_28[5] {0, 0, 0, 0, 0}; // 0x3A 未使用
+    // 区域相机数据（geo views[0] 的 NODE_CAMERA；按值拷贝，不持有场景图指针）。
+    std::optional<GraphNodeCamera> camera {};
+    int16_t mario_model_id {0};                // 0x25 Mario 出生模型
+    uint32_t mario_behavior_arg {0};           // 0x25 Mario 出生参数
+    SegmentedAddress mario_behavior_script {}; // 0x25 Mario 出生行为
+    WarpTransition transition {};              // 0x33 过渡设置
 };
 
 // 关卡提取管线（镜像 LevelScriptVM 的结构）：绑定 ROM，run(level_num,
@@ -48,6 +65,9 @@ class LevelExtractor {
 
     // 定位脚本段、加载公共段、运行目标关卡的关卡脚本，构建段表与场景图。
     void runLevelScript(int level_num);
+    // 提取 area_index 区域的几何/对象/碰撞（run 的第二步；越界数据抛异常时
+    // run 转成 result_.error）。
+    void extractArea(int level_num, int area_index);
 
 public:
     explicit LevelExtractor(ROM &rom) : rom_(rom) {}

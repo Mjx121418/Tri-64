@@ -24,6 +24,8 @@ int main() {
     testRunLevelScript();
     testLevelName();
     testObjectModels();
+    testLevelScriptData();
+    testDlRspData();
     testCollision();
     testBehaviorScript();
     testDisplayList();

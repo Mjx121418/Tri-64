@@ -39,6 +39,16 @@ void testLevelName();
 // object models (per model id) plus object→model reuse.
 void testObjectModels();
 
+// Checks the level-script-recorded data beyond geometry/objects: warp nodes,
+// painting warps, whirlpools, dialog, music params, Mario spawn behavior,
+// transition (commands 0x25-0x3B that used to be no-ops).
+void testLevelScriptData();
+
+// Synthetic DL test for the DL/RSP data we extract but don't render yet:
+// gsSPLight (G_MOVEMEM), G_MW_NUMLIGHT/FOG, G_SETOTHERMODE LUT type,
+// G_SETTILE palette/line, G_LOADTLUT, G_TEXTURE tile/lod.
+void testDlRspData();
+
 // Shared setup for the level script tests: loads the ROM, locates the scripts
 // segment and the level jump table, loads the common segments and runs the
 // level script for BOB. Returns the populated segment table and level.

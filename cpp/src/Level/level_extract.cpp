@@ -318,6 +318,16 @@ void LevelExtractor::run(int level_num, int area_index) {
         return;
     }
 
+    try {
+        extractArea(level_num, area_index);
+    } catch (const std::out_of_range &e) {
+        result_ = {};
+        result_.error = "extraction failed: " + std::string(e.what());
+    }
+}
+
+// 提取 area_index 区域的几何/对象/碰撞（run 的第二步；抛异常表示数据越界）。
+void LevelExtractor::extractArea(int level_num, int area_index) {
     // 记录该关卡所有有效区域（供 UI 下拉列表使用）
     for (int i = 0; i < 8; i++) {
         if (level_.areas[i].root_node) {
@@ -418,6 +428,27 @@ void LevelExtractor::run(int level_num, int area_index) {
                                 static_cast<float>(level_.mario_start_pos.z) };
     result_.mario_start_angle_y = level_.mario_start_angle_y;
     result_.level_name = readCourseName(seg_table_, level_num);
+
+    // 关卡脚本记录的区域/关卡级数据（镜像 Level/Area）
+    const Area &sel = level_.areas[area_index];
+    result_.warp_nodes = sel.warp_nodes;
+    result_.painting_warp_nodes = sel.painting_warp_nodes;
+    result_.instant_warps = sel.instant_warps;
+    result_.whirlpools = sel.whirlpools;
+    result_.dialog[0] = sel.dialog[0];
+    result_.dialog[1] = sel.dialog[1];
+    result_.music_param = sel.music_param;
+    result_.music_param2 = sel.music_param2;
+    for (int i = 0; i < 5; i++) {
+        result_.unused_area_28[i] = sel.unused_area_28[i];
+    }
+    if (sel.camera && std::holds_alternative<GraphNodeCamera>(sel.camera->data)) {
+        result_.camera = std::get<GraphNodeCamera>(sel.camera->data);
+    }
+    result_.mario_model_id = level_.mario_model_id;
+    result_.mario_behavior_arg = level_.mario_behavior_arg;
+    result_.mario_behavior_script = level_.mario_behavior_script;
+    result_.transition = level_.transition;
     result_.ok = true;
 }
 

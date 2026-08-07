@@ -43,9 +43,15 @@ void LevelScriptVM::execute(SegmentedAddress entry) {
 
 void LevelScriptVM::getNextCommand() {
     current_command.addr = pc;
-    current_command.opcode = seg_table.read(pc);
-    current_command.length = seg_table.read(pc, 1);
-    current_command.data = seg_table.data(pc, current_command.length);
+    try {
+        current_command.opcode = seg_table.read(pc);
+        current_command.length = seg_table.read(pc, 1);
+        current_command.data = seg_table.data(pc, current_command.length);
+    } catch (const std::out_of_range &) {
+        // 读取越界（hack 的脚本可能读到段尾之外）：中止脚本而非抛异常。
+        script_status = SCRIPT_PAUSED;
+        return;
+    }
     pc.offset += current_command.length;
 }
 
@@ -410,7 +416,25 @@ void LevelScriptVM::cmdInitLevel() {
         level.areas[i].macro_objects.clear();
         level.areas[i].terrain_addr = {};
         level.areas[i].rooms_addr = {};
+        level.areas[i].warp_nodes.clear();
+        level.areas[i].painting_warp_nodes.clear();
+        level.areas[i].instant_warps = {};
+        level.areas[i].whirlpools.clear();
+        level.areas[i].dialog[0] = 0;
+        level.areas[i].dialog[1] = 0;
+        level.areas[i].music_param = 0;
+        level.areas[i].music_param2 = 0;
+        level.areas[i].unused_area_28[0] = 0;
+        level.areas[i].unused_area_28[1] = 0;
+        level.areas[i].unused_area_28[2] = 0;
+        level.areas[i].unused_area_28[3] = 0;
+        level.areas[i].unused_area_28[4] = 0;
+        level.areas[i].camera = nullptr;
     }
+    level.mario_model_id = 0;
+    level.mario_behavior_arg = 0;
+    level.mario_behavior_script = {};
+    level.transition = {};
 
     getNextCommand();
 }
@@ -424,7 +448,25 @@ void LevelScriptVM::cmdClearLevel() {
         area.macro_objects.clear();
         area.terrain_addr = {};
         area.rooms_addr = {};
+        area.warp_nodes.clear();
+        area.painting_warp_nodes.clear();
+        area.instant_warps = {};
+        area.whirlpools.clear();
+        area.dialog[0] = 0;
+        area.dialog[1] = 0;
+        area.music_param = 0;
+        area.music_param2 = 0;
+        area.unused_area_28[0] = 0;
+        area.unused_area_28[1] = 0;
+        area.unused_area_28[2] = 0;
+        area.unused_area_28[3] = 0;
+        area.unused_area_28[4] = 0;
+        area.camera = nullptr;
     }
+    level.mario_model_id = 0;
+    level.mario_behavior_arg = 0;
+    level.mario_behavior_script = {};
+    level.transition = {};
 
     getNextCommand();
 }
@@ -443,6 +485,18 @@ void LevelScriptVM::cmdBeginArea() {
 
     if (area_id < 8) {
         level.areas[area_id].root_node = std::move(geo_layout_processor.processGeoLayout(segAddress(geo_layout_addr)));
+        // decomp：screenArea->areaIndex = areaIndex；gAreas[i].camera = views[0]
+        //（NODE_CAMERA 在 geo 里注册为 views[0]，见 geo_layout_cmd_node_camera）。
+        if (level.areas[area_id].root_node) {
+            GraphNode *root = level.areas[area_id].root_node.get();
+            if (auto *r = std::get_if<GraphNodeRoot>(&root->data)) {
+                r->area_index = area_id;
+                if (!r->views.empty() && r->views[0] != nullptr
+                    && std::holds_alternative<GraphNodeCamera>(r->views[0]->data)) {
+                    level.areas[area_id].camera = r->views[0];
+                }
+            }
+        }
         current_area_index = area_id;
     }
 
@@ -513,6 +567,11 @@ void LevelScriptVM::cmd23() {
 }
 
 void LevelScriptVM::cmdInitMario() {
+    // MARIO(model, bhvArg, bhv)（0x25）：记录 Mario 出生行为；startPos/Angle
+    // 由 0x2B SET_MARIO_START_POS 填充（游戏在 init 里先清零）。
+    level.mario_model_id = current_command.cmdGet<uint8_t>(3);
+    level.mario_behavior_arg = current_command.cmdGet<uint32_t>(4);
+    level.mario_behavior_script = segAddress(current_command.cmdGet<uint32_t>(8));
     getNextCommand();
 }
 
@@ -542,14 +601,46 @@ void LevelScriptVM::cmdPlaceObject() {
 }
 
 void LevelScriptVM::cmdCreateWarpNode() {
+    // WARP_NODE(id, destLevel, destArea, destNode, flags)：destLevel 叠加
+    // flags（0x80 = checkpoint），镜像 level_cmd_create_warp_node。
+    if (current_area_index != -1) {
+        WarpNode node;
+        node.id = current_command.cmdGet<uint8_t>(2);
+        node.dest_level = current_command.cmdGet<uint8_t>(3) + current_command.cmdGet<uint8_t>(6);
+        node.dest_area = current_command.cmdGet<uint8_t>(4);
+        node.dest_node = current_command.cmdGet<uint8_t>(5);
+        level.areas[current_area_index].warp_nodes.push_back(node);
+    }
     getNextCommand();
 }
 
 void LevelScriptVM::cmdCreatePaintingWarpNode() {
+    // PAINTING_WARP_NODE(id, destLevel, destArea, destNode, flags)
+    if (current_area_index != -1) {
+        WarpNode node;
+        node.id = current_command.cmdGet<uint8_t>(2);
+        node.dest_level = current_command.cmdGet<uint8_t>(3) + current_command.cmdGet<uint8_t>(6);
+        node.dest_area = current_command.cmdGet<uint8_t>(4);
+        node.dest_node = current_command.cmdGet<uint8_t>(5);
+        level.areas[current_area_index].painting_warp_nodes.push_back(node);
+    }
     getNextCommand();
 }
 
 void LevelScriptVM::cmdCreateInstantWarp() {
+    // INSTANT_WARP(index, destArea, displacement)：镜像 level_cmd_create_instant_warp，
+    // id = 1 表示已定义，4 槽位数组。
+    if (current_area_index != -1) {
+        const uint8_t index = current_command.cmdGet<uint8_t>(2);
+        if (index < 4) {
+            InstantWarp &w = level.areas[current_area_index].instant_warps[index];
+            w.id = 1;
+            w.area = current_command.cmdGet<uint8_t>(3);
+            w.displacement.x = current_command.cmdGet<int16_t>(4);
+            w.displacement.y = current_command.cmdGet<int16_t>(6);
+            w.displacement.z = current_command.cmdGet<int16_t>(8);
+        }
+    }
     getNextCommand();
 }
 
@@ -595,6 +686,11 @@ void LevelScriptVM::cmdSetRooms() {
 }
 
 void LevelScriptVM::cmdShowDialog() {
+    // SHOW_DIALOG(index, dialogID)：index < 2 才写入（镜像 level_cmd_show_dialog）。
+    const uint8_t index = current_command.cmdGet<uint8_t>(2);
+    if (current_area_index != -1 && index < 2) {
+        level.areas[current_area_index].dialog[index] = current_command.cmdGet<uint8_t>(3);
+    }
     getNextCommand();
 }
 
@@ -611,6 +707,12 @@ void LevelScriptVM::cmdNOP() {
 }
 
 void LevelScriptVM::cmdSetTransition() {
+    // TRANSITION(transType, time, colorR, colorG, colorB)
+    level.transition.type = current_command.cmdGet<uint8_t>(2);
+    level.transition.time = current_command.cmdGet<uint8_t>(3);
+    level.transition.r = current_command.cmdGet<uint8_t>(4);
+    level.transition.g = current_command.cmdGet<uint8_t>(5);
+    level.transition.b = current_command.cmdGet<uint8_t>(6);
     getNextCommand();
 }
 
@@ -623,6 +725,11 @@ void LevelScriptVM::cmdSetGamma() {
 }
 
 void LevelScriptVM::cmdSetMusic() {
+    // SET_BACKGROUND_MUSIC(settingsPreset, seq)
+    if (current_area_index != -1) {
+        level.areas[current_area_index].music_param = current_command.cmdGet<int16_t>(2);
+        level.areas[current_area_index].music_param2 = current_command.cmdGet<int16_t>(4);
+    }
     getNextCommand();
 }
 
@@ -664,10 +771,30 @@ void LevelScriptVM::cmdSetMacroObjects() {
 }
 
 void LevelScriptVM::cmd3A() {
+    // CMD3A(unk2..unk10)：5 个 s16，游戏里未使用（UnusedArea28）。
+    if (current_area_index != -1) {
+        for (int i = 0; i < 5; i++) {
+            level.areas[current_area_index].unused_area_28[i] =
+                current_command.cmdGet<int16_t>(2 + i * 2);
+        }
+    }
     getNextCommand();
 }
 
 void LevelScriptVM::cmdCreateWhirlpool() {
+    // WHIRLPOOL(index, condition, pos, strength)：condition 在游戏里按存档/
+    // 关卡状态运行时求值；静态导出保留完整命令数据。
+    const uint8_t index = current_command.cmdGet<uint8_t>(2);
+    if (current_area_index != -1 && index < 2) {
+        Whirlpool w;
+        w.index = index;
+        w.condition = current_command.cmdGet<uint8_t>(3);
+        w.pos.x = current_command.cmdGet<int16_t>(4);
+        w.pos.y = current_command.cmdGet<int16_t>(6);
+        w.pos.z = current_command.cmdGet<int16_t>(8);
+        w.strength = current_command.cmdGet<int16_t>(10);
+        level.areas[current_area_index].whirlpools.push_back(w);
+    }
     getNextCommand();
 }
 

@@ -26,6 +26,10 @@ class GeoLayoutProcessor {
     std::array<SegmentedAddress, 16> address_stack {};
     std::array<Frame, 16> frame_stack {};
     std::array<GraphNode *, 32> graph_node_list {};
+    // 视图注册表（decomp 的 gGeoViews）：NODE_CAMERA 写 views[0]，ASSIGN_AS_VIEW
+    // 按 index 注册当前节点。根节点在 processGeoLayout 结束时持有这些指针。
+    std::array<GraphNode *, 32> views_ {};
+    int16_t num_views_ {0};
     int16_t address_stack_index { 1 };
     int16_t frame_stack_index { 1 };
     int16_t graph_node_index { 0 };

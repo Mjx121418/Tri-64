@@ -57,6 +57,10 @@ Mesh &DLInterpreter::run(SegmentedAddress dl) {
     state_.tex_scale_t = 0;
     state_.tex_image = {};
     state_.tex_image_width = 0;
+    state_.lights = {};
+    state_.num_lights = 0;
+    state_.othermode = 0;
+    state_.tlut_images = {};
 
     SegmentedAddress pc = dl;
     while (!finished) {
@@ -164,6 +168,9 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         // 导出到 Godot 的 texture_repeat：CLAMP 关闭重复，否则开启。
         material_.tex_clamp_s = cmd.tileClampS() == 2;
         material_.tex_clamp_t = cmd.tileClampT() == 2;
+        // palette（CI4 调色板索引）与 line（TMEM 行跨度）——CI 纹理解码需要。
+        material_.tex_palette = cmd.tilePalette();
+        material_.tex_line = cmd.tileLine();
         // 防御性绑定：记录该 tile 的 tmem 地址（LOAD 时绑定图像用）
         state_.tile_tmem[cmd.tileNum()] = cmd.tileTMEM();
         break;
@@ -196,16 +203,19 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         state_.tex_image_width = cmd.w0 & 0xFFF;
         break;
     case G_TEXTURE:
-        // fast3d: G_TEXTURE 的 w0 位 0 切换几何模式的 G_TEXTURE_ENABLE；
+        // fast3d: G_TEXTURE 的 w0 位 0（F3D 的 on 位）切换 G_TEXTURE_ENABLE；
         // w1 = (S<<16)|T 是纹理坐标缩放（16.16 定点，0xFFFF≈1.0），
         // 由 dma_VTX 在载入顶点时应用（与开关位无关，G_OFF 也照样存储）。
-        if (cmd.w0 & 1) {
+        if (cmd.texOn()) {
             geometry_mode_ |= G_TEXTURE_ENABLE;
         } else {
             geometry_mode_ &= ~G_TEXTURE_ENABLE;
         }
-        state_.tex_scale_s = (cmd.w1 >> 16) & 0xFFFF;
-        state_.tex_scale_t = cmd.w1 & 0xFFFF;
+        state_.tex_scale_s = cmd.texScaleS();
+        state_.tex_scale_t = cmd.texScaleT();
+        // 记录渲染 tile 与 mipmap 层级（SM64 用 tile 0；多 tile 渲染未模拟）。
+        state_.texture_tile = cmd.texTile();
+        state_.texture_lod = cmd.texLevel();
         updateTextured();
         break;
     case G_SETGEOMETRYMODE:
@@ -214,6 +224,22 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_CLEARGEOMETRYMODE:
         handleGeometryMode(cmd, false);
         break;
+    case G_MOVEMEM:
+        handleMovemem(cmd);
+        break;
+    case G_MOVEWORD:
+        handleMoveword(cmd);
+        break;
+    case G_SETOTHERMODE_L:
+    case G_SETOTHERMODE_H:
+        handleOtherMode(cmd);
+        break;
+    case G_RDPSETOTHERMODE:
+        handleRdpOtherMode(cmd);
+        break;
+    case G_LOADTLUT:
+        handleLoadTLUT(cmd);
+        break;
     // 已实现但不产生几何的命令：忽略
     // （fast3d 的 DMA 表里 0x02/0x05/0x07-0x09 也是 SP_NOOP）
     case 0x02:
@@ -221,10 +247,6 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case 0x07:
     case 0x08:
     case 0x09:
-    case G_MOVEMEM:
-    case G_MOVEWORD:
-    case G_SETOTHERMODE_L:
-    case G_SETOTHERMODE_H:
     case G_CULLDL:
     case G_SPNOOP:
     case G_DPLOADSYNC:
@@ -235,6 +257,14 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_SETBLENDCOLOR:
     case G_SETZIMG:
     case G_SETCIMG:
+    case G_TEXRECT:
+    case G_TEXRECTFLIP:
+    case G_SETKEYGB:
+    case G_SETKEYR:
+    case G_SETCONVERT:
+    case G_SETSCISSOR:
+    case G_SETPRIMDEPTH:
+    case G_FILLRECT:
         break;
     default:
         printf("DLInterpreter: unknown opcode 0x%02x at %02x:%06x\n", cmd.opcode, cmd.addr.seg,
@@ -290,6 +320,98 @@ void DLInterpreter::updateTextured() {
     // 父 DL 设置的 G_TEXTURE_ENABLE（子 DL 不再 G_ON），逐顶层 DL 解释会丢掉
     // 该状态，故这里只以 combine 是否采样 TEXEL 为准。
     material_.textured = material_.combine_uses_texel;
+}
+
+void DLInterpreter::handleMovemem(const DecodedCommand &cmd) {
+    // gsSPLight(l, n) = gsDma1p(G_MOVEMEM, l, 16, (n-1)*2+G_MV_L0)：把 16 字节
+    // Light_t 拷入灯光槽。G_MV_VIEWPORT/LOOKAT/MATRIX 等是运行时/未使用状态。
+    const uint8_t index = cmd.memIndex();
+    if (index >= G_MV_L0 && index <= G_MV_L7) {
+        const size_t slot = static_cast<size_t>((index - G_MV_L0) / 2);
+        if (slot >= state_.lights.size()) {
+            return;
+        }
+        // Light_t（gbi.h）：col[3], pad, colc[3], pad, dir[3], pad
+        const std::span<const uint8_t> d = seg_table_.data(cmd.memAddress(), 16);
+        if (d.size() < 16) {
+            return;
+        }
+        state_.lights[slot].col[0] = d[0];
+        state_.lights[slot].col[1] = d[1];
+        state_.lights[slot].col[2] = d[2];
+        state_.lights[slot].dir[0] = static_cast<int8_t>(d[8]);
+        state_.lights[slot].dir[1] = static_cast<int8_t>(d[9]);
+        state_.lights[slot].dir[2] = static_cast<int8_t>(d[10]);
+    }
+}
+
+void DLInterpreter::handleMoveword(const DecodedCommand &cmd) {
+    // gsMoveWd(G_MW_*, offset, data)：w0 低 8 位 = G_MW_*，w1 = data。
+    switch (cmd.mwIndex()) {
+    case G_MW_NUMLIGHT:
+        // bit31 = 重新初始化标志，低 12 位 = (numLights+1)*32（gbi.h gsSPSetNumLights）
+        state_.num_lights = static_cast<uint8_t>(((cmd.mwValue() & 0xFFF) / 32) - 1);
+        break;
+    case G_MW_FOG:
+        // fog 系数：mult<<16 | offset（gsSPFogFactor）
+        state_.fog_mult = static_cast<uint16_t>(cmd.mwValue() >> 16);
+        state_.fog_offset = static_cast<uint16_t>(cmd.mwValue() & 0xFFFF);
+        break;
+    case G_MW_LIGHTCOL: {
+        // 打补丁灯光颜色（gsSPLightColor）：dmem 偏移 (n-1)*24+4 选灯。
+        const int16_t off = static_cast<int16_t>(cmd.mwOffset());
+        const size_t slot = static_cast<size_t>((off - 4) / 24);
+        if (slot < state_.lights.size()) {
+            const uint32_t col = cmd.mwValue();
+            state_.lights[slot].col[0] = static_cast<uint8_t>(col >> 24);
+            state_.lights[slot].col[1] = static_cast<uint8_t>(col >> 16);
+            state_.lights[slot].col[2] = static_cast<uint8_t>(col >> 8);
+        }
+        break;
+    }
+    default:
+        // G_MW_SEGMENT / G_MW_CLIP / G_MW_MATRIX：运行时或级别脚本层处理。
+        break;
+    }
+}
+
+void DLInterpreter::handleOtherMode(const DecodedCommand &cmd) {
+    // fast3d/F3D：w0 = (op<<24)|(sft<<8)|(len)，w1 = data。
+    const uint8_t sft = cmd.omSft();
+    const uint8_t len = cmd.omLen();
+    if (sft + len > 32) {
+        return;
+    }
+    const uint32_t mask = (len >= 32) ? ~0u : ((1u << len) - 1);
+    state_.othermode &= ~(mask << sft);
+    state_.othermode |= (cmd.omData() & mask) << sft;
+    updateOtherModeFields();
+}
+
+void DLInterpreter::handleRdpOtherMode(const DecodedCommand &cmd) {
+    // gsDPSetOtherMode(mode0, mode1)：w0 低 24 位 = mode0（OTHERMODE 高 32 位
+    // 字段，已按位域定位），w1 = mode1（RDP 渲染模式，暂不导出）。
+    state_.othermode = cmd.w0 & 0x00FFFFFF;
+    updateOtherModeFields();
+}
+
+void DLInterpreter::updateOtherModeFields() {
+    // TEXTLUT 类型（CI 调色板格式）→ material_.lut_type；周期类型/纹理过滤等
+    // 记录在 state_.othermode（渲染参数，导出暂不用）。
+    material_.lut_type = static_cast<uint8_t>((state_.othermode >> G_MDSFT_TEXTLUT) & 0x3);
+}
+
+void DLInterpreter::handleLoadTLUT(const DecodedCommand &cmd) {
+    // 从当前 G_SETTEXIMAGE 图像加载 count+1 个 16 位 TLUT 条目到 tile 的 tmem。
+    // 记录 tmem → 调色板源图像（CI 纹理解码时查表）。
+    if (state_.tex_image.seg >= 0) {
+        const uint32_t img = (uint32_t(state_.tex_image.seg) << 24) |
+                             (state_.tex_image.offset & 0xFFFFFF);
+        const uint8_t tile = cmd.tlutTile();
+        if (tile < state_.tile_tmem.size()) {
+            state_.tlut_images[state_.tile_tmem[tile]] = img;
+        }
+    }
 }
 
 uint32_t DLInterpreter::materialId(uint32_t tex_image) {

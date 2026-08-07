@@ -29,11 +29,19 @@ uint8_t SegmentTable::read(SegmentedAddress seg_addr, uint32_t offset) const {
 }
 
 std::span<uint8_t> SegmentTable::data(SegmentedAddress seg_addr) const {
-    return segments.at(seg_addr.seg).data.subspan(seg_addr.offset);
+    const auto &seg = segments.at(seg_addr.seg).data;
+    if (seg_addr.offset > seg.size()) {
+        throw std::out_of_range("SegmentTable::data offset out of range");
+    }
+    return seg.subspan(seg_addr.offset);
 }
 
 std::span<uint8_t> SegmentTable::data(SegmentedAddress seg_addr, uint32_t length) const {
-    return segments.at(seg_addr.seg).data.subspan(seg_addr.offset, length);
+    const auto &seg = segments.at(seg_addr.seg).data;
+    if (seg_addr.offset > seg.size() || length > seg.size() - seg_addr.offset) {
+        throw std::out_of_range("SegmentTable::data range out of bounds");
+    }
+    return seg.subspan(seg_addr.offset, length);
 }
 
 void SegmentTable::loadSegment(int16_t seg, uint32_t rom_start, uint32_t rom_end) {

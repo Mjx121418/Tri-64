@@ -42,9 +42,16 @@ bool TextureDecoder::run(const Material &m, SegmentedAddress tex_image) {
     tex.siz = m.tile_siz;
     tex.pixels.resize(size_t(w) * h * 4);
 
-    // 一次读入覆盖区域所需的图像字节（16-bit 行主序）
+    // 一次读入覆盖区域所需的图像字节（16-bit 行主序）；地址越界/段未加载时
+    // 返回错误而非抛异常（纹理解码失败留空，见 LevelExtract）。
     const size_t needed = (size_t(y0 + h) * image_width + (x0 + w)) * 2;
-    std::span<const uint8_t> d = seg_table_.data(tex_image, static_cast<uint32_t>(needed));
+    std::span<const uint8_t> d;
+    try {
+        d = seg_table_.data(tex_image, static_cast<uint32_t>(needed));
+    } catch (const std::out_of_range &) {
+        error_ = "texture image out of range";
+        return false;
+    }
 
     for (uint32_t y = 0; y < h; y++) {
         for (uint32_t x = 0; x < w; x++) {

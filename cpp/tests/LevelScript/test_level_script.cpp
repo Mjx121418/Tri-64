@@ -265,6 +265,71 @@ void testObjectModels() {
     }
 }
 
+void testLevelScriptData() {
+    const auto roms = findRoms();
+    if (roms.empty()) {
+        return;
+    }
+
+    for (const auto &path : roms) {
+        ROM rom;
+        rom.load(path);
+        if (!rom.is_loaded) {
+            continue;
+        }
+        const bool is_vanilla = path.filename().string().find("baserom") != std::string::npos;
+
+        // 城堡内侧（6）：最多的传送/画框传送节点；原版有 12 个画框传送。
+        LevelExtract::Result r6 = LevelExtract::extract(rom, 6, 1);
+        if (r6.ok) {
+            printf("test_level_script_data: castle inside: warps=%zu painting_warps=%zu "
+                   "music=(%u,%u) mario=(model %d arg %u)\n",
+                   r6.warp_nodes.size(), r6.painting_warp_nodes.size(), r6.music_param,
+                   r6.music_param2, r6.mario_model_id, r6.mario_behavior_arg);
+            if (r6.warp_nodes.empty()) {
+                printf("test_level_script_data: FAIL: castle inside has no warp nodes\n");
+            }
+            if (is_vanilla && r6.painting_warp_nodes.size() != 12) {
+                printf("test_level_script_data: FAIL: vanilla castle inside painting warps "
+                       "(expect 12, got %zu)\n",
+                       r6.painting_warp_nodes.size());
+            }
+        }
+
+        // BOB（9）：Mario 出生行为 + 背景音乐 seq + 若干传送节点。
+        LevelExtract::Result r9 = LevelExtract::extract(rom, 9, 1);
+        if (r9.ok) {
+            printf("test_level_script_data: BOB: warps=%zu whirls=%zu dialog=[%u,%u] "
+                   "music=(%u,%u) mario=(model %d arg %u) transition=(%u,%u,%u,%u,%u) "
+                   "camera=%s\n",
+                   r9.warp_nodes.size(), r9.whirlpools.size(), r9.dialog[0], r9.dialog[1],
+                   r9.music_param, r9.music_param2, r9.mario_model_id, r9.mario_behavior_arg,
+                   r9.transition.type, r9.transition.time, r9.transition.r, r9.transition.g,
+                   r9.transition.b, r9.camera.has_value() ? "set" : "null");
+            if (is_vanilla && r9.mario_model_id != 1) {
+                printf("test_level_script_data: FAIL: vanilla BOB Mario model id (expect 1, "
+                       "got %d)\n",
+                       r9.mario_model_id);
+            }
+            if (is_vanilla && r9.music_param2 != 3) {
+                printf("test_level_script_data: FAIL: vanilla BOB music seq (expect 3, got %u)\n",
+                       r9.music_param2);
+            }
+            if (is_vanilla && r9.warp_nodes.size() < 7) {
+                printf("test_level_script_data: FAIL: vanilla BOB has too few warps\n");
+            }
+            // 区域相机（geo views[0] 的 NODE_CAMERA）应已接线
+            if (is_vanilla && !r9.camera.has_value()) {
+                printf("test_level_script_data: FAIL: vanilla BOB area camera not wired\n");
+            }
+            if (is_vanilla && r9.camera.has_value()
+                && r9.camera->mode != 1) {
+                printf("test_level_script_data: FAIL: vanilla BOB camera mode (expect 1)\n");
+            }
+        }
+    }
+}
+
 void testDisplayList() {
     const auto roms = findRoms();
     if (roms.empty()) {
@@ -689,4 +754,105 @@ void testExportBillboards() {
             exportDlsToObj(setup.seg_table, dls, name);
         }
     }
+}
+
+void testDlRspData() {
+    // 合成一段含 fast3d 命令的段：验证我们不渲染但提取的 RSP/材质数据。
+    // 布局：DL @0，灯光 Light_t @0x100，调色板图像 @0x200，纹理图像 @0x300，
+    // 顶点 @0x400。
+    std::vector<uint8_t> seg(0x400 + 3 * 16, 0);
+
+    auto put = [&](size_t off, uint32_t w0, uint32_t w1) {
+        seg[off + 0] = (w0 >> 24) & 0xFF; seg[off + 1] = (w0 >> 16) & 0xFF;
+        seg[off + 2] = (w0 >> 8) & 0xFF;  seg[off + 3] = w0 & 0xFF;
+        seg[off + 4] = (w1 >> 24) & 0xFF; seg[off + 5] = (w1 >> 16) & 0xFF;
+        seg[off + 6] = (w1 >> 8) & 0xFF;  seg[off + 7] = w1 & 0xFF;
+    };
+
+    size_t off = 0;
+    // gsSPLight(&light, 1)：G_MOVEMEM，G_MV_L0 槽，16 字节
+    put(off, (0x03u << 24) | (0x86u << 16) | 16u, 0x0E000100u); off += 8;
+    // gsSPSetNumLights(1)：G_MOVEWORD G_MW_NUMLIGHT（1 个灯 → (1+1)*32=64）
+    put(off, (0xBCu << 24) | (0x00u << 8) | 0x02u, 64u); off += 8;
+    // gsSPFogFactor(fm=0x1234, fo=0x5678)：G_MOVEWORD G_MW_FOG
+    put(off, (0xBCu << 24) | (0x00u << 8) | 0x08u, 0x12345678u); off += 8;
+    // gsDPSetTextureLUT(G_TT_RGBA16)：G_SETOTHERMODE_H sft=14 len=2 data=2
+    put(off, (0xBAu << 24) | (14u << 8) | 2u, 2u); off += 8;
+    // gsSPTexture(on=1)：w0=(0xBB<<24)|(tile=0<<8)|1，w1=缩放
+    put(off, (0xBBu << 24) | 1u, (0xFFFFu << 16) | 0xFFFFu); off += 8;
+    // gsDPSetTile(load tile 7, tmem=0x100) —— TLUT 目标槽位（palette=0）
+    put(off, (0xF5u << 24) | (2u << 19) | (8u << 9) | 0x100u,
+        (7u << 24) | (2u << 18) | (2u << 8) | (5u << 4));
+    off += 8;
+    // gsDPSetTextureImage(调色板 @0x200)
+    put(off, 0xFDu << 24, 0x0E000200u); off += 8;
+    // gsDPLoadTLUTCmd(tile 7, count 15)（16 条目）
+    put(off, 0xF0u << 24, (7u << 24) | (15u << 14)); off += 8;
+    // gsDPSetTile(render tile 0, fmt=RGBA, siz=16, line=8, tmem=0, palette=5)
+    // —— 放在三角形之前，材质记录的是渲染 tile 的 palette
+    put(off, (0xF5u << 24) | (2u << 19) | (8u << 9), (5u << 20) | (2u << 18) | (2u << 8) | (5u << 4));
+    off += 8;
+    // gsDPSetTextureImage(纹理 @0x300)
+    put(off, 0xFDu << 24, 0x0E000300u); off += 8;
+    // gsDPSetCombineMode(G_CC_MODULATERGB)：TEXEL0 参与 → textured
+    put(off, (0xFCu << 24) | 0x00120000u, 4u); off += 8;
+    // gsSPVertex(3 顶点 @0x400)
+    put(off, (0x04u << 24) | (0x20u << 16) | 48u, 0x0E000400u); off += 8;
+    // gsSP1Triangle(0,1,2)
+    put(off, 0xBFu << 24, 0u); off += 8;
+    // gsSPEndDisplayList()
+    put(off, 0xB8u << 24, 0u); off += 8;
+
+    // Light_t @0x100：col={0x30,0xDB,0x02}（0-2）, colc 同（4-6）, dir={0x28,0x28,0x28}（8-10）
+    seg[0x100] = 0x30; seg[0x101] = 0xDB; seg[0x102] = 0x02;
+    seg[0x104] = 0x30; seg[0x105] = 0xDB; seg[0x106] = 0x02;
+    seg[0x108] = 0x28; seg[0x109] = 0x28; seg[0x10A] = 0x28;
+
+    SegmentTable seg_table;
+    seg_table.rom_span = std::span(seg);
+    seg_table.loadSegment(0x0E, 0, static_cast<uint32_t>(seg.size()));
+
+    GBI::DLInterpreter interp(seg_table);
+    GBI::Mesh &mesh = interp.run(SegmentedAddress { 0x0E, 0 });
+
+    if (mesh.indices.size() != 3) {
+        printf("test_dl_rsp: FAIL triangle count (expect 1, got %zu)\n", mesh.indices.size() / 3);
+    }
+    const auto &st = interp.state();
+    if (st.lights[0].col[0] != 0x30 || st.lights[0].col[1] != 0xDB || st.lights[0].col[2] != 0x02
+        || st.lights[0].dir[0] != 0x28 || st.lights[0].dir[1] != 0x28 || st.lights[0].dir[2] != 0x28) {
+        printf("test_dl_rsp: FAIL light slot 0 col/dir\n");
+    }
+    if (st.num_lights != 1) {
+        printf("test_dl_rsp: FAIL num_lights (expect 1, got %u)\n", st.num_lights);
+    }
+    if (st.fog_mult != 0x1234 || st.fog_offset != 0x5678) {
+        printf("test_dl_rsp: FAIL fog factors (%04x,%04x)\n", st.fog_mult, st.fog_offset);
+    }
+    if (((st.othermode >> GBI::G_MDSFT_TEXTLUT) & 0x3) != GBI::G_TT_RGBA16) {
+        printf("test_dl_rsp: FAIL othermode TEXTLUT (expect RGBA16)\n");
+    }
+    if (st.tlut_images[0x100] != 0x0E000200u) {
+        printf("test_dl_rsp: FAIL TLUT binding (expect 0x0E000200)\n");
+    }
+    if (!mesh.materials.empty()) {
+        const auto &mat = mesh.materials[0];
+        if (mat.tex_palette != 5 || mat.tex_line != 8 || mat.lut_type != GBI::G_TT_RGBA16) {
+            printf("test_dl_rsp: FAIL material palette/line/lut (%u,%u,%u)\n", mat.tex_palette,
+                   mat.tex_line, mat.lut_type);
+        }
+    } else {
+        printf("test_dl_rsp: FAIL no material emitted\n");
+    }
+    printf("test_dl_rsp: lights=[%02X%02X%02X d=(%d,%d,%d)] numLights=%u fog=(%04x,%04x) "
+           "lut=%u tlut=0x%06X material=(palette=%u line=%u lut=%u) tri=%zu\n",
+           st.lights[0].col[0], st.lights[0].col[1], st.lights[0].col[2],
+           st.lights[0].dir[0], st.lights[0].dir[1], st.lights[0].dir[2],
+           st.num_lights, st.fog_mult, st.fog_offset,
+           (st.othermode >> GBI::G_MDSFT_TEXTLUT) & 0x3,
+           st.tlut_images[0x100] & 0xFFFFFF,
+           mesh.materials.empty() ? 0u : mesh.materials[0].tex_palette,
+           mesh.materials.empty() ? 0u : mesh.materials[0].tex_line,
+           mesh.materials.empty() ? 0u : mesh.materials[0].lut_type,
+           mesh.indices.size() / 3);
 }

@@ -105,6 +105,13 @@ void GeoLayoutProcessor::cmdCloseNode() {
     geo_layout_command.offset += 4;
 }
 void GeoLayoutProcessor::cmdAssignAsView() {
+    // 0x06 ASSIGN_AS_VIEW(index)：把当前节点注册进视图表（镜像 gGeoViews）。
+    const int16_t index = readInt<int16_t>(command_data, 2);
+    if (index >= 0 && index < num_views_
+        && graph_node_index >= 0
+        && graph_node_index < static_cast<int16_t>(graph_node_list.size())) {
+        views_[index] = graph_node_list[graph_node_index];
+    }
     geo_layout_command.offset += 4;
 }
 
@@ -141,10 +148,15 @@ void GeoLayoutProcessor::cmdNodeRoot() {
     int16_t width = readInt<int16_t>(command_data, 8);
     int16_t height = readInt<int16_t>(command_data, 10);
 
-    // TODO (or not): geiViews
+    // 视图表条目数 = 命令值 + 2（至少 2，decomp 的 gGeoNumViews）。
+    num_views_ = static_cast<int16_t>(readInt<int16_t>(command_data, 2) + 2);
+    if (num_views_ < 0 || num_views_ > static_cast<int16_t>(views_.size())) {
+        num_views_ = static_cast<int16_t>(views_.size());
+    }
+    views_ = {};
 
     node->flags = GraphNodeFlag::GRAPH_RENDER_ACTIVE;
-    node->data = GraphNodeRoot { 0, x, y, width, height };
+    node->data = GraphNodeRoot { 0, x, y, width, height, num_views_, {} };
 
     registerSceneGraphNode(std::move(node));
     geo_layout_command.offset += 12;
@@ -166,14 +178,17 @@ void GeoLayoutProcessor::cmdNodePerspective() {
     float fov = static_cast<float>(readInt<int16_t>(command_data, 2));
     int16_t near = readInt<int16_t>(command_data, 4);
     int16_t far = readInt<int16_t>(command_data, 6);
-
+    uint32_t func = 0;
+    // GEO_CAMERA_FRUSTUM_WITH_FUNC（flag 置位）是 12 字节：命令 + 函数指针。
+    // （decomp 的 geo_layout_cmd_node_perspective 恒推进 0x08，但命令编码带
+    // 函数指针时是 0x0C，见 geo_commands.h；按编码推进才不脱位。）
     if (readInt<uint8_t>(command_data, 1) != 0) {
-        // TODO (or not): ASM function
+        func = readInt<uint32_t>(command_data, 8);
         geo_layout_command.offset += 4;
     }
 
     node->flags = GraphNodeFlag::GRAPH_RENDER_ACTIVE;
-    node->data = GraphNodePerspective {fov, near, far};
+    node->data = GraphNodePerspective {fov, near, far, func};
 
     registerSceneGraphNode(std::move(node));
     geo_layout_command.offset += 8;
@@ -218,23 +233,36 @@ void GeoLayoutProcessor::cmdNodeLevelOfDetail() {
 void GeoLayoutProcessor::cmdNodeSwitchCase() {
     std::unique_ptr<GraphNode> node = std::make_unique<GraphNode>();
     int16_t num_cases = readInt<int16_t>(command_data, 2);
-    uint32_t node_func = readInt<uint32_t>(command_data, 4); // fn
+    uint32_t node_func = readInt<uint32_t>(command_data, 4); // case 更新函数
 
     node->flags = GRAPH_RENDER_ACTIVE;
-    node->data = GraphNodeSwitchCase {0, num_cases, 0};
+    node->data = GraphNodeSwitchCase {0, num_cases, 0, node_func};
 
     registerSceneGraphNode(std::move(node));
     geo_layout_command.offset += 8;
 }
 
-// currently do nothing but add a node.
+// GEO_CAMERA(type, pos, focus, func)：记录相机节点并注册为 views[0]（decomp
+// geo_layout_cmd_node_camera 的 gGeoViews[0] = 相机节点）。
 void GeoLayoutProcessor::cmdNodeCamera() {
     std::unique_ptr<GraphNode> node = std::make_unique<GraphNode>();
+    GraphNodeCamera cam;
+    cam.mode = readInt<int16_t>(command_data, 2);
+    cam.pos = { static_cast<float>(readInt<int16_t>(command_data, 4)),
+                static_cast<float>(readInt<int16_t>(command_data, 6)),
+                static_cast<float>(readInt<int16_t>(command_data, 8)) };
+    cam.focus = { static_cast<float>(readInt<int16_t>(command_data, 10)),
+                  static_cast<float>(readInt<int16_t>(command_data, 12)),
+                  static_cast<float>(readInt<int16_t>(command_data, 14)) };
+    cam.func = readInt<uint32_t>(command_data, 16);
 
     node->flags = GRAPH_RENDER_ACTIVE;
-    node->data = GraphNodeCamera {};
+    node->data = cam;
 
     registerSceneGraphNode(std::move(node));
+    if (num_views_ > 0) {
+        views_[0] = graph_node_list[graph_node_index];
+    }
     geo_layout_command.offset += 20;
 }
 
@@ -397,11 +425,15 @@ void GeoLayoutProcessor::cmdNodeObjectParent() {
 }
 
 void GeoLayoutProcessor::cmdNodeGenerated() {
-    // TODO (or not): fn
     std::unique_ptr<GraphNode> node = std::make_unique<GraphNode>();
 
+    // GEO_ASM(parameter, func)：记录参数与函数（参数 = movtex/水/环境效果 id）。
+    GraphNodeGenerated gen;
+    gen.parameter = readInt<int16_t>(command_data, 2);
+    gen.func = readInt<uint32_t>(command_data, 4);
+
     node->flags = GRAPH_RENDER_ACTIVE;
-    node->data = GraphNodeGenerated {};
+    node->data = gen;
 
     registerSceneGraphNode(std::move(node));
     geo_layout_command.offset += 8;
@@ -410,11 +442,13 @@ void GeoLayoutProcessor::cmdNodeGenerated() {
 void GeoLayoutProcessor::cmdNodeBackground() {
     std::unique_ptr<GraphNode> node = std::make_unique<GraphNode>();
 
-    int16_t background_id {readInt<int16_t>(command_data, 2)};
-    uint32_t func {readInt<uint32_t>(command_data, 4)};
+    // 背景 id 或 RGBA5551 填充色（backgroundFunc 为 null 时是颜色）：存原始 s16。
+    GraphNodeBackGround bg;
+    bg.background = readInt<int16_t>(command_data, 2);
+    bg.func = readInt<uint32_t>(command_data, 4);
 
     node->flags = GRAPH_RENDER_ACTIVE;
-    node->data = GraphNodeBackGround {(background_id << 16) + background_id};
+    node->data = bg;
 
     registerSceneGraphNode(std::move(node));
     geo_layout_command.offset += 8;
@@ -425,7 +459,13 @@ void GeoLayoutProcessor::cmdNOP() {
 }
 
 void GeoLayoutProcessor::cmdCopyView() {
-    // TODO (or not)
+    // 0x1B COPY_VIEW(index)：从视图表取一个对象父节点，创建新的对象父节点
+    //（decomp 复制其 sharedChild；共享子节点是运行时数据，这里只记录结构）。
+    const int16_t index = readInt<int16_t>(command_data, 2);
+    std::unique_ptr<GraphNode> node = std::make_unique<GraphNode>();
+    node->flags = GRAPH_RENDER_ACTIVE;
+    node->data = GraphNodeObjectParent {};
+    registerSceneGraphNode(std::move(node));
     geo_layout_command.offset += 4;
 }
 
@@ -433,10 +473,13 @@ void GeoLayoutProcessor::cmdNodeHeldObject() {
     std::unique_ptr<GraphNode> node = std::make_unique<GraphNode>();
 
     Vec3<int16_t> offset = readVec3s(command_data, 2);
-    uint32_t func = readInt<uint32_t>(command_data, 8);
+    GraphNodeHeldObject held;
+    held.translation = offset;
+    held.player_index = readInt<uint8_t>(command_data, 1);
+    held.func = readInt<uint32_t>(command_data, 8);
 
     node->flags = GRAPH_RENDER_ACTIVE;
-    node->data = GraphNodeHeldObject {offset};
+    node->data = held;
 
     registerSceneGraphNode(std::move(node));
     geo_layout_command.offset += 12;
@@ -474,7 +517,8 @@ void GeoLayoutProcessor::cmdNOP3() {
 void GeoLayoutProcessor::cmdNodeCullingRadius() {
     std::unique_ptr<GraphNode> node = std::make_unique<GraphNode>();
 
-    int16_t radius = readInt<uint32_t>(command_data, 8);
+    // GEO_CULLING_RADIUS(radius)：s16 @2（之前误读 @8 的 u32）。
+    int16_t radius = readInt<int16_t>(command_data, 2);
 
     node->flags = GRAPH_RENDER_ACTIVE;
     node->data = GraphNodeCullingRadius {radius};
@@ -488,6 +532,8 @@ std::unique_ptr<GraphNode> GeoLayoutProcessor::processGeoLayout(SegmentedAddress
     address_stack_index = 1;
     frame_stack_index = 1;
     graph_node_index = 0;
+    views_ = {};
+    num_views_ = 0;
     address_stack[0] = SegmentedAddress {};   // null sentinel (top-level End returns to it)
     frame_stack[0] = Frame {1, 0};            // sentinel frame: return to the null address
     graph_node_list[0] = nullptr;
@@ -597,6 +643,18 @@ std::unique_ptr<GraphNode> GeoLayoutProcessor::processGeoLayout(SegmentedAddress
             case 0x20:
                 cmdNodeCullingRadius();
                 break;
+        }
+    }
+
+    // 把视图注册表拷进根节点（decomp 的 gGeoViews 属于根节点）。
+    if (root_graph_node) {
+        if (auto *root = std::get_if<GraphNodeRoot>(&root_graph_node->data)) {
+            root->num_views = num_views_;
+            root->views.clear();
+            root->views.reserve(static_cast<size_t>(num_views_));
+            for (int16_t i = 0; i < num_views_; i++) {
+                root->views.push_back(views_[i]);
+            }
         }
     }
 

@@ -48,6 +48,16 @@ enum Opcode : uint8_t {
     G_DPPIPESYNC      = 0xE7,
     G_DPTILESYNC      = 0xE8,
     G_DPFULLSYNC      = 0xE9,
+    G_SETKEYGB        = 0xEA,
+    G_SETKEYR         = 0xEB,
+    G_SETCONVERT      = 0xEC,
+    G_SETSCISSOR      = 0xED,
+    G_SETPRIMDEPTH    = 0xEE,
+    G_RDPSETOTHERMODE = 0xEF,
+    G_LOADTLUT        = 0xF0,
+    G_TEXRECT         = 0xE4,
+    G_TEXRECTFLIP     = 0xE5,
+    G_FILLRECT        = 0xF6,
     G_SETTILESIZE     = 0xF2,
     G_LOADBLOCK       = 0xF3,
     G_LOADTILE        = 0xF4,
@@ -90,14 +100,49 @@ enum GeometryMode : uint32_t {
 inline constexpr uint32_t kDefaultGeometryMode =
     G_SHADE | G_SHADING_SMOOTH | G_CULL_BACK | G_LIGHTING;
 
-// G_MOVEWORD 偏移（gbi.h G_MW_*）
+// G_MOVEWORD 的 index（fast3d/F3D：gsMoveWd 的 index 参数，w0 低 8 位；见
+// gbi.h gsImmp21(G_MOVEWORD, offset, index, data)）。值来自 gbi.h G_MW_*。
 enum MoveWordOffset : uint16_t {
-    G_MW_NUMLIGHT = 0x0008,
-    G_MW_CLIP     = 0x000C,
-    G_MW_SEGMENT  = 0x0010,
-    G_MW_FOG      = 0x0014,
-    G_MW_LIGHTCOL = 0x0018,
-    G_MW_MATRIX   = 0x001C,
+    G_MW_MATRIX     = 0x00,
+    G_MW_NUMLIGHT   = 0x02,
+    G_MW_CLIP       = 0x04,
+    G_MW_SEGMENT    = 0x06,
+    G_MW_FOG        = 0x08,
+    G_MW_LIGHTCOL   = 0x0A,
+};
+
+// G_MOVEMEM 的 dmem 表索引（fast3d/F3D：gsDma1p 的 params 字段，w0 bits 16-23；
+// 见 gbi.h gsSPLight = gsDma1p(G_MOVEMEM, l, sizeof(Light), (n-1)*2+G_MV_L0)）。
+enum MoveMemIndex : uint8_t {
+    G_MV_VIEWPORT = 0x80,
+    G_MV_LOOKATY  = 0x82,
+    G_MV_LOOKATX  = 0x84,
+    G_MV_L0       = 0x86, // gsSPLight(&light.l, 1) 的灯光槽
+    G_MV_L1       = 0x88,
+    G_MV_L2       = 0x8A,
+    G_MV_L3       = 0x8C,
+    G_MV_L4       = 0x8E,
+    G_MV_L5       = 0x90,
+    G_MV_L6       = 0x92,
+    G_MV_L7       = 0x94,
+};
+
+// G_SETOTHERMODE_H 的位域（fast3d/F3D：w0 = (op<<24)|(sft<<8)|(len)，位域定义见
+// gbi.h G_MDSFT_*）。
+enum OtherModeBits : uint32_t {
+    G_MDSFT_TEXTFILT    = 12,
+    G_MDSFT_TEXTLUT     = 14,
+    G_MDSFT_TEXTLOD     = 16,
+    G_MDSFT_TEXTDETAIL  = 17,
+    G_MDSFT_TEXTPERSP   = 19,
+    G_MDSFT_CYCLETYPE   = 20,
+};
+
+// 纹理 LUT 类型（OTHERMODE TEXTLUT 位域，gbi.h G_TT_*）——CI 纹理解码需要。
+enum TextureLUTType : uint8_t {
+    G_TT_NONE   = 0,
+    G_TT_RGBA16 = 2,
+    G_TT_IA16   = 3,
 };
 
 // 解码后的命令：保留原始字，提供按命令解析的访问器
@@ -128,20 +173,22 @@ struct DecodedCommand {
     uint8_t triV2() const { return (w1 & 0xFF) / 10; }
 
     // --- G_TEXTURE ---
-    // SM64 角色：tile = 渲染 tile 编号，level = mipmap 层级，s/t = 纹理偏移
-    // （配合顶点纹理坐标实现滚动纹理），w1 = S/T 缩放（16.16 定点，见解释器的
-    // tex_scale_s/t）。当前只用 w0 位 0（G_TEXTURE_ENABLE）与 w1 缩放。
-    uint8_t texTile() const { return w0 & 0x0F; }
-    uint8_t texLevel() const { return (w0 >> 4) & 0x0F; }
-    uint8_t texS() const { return (w0 >> 16) & 0xFF; }
-    uint8_t texT() const { return (w0 >> 8) & 0xFF; }
+    // fast3d/F3D（gbi.h:2831）：w0 = (0xBB<<24)|(BOWTIE<<16)|(level<<11)|(tile<<8)|
+    // (on<<0)；w1 = (S<<16)|T。on = G_TEXTURE_ENABLE 开关（w0 bit 0），tile = 渲染
+    // tile 编号，level = mipmap 层级，S/T = 纹理坐标缩放（16.16 定点）。
+    uint8_t texTile() const { return (w0 >> 8) & 0x7; }
+    uint8_t texLevel() const { return (w0 >> 11) & 0x7; }
+    uint8_t texOn() const { return w0 & 0x1; }
+    uint16_t texScaleS() const { return (w1 >> 16) & 0xFFFF; }
+    uint16_t texScaleT() const { return w1 & 0xFFFF; }
     uint32_t texScale() const { return w1; }
 
     // --- G_MOVEWORD ---
-    // SM64 角色：把 w1 写入 RSP DMEM 偏移 mwOffset 处（G_MW_*：段表
-    // G_MW_SEGMENT、灯光数 G_MW_NUMLIGHT、fog 系数等）。级别脚本用它设置段表；
-    // DL 内的 MOVEWORD 目前被忽略。
-    uint16_t mwOffset() const { return w0 & 0xFFFF; }
+    // fast3d/F3D（gbi.h:1972 gsMoveWd = gsImmp21(G_MOVEWORD, offset, index, data)）：
+    // w0 = (0xBC<<24)|(offset<<8)|(index)，w1 = data。index = G_MW_*（灯光数/
+    // fog/段表/灯光颜色等）。
+    uint8_t mwIndex() const { return w0 & 0xFF; }
+    uint16_t mwOffset() const { return (w0 >> 8) & 0xFF; }
     uint32_t mwValue() const { return w1; }
 
     // --- G_POPMTX：fast3d 固定弹出 1 个矩阵，w1 被忽略（见 rsp/fast3d.s imm_POPMTX） ---
@@ -150,11 +197,11 @@ struct DecodedCommand {
     uint32_t geometryMode() const { return w1; }
 
     // --- G_SETOTHERMODE_H/L ---
-    // SM64 角色：按 (sft, len) 选中 OTHERMODE 字内的位域并写入 w1（周期类型、
-    // 纹理过滤/镜像、zbuffer 等渲染参数）。导出目前不需要这些参数。
-    uint8_t omSft() const { return (w0 >> 16) & 0xFF; }
-    uint8_t omLen() const { return (w0 >> 8) & 0xFF; }
-    uint64_t omParams() const { return ((uint64_t)(w0 & 0xFF) << 32) | w1; }
+    // fast3d/F3D（gbi.h:2990）：w0 = (op<<24)|(sft<<8)|(len)，w1 = data。按 (sft,
+    // len) 选中 OTHERMODE 字内的位域（周期类型/纹理过滤/LUT/zbuffer 等）。
+    uint8_t omSft() const { return (w0 >> 8) & 0xFF; }
+    uint8_t omLen() const { return w0 & 0xFF; }
+    uint32_t omData() const { return w1; }
 
     // --- G_SETCONBINE ---
     uint32_t combineMux0() const { return w0 & 0x00FFFFFF; }
@@ -185,6 +232,15 @@ struct DecodedCommand {
     // G_SETTILE 的 S/T clamp/mirror 模式（2 位）：0=G_TX_WRAP 1=G_TX_MIRROR 2=G_TX_CLAMP
     uint8_t tileClampS() const { return (w1 >> 8) & 0x3; }
     uint8_t tileClampT() const { return (w1 >> 18) & 0x3; }
+    // G_SETTILE 的 line（w0 bits 9-17，TMEM 行跨度 64 位字）与 palette
+    //（w1 bits 20-23，CI4 调色板索引）——CI 纹理解码需要。
+    uint16_t tileLine() const { return (w0 >> 9) & 0x1FF; }
+    uint8_t tilePalette() const { return (w1 >> 20) & 0xF; }
+
+    // --- G_LOADTLUT：w0 = (0xF0<<24)，w1 = (tile<<24)|(count<<14) ---
+    // 从当前 G_SETTEXIMAGE 图像加载 count+1 个 16 位 TLUT 条目到 tile 的 tmem。
+    uint8_t tlutTile() const { return (w1 >> 24) & 0x7; }
+    uint16_t tlutCount() const { return (w1 >> 14) & 0x3FF; }
 
     // --- G_MOVEMEM ---
     // SM64 角色：按 dmem 索引（G_MV_*：视口/灯光/矩阵等）把 DRAM 数据拷入

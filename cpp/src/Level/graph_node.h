@@ -18,14 +18,18 @@ enum GraphNodeFlag : int16_t {
     GRAPH_RENDER_HAS_ANIMATION = 1 << 5
 };
 
+struct GraphNode; // 前置声明（GraphNodeRoot.views 保存非拥有的节点指针）
+
 struct GraphNodeRoot {
     uint8_t area_index;
     int16_t x;
     int16_t y;
     int16_t width; // half width, 160
     int16_t height; // half height
-    // s16 numViews; // number of entries in mystery array
-    // GraphNode **views;
+    // 视图注册表（decomp 的 gGeoViews）：ASSIGN_AS_VIEW / NODE_CAMERA 把节点
+    // 注册进 views，views[0] 通常是区域相机。原始指针非拥有（指向场景图内节点）。
+    int16_t num_views {0};
+    std::vector<GraphNode *> views;
 };
 
 struct GraphNodeOrthoProjection {
@@ -38,6 +42,8 @@ struct GraphNodePerspective {
     float fov;
     int16_t near;
     int16_t far;
+    // GEO_PERSPECTIVE 的可选 frustum 函数（raw 段地址，不执行）。
+    uint32_t func {0};
 };
 
 struct GraphNodeMasterList {
@@ -58,6 +64,8 @@ struct GraphNodeSwitchCase {
     int32_t unused;
     int16_t num_cases;
     int16_t selected_case;
+    // case 选择/更新函数（raw 段地址，不执行）。
+    uint32_t func {0};
 };
 
 struct GraphNodeCamera {
@@ -71,6 +79,9 @@ struct GraphNodeCamera {
     Mtxf look_at;
     int16_t roll;
     int16_t roll_screen;
+    // GEO_CAMERA 的相机类型（mode）与函数指针（raw 段地址，不执行）。
+    int16_t mode {0};
+    uint32_t func {0};
 };
 
 struct GraphNodeTranslationRotation {
@@ -121,12 +132,15 @@ struct GraphNodeObjectParent {
 };
 
 struct GraphNodeGenerated {
-    // fn used to dynamically trigger some effect
+    // 动态生成 DL 的 ASM 函数 + 参数（如 movtex/水/环境效果 id；raw 地址，不执行）。
+    int32_t parameter {0};
+    uint32_t func {0};
 };
 
 struct GraphNodeBackGround {
-    // fn
-    int32_t background;
+    // 背景 id 或 RGBA5551 填充色（backgroundFunc 为 null 时是颜色）；raw s16 值。
+    int32_t background {0};
+    uint32_t func {0};
 };
 
 struct GraphNodeHeldObject {
@@ -134,6 +148,8 @@ struct GraphNodeHeldObject {
     // int32_t player_index;
     // object
     Vec3<int16_t> translation;
+    uint8_t player_index {0};
+    uint32_t func {0};
 };
 
 struct GraphNodeCullingRadius {
