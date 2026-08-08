@@ -5,6 +5,7 @@
 #include "Scripts/Collision.h"
 #include <cstdio>
 #include <filesystem>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -151,6 +152,63 @@ void testCollision() {
             if (is_vanilla && rooms == 0) {
                 printf("test_collision: FAIL HMC should have room data\n");
             }
+        }
+
+        // 城堡内侧（关卡 6，区域 1）：整个城堡的碰撞 + 全表面 ROOMS 房间数据。
+        {
+            LevelExtract::Result r = LevelExtract::extract(rom, 6, 1);
+            if (!r.ok) {
+                printf("test_collision: castle_inside extract failed: %s\n", r.error.c_str());
+                continue;
+            }
+            const Collision::Data &c = r.collision;
+            size_t rooms = 0;
+            for (const auto &s : c.surfaces) {
+                if (s.has_room) {
+                    rooms++;
+                }
+            }
+            printf("test_collision: castle_inside: ok=%d vertices=%zu surfaces=%zu special=%zu water=%zu rooms=%zu\n",
+                   c.ok, c.vertices.size(), c.surfaces.size(), c.special_objects.size(),
+                   c.water_boxes.size(), rooms);
+            if (!c.ok || c.surfaces.empty()) {
+                printf("test_collision: FAIL castle_inside did not decode cleanly\n");
+            }
+            if (is_vanilla) {
+                if (c.vertices.size() != 1563) {
+                    printf("test_collision: FAIL castle_inside vertex count (expect 1563)\n");
+                }
+                if (c.surfaces.size() != 2144) {
+                    printf("test_collision: FAIL castle_inside surface count (expect 2144)\n");
+                }
+                if (rooms != 2144) {
+                    printf("test_collision: FAIL castle_inside should have room data on all surfaces\n");
+                }
+            }
+            const Collision::TriangleMesh tm = Collision::buildTriangleMesh(c);
+            std::set<int> room_ids;
+            for (uint8_t r : tm.rooms) {
+                room_ids.insert(r);
+            }
+            if (tm.indices.empty() || tm.positions.size() != tm.indices.size() ||
+                tm.classes.size() != tm.indices.size() / 3 ||
+                tm.rooms.size() != tm.indices.size() / 3) {
+                printf("test_collision: FAIL castle_inside mesh inconsistent "
+                       "(positions=%zu indices=%zu classes=%zu rooms=%zu)\n",
+                       tm.positions.size(), tm.indices.size(), tm.classes.size(), tm.rooms.size());
+            }
+            if (is_vanilla) {
+                // 城堡有 17 个房间（1..17），无 room 0 表面。
+                if (room_ids.empty() || *room_ids.begin() < 1 || *room_ids.rbegin() > 17) {
+                    printf("test_collision: FAIL castle_inside room ids outside 1..17\n");
+                }
+                if (tm.indices.size() != 2144 * 3) {
+                    printf("test_collision: FAIL castle_inside triangle index count (expect %d)\n",
+                           2144 * 3);
+                }
+            }
+            printf("test_collision: castle_inside: triangles=%zu unique_rooms=%zu\n",
+                   tm.indices.size() / 3, room_ids.size());
         }
 
         // 移动纹理（水/熔岩）：城堡外侧（16）有水面，LLL（22）有熔岩面。

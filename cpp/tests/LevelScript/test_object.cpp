@@ -189,6 +189,24 @@ void testObject() {
             }
         }
 
+        // 城堡内侧（关卡 6，区域 1）：area geo 用 GEO_SWITCH_CASE(17,
+        // geo_switch_area) 分房间；静态导出应收集所有分支（所有房间）的 DL，
+        // 而不是只取 case 0（主厅核心）。
+        {
+            LevelExtract::Result castle = LevelExtract::extract(rom, 6, 1);
+            if (!castle.ok) {
+                printf("test_object: castle extract failed: %s\n", castle.error.c_str());
+                continue;
+            }
+            const size_t triangles = castle.mesh.indices.size() / 3;
+            printf("test_object: castle_inside geometry triangles=%zu materials=%zu\n", triangles,
+                   castle.mesh.materials.size());
+            if (is_vanilla && triangles < 5000) {
+                printf("test_object: FAIL castle_inside geometry too small (expect all 17 "
+                       "rooms, not just case 0)\n");
+            }
+        }
+
         // BITS（关卡 21）：八边形平台（0x39）顶面局部法线 (0,127,0)，网格导出的
         // 法线应仍朝上（世界空间光照 shader 依赖它）。
         {

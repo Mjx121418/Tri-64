@@ -100,13 +100,11 @@ void collectDisplayLists(const GraphNode &node, std::vector<DisplayListRef> &out
         out.push_back(ref);
     }
 
-    // 开关节点：只取选中的 case（静态导出 = case 0）
+    // 开关节点：游戏用 geo_switch_area 按当前房间选一个分支；静态导出收集所有
+    // 分支（房间）的 DL（不跨 case 去重——重复 DL 原样收集）。
     if (std::holds_alternative<GraphNodeSwitchCase>(node.data)) {
-        const auto &sw = std::get<GraphNodeSwitchCase>(node.data);
-        if (!node.children.empty()) {
-            const int16_t idx = sw.selected_case >= 0 ? sw.selected_case : 0;
-            collectDisplayLists(*node.children[std::min<size_t>(idx, node.children.size() - 1)],
-                                out);
+        for (const auto &child : node.children) {
+            collectDisplayLists(*child, out);
         }
         return;
     }

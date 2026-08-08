@@ -135,8 +135,11 @@ emits a runtime DL (movtex water, envfx, paintings), billboards face the camera,
 
 **Ours** — `GeoLayoutProcessor` builds the graph once (frame-0 static). Differences:
 
-- **Switch-case (0x0E)**: we take `selected_case` (default 0). The game's case-selection
-  function (anim state, room) is runtime; the function pointer is recorded (Phase 2).
+- **Switch-case (0x0E)**: the game's case-selection function (anim state, room) is
+  runtime. For **area/room geometry** (`collectDisplayLists`) we now collect **all**
+  branches (all rooms) — repeated DLs shared between cases are not deduplicated. For
+  **object models** (`collectDisplayListsWithTransform`) we still take `selected_case`
+  (frame-0 animation state).
 - **LOD (0x0D)**: we take the band containing camera distance 0 (near). The game picks
   by the actual camera distance.
 - **Camera (0x0F)**: we now record `mode`, `pos`, `focus`, `func` (Phase 2) and register
@@ -291,6 +294,17 @@ boxes) and rooms are assigned.
 - **Triangle normals**: our `buildTriangleMesh` uses `(b−a)×(c−a)`; the decomp's
   `read_vertex_data` effectively uses `(v2−v1)×(v3−v2)`. Both yield the same face normal
   up to orientation for valid triangles.
+- **Special-object extra params**: `CollisionDecoder::run` reads each special object's
+  trailing s16s from its preset's SPTYPE, mirroring `spawn_special_objects`
+  (`macro_special_objects.c`): 0 = none, 1 = yaw, 2 = yaw+param, 3 = 3 s16s
+  (`SPTYPE_UNKNOWN`), 4 = yaw only (`SPTYPE_DEF_PARAM_AND_YROT` — the param comes from the
+  preset table's `defParam`, not the stream). An earlier `if (type>=1/2/3)` version
+  over-read types 3 and 4 (5 s16s instead of 3/1), which desynced every level whose
+  special-object block contains star/key doors (e.g. castle-inside) — fixed with the
+  explicit switch.
+- **Rooms (per-triangle)**: `TriangleMesh` carries `rooms` (from `Surface::room` /
+  `has_room`) so the renderer can show/hide surfaces per room (like the game's
+  `geo_switch_area`).
 
 ---
 

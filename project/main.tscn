@@ -110,45 +110,45 @@ focus_mode = 0
 [node name="Sep" type="HSeparator" parent="UI/LeftPanel/VBox" unique_id=757419781]
 layout_mode = 2
 
-[node name="RenderTitle" type="Label" parent="UI/LeftPanel/VBox" unique_id=790709940]
-layout_mode = 2
-text = "Rendering Options"
-
-[node name="TexturesOption" type="CheckButton" parent="UI/LeftPanel/VBox" unique_id=1429902992]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-button_pressed = true
-text = "Textures"
-
-[node name="LightingOption" type="CheckButton" parent="UI/LeftPanel/VBox" unique_id=1710469279]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-button_pressed = true
-text = "Lighting"
-
-[node name="ShadowsOption" type="CheckButton" parent="UI/LeftPanel/VBox" unique_id=1325857537]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-button_pressed = true
-text = "Shadows"
-
-[node name="WireframeOption" type="CheckButton" parent="UI/LeftPanel/VBox" unique_id=715544434]
-unique_name_in_owner = true
-layout_mode = 2
-focus_mode = 0
-text = "Wireframe"
-
-[node name="RenderModeLabel" type="Label" parent="UI/LeftPanel/VBox"]
+[node name="RenderModeLabel" type="Label" parent="UI/LeftPanel/VBox" unique_id=1832047470]
 layout_mode = 2
 text = "Render mode"
 
-[node name="RenderModeOption" type="OptionButton" parent="UI/LeftPanel/VBox"]
+[node name="RenderModeOption" type="OptionButton" parent="UI/LeftPanel/VBox" unique_id=1698430605]
 unique_name_in_owner = true
 layout_mode = 2
 focus_mode = 0
+
+[node name="RoomPanel" type="PanelContainer" parent="UI/LeftPanel/VBox" unique_id=2000000001]
+unique_name_in_owner = true
+visible = false
+layout_mode = 2
+custom_minimum_size = Vector2(0, 150)
+
+[node name="VBox" type="VBoxContainer" parent="UI/LeftPanel/VBox/RoomPanel" unique_id=2000000002]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="Title" type="Label" parent="UI/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000003]
+layout_mode = 2
+text = "Rooms"
+
+[node name="AllRooms" type="CheckButton" parent="UI/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000004]
+unique_name_in_owner = true
+layout_mode = 2
+focus_mode = 0
+button_pressed = true
+text = "All rooms"
+
+[node name="Scroll" type="ScrollContainer" parent="UI/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000005]
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+
+[node name="RoomList" type="VBoxContainer" parent="UI/LeftPanel/VBox/RoomPanel/VBox/Scroll" unique_id=2000000006]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
 
 [node name="StatusBar" type="PanelContainer" parent="UI" unique_id=798349282]
 anchors_preset = 12
@@ -164,7 +164,7 @@ unique_name_in_owner = true
 layout_mode = 2
 text = "No ROM loaded."
 
-[node name="CameraPosPanel" type="PanelContainer" parent="UI"]
+[node name="CameraPosPanel" type="PanelContainer" parent="UI" unique_id=943887334]
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
@@ -173,7 +173,7 @@ offset_top = 48.0
 offset_bottom = 70.0
 grow_horizontal = 0
 
-[node name="CameraPosLabel" type="Label" parent="UI/CameraPosPanel"]
+[node name="CameraPosLabel" type="Label" parent="UI/CameraPosPanel" unique_id=436183950]
 unique_name_in_owner = true
 layout_mode = 2
 text = "Cam: (0, 0, 0)"

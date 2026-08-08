@@ -13,12 +13,20 @@ extends Node3D
 @onready var model_root: Node3D = $ModelRoot
 @onready var camera_pos_label: Label = %CameraPosLabel
 
-@onready var sun: DirectionalLight3D = %Sun
-@onready var textures_option: CheckButton = %TexturesOption
-@onready var lighting_option: CheckButton = %LightingOption
-@onready var shadows_option: CheckButton = %ShadowsOption
-@onready var wireframe_option: CheckButton = %WireframeOption
 @onready var render_mode_option: OptionButton = %RenderModeOption
+@onready var room_panel: PanelContainer = %RoomPanel
+@onready var room_list: VBoxContainer = %RoomList
+@onready var all_rooms_checkbox: CheckButton = %AllRooms
+
+# 碰撞房间开关状态（碰撞模式下按房间显示/隐藏静态碰撞表面）。
+var _collision_vertices: PackedVector3Array = PackedVector3Array()
+var _collision_normals: PackedVector3Array = PackedVector3Array()
+var _collision_indices: PackedInt32Array = PackedInt32Array()
+var _collision_rooms: PackedInt32Array = PackedInt32Array()
+var _collision_colors: PackedColorArray = PackedColorArray()
+var _room_checkboxes := {}   # room id -> CheckButton
+var _collision_meshes: Array = []  # 静态碰撞 MeshInstance3D（填充 + 线框）
+var _visible_collision_triangles := 0
 
 # SM64 世界空间光照 shader（受光材质用；Godot 的 NORMAL 含节点旋转 → 对象实例
 # 旋转后光照正确）。
@@ -86,11 +94,10 @@ func _ready() -> void:
 	file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	file_dialog.add_filter("*.z64,*.n64,*.v64", "N64 ROM Files")
 
-	lighting_option.toggled.connect(_on_lighting_toggled)
-	shadows_option.toggled.connect(_on_shadows_toggled)
 	level_option.item_selected.connect(_on_level_selected)
 	area_option.item_selected.connect(_on_area_selected)
 	render_mode_option.item_selected.connect(_on_render_mode_selected)
+	all_rooms_checkbox.toggled.connect(_on_all_rooms_toggled)
 
 	render_mode_option.add_item("Geometry")
 	render_mode_option.add_item("Collision")
@@ -101,7 +108,6 @@ func _ready() -> void:
 		level_option.set_item_metadata(level_option.item_count - 1, level[0])
 	level_option.select(0) # 默认 BOB（9）
 
-	# 渲染选项（Textures / Wireframe）由未来的渲染管线读取，先保留状态。
 	status_label.text = "No ROM loaded. Click \"Open ROM\" to select a .z64 file."
 
 func _on_open_rom_pressed() -> void:
@@ -169,12 +175,6 @@ func _on_area_selected(index: int) -> void:
 	if _rom_loaded:
 		_extract_and_render()
 
-func _on_lighting_toggled(enabled: bool) -> void:
-	sun.visible = enabled
-
-func _on_shadows_toggled(enabled: bool) -> void:
-	sun.shadow_enabled = enabled
-
 func _on_render_mode_selected(index: int) -> void:
 	render_mode = index
 	if _rom_loaded:
@@ -193,6 +193,9 @@ func _extract_and_render() -> void:
 
 func _render_current() -> void:
 	_clear_model()
+	# 房间开关面板只在碰撞模式显示；无房间数据的关卡在 _populate_room_panel
+	# 里进一步隐藏。
+	room_panel.visible = render_mode == RENDER_COLLISION
 	if render_mode == RENDER_COLLISION:
 		_render_collision()
 	else:
@@ -280,41 +283,121 @@ func _render_geometry() -> void:
 			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
 			objects.size(), rendered_objects]
 
-## 渲染碰撞三角形：受光照的蓝色网格 + 三角形边界（线框）。
+## 渲染碰撞三角形：受光照的网格 + 三角形边界（线框）。表面按房间开关过滤
+##（RoomPanel 的每房间 CheckButton；默认全开）。
 func _render_collision() -> void:
 	object_list.clear()
+	_collision_meshes.clear()
 	var c: Dictionary = rom_manager.getCollisionTriangles()
+	_collision_vertices = c.vertices
+	_collision_normals = c.normals
+	_collision_rooms = c.rooms
+	_collision_indices = c.indices
+	_collision_colors = _build_collision_colors(c.classes)
+	_populate_room_panel()
+	_rebuild_collision_mesh()
+
+	# 对象碰撞三角形（行为 LOAD_COLLISION_DATA，对象本地空间）：与对象模型共用
+	# 同一个节点变换（pos/angle），放在对象实际出生位置/朝向。
+	var object_triangles := _render_object_collisions()
+
+	status_label.text = "%s, Area %d: collision mode, %d/%d triangles shown, %d object collision triangles." % [
+			rom_manager.getLevelName(), selected_area, _visible_collision_triangles,
+			_collision_indices.size() / 3, object_triangles]
+
+## 从 _collision_rooms 收集唯一房间号，为每个房间加一个 CheckButton。无房间
+## 数据（全部 room 0）时隐藏面板（没有可切换的房间）。
+func _populate_room_panel() -> void:
+	for child in room_list.get_children():
+		child.queue_free()
+	_room_checkboxes.clear()
+	var uniq := {}
+	for r in _collision_rooms:
+		uniq[int(r)] = true
+	var ids: Array = uniq.keys()
+	ids.sort()
+	if ids.size() == 1 and int(ids[0]) == 0:
+		room_panel.visible = false
+		return
+	room_panel.visible = true
+	all_rooms_checkbox.set_pressed_no_signal(true)
+	for id in ids:
+		var cb := CheckButton.new()
+		cb.text = "Room %d" % id
+		cb.button_pressed = true
+		cb.focus_mode = Control.FOCUS_NONE
+		cb.toggled.connect(_on_room_toggled)
+		_room_checkboxes[int(id)] = cb
+		room_list.add_child(cb)
+
+func _on_all_rooms_toggled(pressed: bool) -> void:
+	for cb in _room_checkboxes.values():
+		cb.set_pressed_no_signal(pressed)
+	_rebuild_collision_mesh()
+
+func _on_room_toggled(_pressed: bool) -> void:
+	_rebuild_collision_mesh()
+
+## 用当前房间开关过滤 _collision_* 静态碰撞数组，重建填充网格 + 线框。
+func _rebuild_collision_mesh() -> void:
+	for m in _collision_meshes:
+		if is_instance_valid(m):
+			m.free()
+	_collision_meshes.clear()
+	var fv := PackedVector3Array()
+	var fn := PackedVector3Array()
+	var fc := PackedColorArray()
+	var fi := PackedInt32Array()
+	var ntris := _collision_indices.size() / 3
+	for t in range(ntris):
+		var room := int(_collision_rooms[t])
+		var cb: CheckButton = _room_checkboxes.get(room)
+		if cb != null and not cb.button_pressed:
+			continue
+		var i0 := _collision_indices[t * 3]
+		var i1 := _collision_indices[t * 3 + 1]
+		var i2 := _collision_indices[t * 3 + 2]
+		var base := fv.size()
+		fv.push_back(_collision_vertices[i0])
+		fv.push_back(_collision_vertices[i1])
+		fv.push_back(_collision_vertices[i2])
+		fn.push_back(_collision_normals[i0])
+		fn.push_back(_collision_normals[i1])
+		fn.push_back(_collision_normals[i2])
+		fc.push_back(_collision_colors[i0])
+		fc.push_back(_collision_colors[i1])
+		fc.push_back(_collision_colors[i2])
+		fi.push_back(base)
+		fi.push_back(base + 1)
+		fi.push_back(base + 2)
+	_visible_collision_triangles = fi.size() / 3
+	if fv.is_empty():
+		return
 	var am := ArrayMesh.new()
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = c.vertices
-	arrays[Mesh.ARRAY_NORMAL] = c.normals
-	arrays[Mesh.ARRAY_COLOR] = _build_collision_colors(c.classes)
-	arrays[Mesh.ARRAY_INDEX] = c.indices
+	arrays[Mesh.ARRAY_VERTEX] = fv
+	arrays[Mesh.ARRAY_NORMAL] = fn
+	arrays[Mesh.ARRAY_COLOR] = fc
+	arrays[Mesh.ARRAY_INDEX] = fi
 	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-
 	var mi := MeshInstance3D.new()
 	mi.mesh = am
 	mi.material_override = _build_collision_material()
 	model_root.add_child(mi)
+	_collision_meshes.append(mi)
 
 	# 三角形边界（加宽线框）：Godot 的 PRIMITIVE_LINES 宽度固定 1px，改为沿每条
 	# 边画一条与三角形共面的细带（宽度 COLLISION_EDGE_WIDTH），便于看清薄/透的
 	# 碰撞面（如 lavafall）。
-	var wire := _build_collision_wireframe(c.vertices, c.indices, c.normals)
+	var wire := _build_collision_wireframe(fv, fi, fn)
 	var lam := ArrayMesh.new()
 	lam.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, wire)
 	var lmi := MeshInstance3D.new()
 	lmi.mesh = lam
 	lmi.material_override = _build_collision_wireframe_material()
 	model_root.add_child(lmi)
-
-	# 对象碰撞三角形（行为 LOAD_COLLISION_DATA，对象本地空间）：与对象模型共用
-	# 同一个节点变换（pos/angle），放在对象实际出生位置/朝向。
-	var object_triangles := _render_object_collisions()
-
-	status_label.text = "%s, Area %d: collision mode, %d triangles, %d object collision triangles." % [
-			rom_manager.getLevelName(), selected_area, c.indices.size() / 3, object_triangles]
+	_collision_meshes.append(lmi)
 
 ## 渲染对象的碰撞三角形（每个有 LOAD_COLLISION_DATA 的对象一个网格），放在
 ## 对象的出生位置/朝向。返回对象碰撞三角形总数。
@@ -353,7 +436,7 @@ func _render_object_collisions() -> int:
 
 ## 把碰撞三角形每条边扩展成一条细带（共面，法线向外偏移避免与填充面 z-fight）。
 ## 返回 ArrayMesh 的 arrays（PRIMITIVE_TRIANGLES）。
-const COLLISION_EDGE_WIDTH := 10
+const COLLISION_EDGE_WIDTH := 5
 
 func _build_collision_wireframe(verts: PackedVector3Array, indices: PackedInt32Array,
 		normals: PackedVector3Array) -> Array:

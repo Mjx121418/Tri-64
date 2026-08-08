@@ -8,6 +8,10 @@ The extractor should faithfully reproduce the rendered level: textured triangles
 object placements, collision data, camera info, and level metadata. The renderer
 does not need to consume every extracted datum.
 
+![Extracted level rendered in geometry mode](cpp/img/img1.png)
+
+![Extracted level rendered in collision mode](cpp/img/img2.png)
+
 ## Architecture
 
     ROM

@@ -80,6 +80,9 @@ struct TriangleMesh {
     // 每三角形 1 个值（indices.size()/3）：SurfaceClass，供渲染端选择颜色
     //（floor 蓝 / wall 绿 / ceiling 红）。类型而非颜色，颜色由渲染端决定。
     std::vector<uint8_t> classes;
+    // 每三角形 1 个值：所属房间号（ROOMS 列表按表面顺序分配；0 = 无房间）。
+    // 渲染端据此按房间开关显示/隐藏表面（对应游戏的 geo_switch_area 房间选择）。
+    std::vector<uint8_t> rooms;
 };
 
 // 把表面（顶点索引）解析成三角形网格；越界/退化三角形跳过。

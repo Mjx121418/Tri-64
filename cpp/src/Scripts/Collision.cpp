@@ -200,18 +200,31 @@ void CollisionDecoder::run(SegmentedAddress terrain, SegmentedAddress rooms) {
                 obj.z = reader.next();
                 obj.yaw = 0;
                 obj.param = 0;
-                // 额外参数数量由 preset 的 SPTYPE 决定（special_presets.inc.c）
+                // 额外参数数量由 preset 的 SPTYPE 决定（special_presets.inc.c；
+                // macro_special_objects.c spawn_special_objects）：
+                // 0 = 无；1 = yaw；2 = yaw + param；3 = 3 个额外 s16；4 = yaw
+                //（SPTYPE_DEF_PARAM_AND_YROT，param 来自 preset 表的 defParam）。
                 const uint8_t type = kSpecialPresetTypes[obj.preset];
-                if (type >= 1) {
-                    obj.yaw = reader.next();
-                }
-                if (type >= 2) {
-                    obj.param = reader.next();
-                }
-                if (type >= 3) {
-                    reader.next(); // SPTYPE_UNKNOWN 的 3 个额外 s16
-                    reader.next();
-                    reader.next();
+                switch (type) {
+                    case 0: // SPTYPE_NO_YROT_OR_PARAMS
+                        break;
+                    case 1: // SPTYPE_YROT_NO_PARAMS
+                        obj.yaw = reader.next();
+                        break;
+                    case 2: // SPTYPE_PARAMS_AND_YROT
+                        obj.yaw = reader.next();
+                        obj.param = reader.next();
+                        break;
+                    case 3: // SPTYPE_UNKNOWN
+                        reader.next();
+                        reader.next();
+                        reader.next();
+                        break;
+                    case 4: // SPTYPE_DEF_PARAM_AND_YROT
+                        obj.yaw = reader.next();
+                        break;
+                    default:
+                        break;
                 }
                 data_.special_objects.push_back(obj);
             }
@@ -360,6 +373,8 @@ TriangleMesh buildTriangleMesh(const Data &data) {
 
         // 记录表面几何类型（SurfaceClass），供渲染端选择颜色。
         mesh.classes.push_back(static_cast<uint8_t>(s.surfaceClass()));
+        // 记录表面所属房间（ROOMS 列表分配；0 = 无房间），供渲染端按房间开关。
+        mesh.rooms.push_back(s.has_room ? static_cast<uint8_t>(s.room) : 0);
     }
     return mesh;
 }

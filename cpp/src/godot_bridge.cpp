@@ -295,6 +295,7 @@ Dictionary GodotBridge::getCollisionTriangles() {
     PackedVector3Array normals;
     PackedInt32Array classes;
     PackedInt32Array indices;
+    PackedInt32Array rooms;
     verts.resize(static_cast<int>(mesh.positions.size()));
     normals.resize(static_cast<int>(mesh.normals.size()));
     classes.resize(static_cast<int>(mesh.classes.size()));
@@ -311,11 +312,16 @@ Dictionary GodotBridge::getCollisionTriangles() {
     for (size_t i = 0; i < mesh.indices.size(); i++) {
         indices.set(i, static_cast<int32_t>(mesh.indices[i]));
     }
+    rooms.resize(static_cast<int>(mesh.rooms.size()));
+    for (size_t i = 0; i < mesh.rooms.size(); i++) {
+        rooms.set(i, static_cast<int32_t>(mesh.rooms[i]));
+    }
 
     d["vertices"] = verts;
     d["normals"] = normals;
     d["classes"] = classes;
     d["indices"] = indices;
+    d["rooms"] = rooms;
     return d;
 }
 
