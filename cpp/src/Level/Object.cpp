@@ -300,8 +300,9 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
                 mtxfTranslation(d.translation.x, d.translation.y, d.translation.z), current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeAnimatedPart>) {
-            // animated part：geo 平移 + 动画 frame-0 增量（mtxf_rotate_xyz_and_translate
-            // = 先旋转后平移，再预乘，与 GraphNodeTranslationRotation 同构）。
+            // animated part：geo 平移 + 动画 frame-0 增量。旋转用与游戏
+            // geo_process_animated_part 相同的 mtxf_rotate_xyz_and_translate
+            //（XYZ 顺序），再预乘（T × R × parent）。
             Vec3<float> t { static_cast<float>(d.translation.x),
                             static_cast<float>(d.translation.y),
                             static_cast<float>(d.translation.z) };
@@ -314,7 +315,7 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
                     r = p->rotation;
                 }
             }
-            const Mtxf tr = mtxfMul(mtxfTranslation(t.x, t.y, t.z), mtxfRotationZXY(r));
+            const Mtxf tr = mtxfMul(mtxfTranslation(t.x, t.y, t.z), mtxfRotationXYZ(r));
             current = mtxfMul(tr, current);
             node_dl = d.display_list;
         }

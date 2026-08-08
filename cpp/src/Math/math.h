@@ -63,6 +63,10 @@ Mtxf mtxfScale(float s);
 // rotation 为 SM64 角度单位。
 Mtxf mtxfRotationZXY(Vec3<int16_t> rotation);
 
+// 与 decomp 的 mtxf_rotate_xyz_and_translate 一致（旋转部分，平移为 0），
+// rotation 为 SM64 角度单位；用于 GEO_ANIMATED_PART 节点。
+Mtxf mtxfRotationXYZ(Vec3<int16_t> rotation);
+
 // 用矩阵 m 变换点（含平移，m[3][0..2] 为平移列）
 Vec3<float> transformPoint(const Mtxf &m, const Vec3<float> &p);
 

@@ -122,22 +122,6 @@ deviation from the original engine):
 - Movtex water/lava quad extraction
 - Godot renderer with Geometry and Collision modes
 
-## Design principles
-
-- **Correctness > compatibility with ROM hacks > clean architecture**; avoid
-  game-specific hacks whenever possible.
-- Prefer RAII, `unique_ptr`, const correctness, and value semantics. No global
-  state, no raw owning pointers, no large switch statements that mix
-  responsibilities.
-- Design for extensibility over quick fixes.
-
-## Non-goals
-
-The extractor does not emulate audio, gameplay, physics, or scripting behavior
-beyond asset extraction. Runtime behavior that is C code (e.g. `cur_obj_scale`)
-and C-table collisions (rotating/bowser platforms) are documented non-goals —
-see `docs/Quirks.md`.
-
 ## Documentation
 
 - `docs/Engine.md` — how our implementation deviates from the original SM64

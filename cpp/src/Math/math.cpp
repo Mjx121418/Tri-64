@@ -109,6 +109,29 @@ Mtxf mtxfRotationZXY(Vec3<int16_t> rotation) {
     return m;
 }
 
+Mtxf mtxfRotationXYZ(Vec3<int16_t> rotation) {
+    const float sx = std::sin(sm64AngleToRadians(rotation.x));
+    const float cx = std::cos(sm64AngleToRadians(rotation.x));
+    const float sy = std::sin(sm64AngleToRadians(rotation.y));
+    const float cy = std::cos(sm64AngleToRadians(rotation.y));
+    const float sz = std::sin(sm64AngleToRadians(rotation.z));
+    const float cz = std::cos(sm64AngleToRadians(rotation.z));
+
+    // 与 decomp 的 mtxf_rotate_xyz_and_translate 的旋转部分一致
+    //（geo_process_animated_part 用它，旋转顺序 X→Y→Z）。
+    Mtxf m = mtxfIdentity();
+    m[0][0] = cy * cz;
+    m[0][1] = cy * sz;
+    m[0][2] = -sy;
+    m[1][0] = sx * sy * cz - cx * sz;
+    m[1][1] = sx * sy * sz + cx * cz;
+    m[1][2] = sx * cy;
+    m[2][0] = cx * sy * cz + sx * sz;
+    m[2][1] = cx * sy * sz - sx * cz;
+    m[2][2] = cx * cy;
+    return m;
+}
+
 Vec3<float> transformPoint(const Mtxf &m, const Vec3<float> &p) {
     Vec3<float> out;
     out.x = m[0][0] * p.x + m[1][0] * p.y + m[2][0] * p.z + m[3][0];

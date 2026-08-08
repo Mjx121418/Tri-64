@@ -178,8 +178,12 @@ emits a runtime DL (movtex water, envfx, paintings), billboards face the camera,
   fov/near/far + func ptr). `geo_layout.c` advances only 0x08; we advance by the actual
   command length (12 when the func flag is set) or the stream mis-aligns. (Decomp quirk.)
 - **Animated parts / billboards**: `GEO_ANIMATED_PART` frame-0 animation is baked by
-  `ObjectExtract::Frame0Animator`; billboards are recorded but not made camera-facing
-  (they use the geo translation). See `Quirks.md`.
+  `ObjectExtract::Frame0Animator`; each part's rotation uses `mtxfRotationXYZ`
+  (= decomp `mtxf_rotate_xyz_and_translate`, the matrix `geo_process_animated_part`
+  uses). `GEO_ROTATION`/`GEO_TRANSLATE_ROTATE` use `mtxfRotationZXY` instead (matching
+  `mtxf_rotate_zxy_and_translate`). The two conventions differ for non-yaw rotations —
+  using ZXY for animated parts laid animated objects flat (e.g. castle toads). Billboards
+  are recorded but not made camera-facing (they use the geo translation). See `Quirks.md`.
 - **Root / master list / shadow / object-parent / held-object**: recorded structurally;
   the master list is empty (runtime), shadow geometry is not generated, held-object
   records `playerIndex`/`func` (Phase 2).
