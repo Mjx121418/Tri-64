@@ -388,8 +388,9 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
         }
     }
 
-    // 对象出生点 = OBJECT 命令 + MACRO_OBJECTS 展开 + 碰撞特殊对象展开。
-    // 宏/特殊对象 preset 表从主段（段 0）解析出 model/param/behavior。
+    // 对象 = OBJECT 命令 + MACRO_OBJECTS 展开 + 碰撞特殊对象展开，全部统一成
+    // Object（镜像 decomp：spawn_object / spawn_macro_object / spawn_special_objects
+    // 都产生 struct Object）。宏/特殊对象 preset 表从主段（段 0）解析。
     PresetTables::PresetTableDecoder preset_decoder(seg_table_);
     preset_decoder.runMacro();
     preset_decoder.runSpecial();
@@ -397,13 +398,40 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     const std::vector<PresetTables::SpecialPreset> &special_presets =
         preset_decoder.specialPresets();
 
-    std::vector<ObjectSpawnInfo> objects = area.object_infos;
-    ObjectExtract::ObjectModelDecoder::expandMacroObjects(area.macro_objects,
-                                                          static_cast<int8_t>(area_index),
-                                                          macro_presets, objects);
-    ObjectExtract::ObjectModelDecoder::expandSpecialObjects(result_.collision.special_objects,
-                                                            static_cast<int8_t>(area_index),
-                                                            special_presets, objects);
+    std::vector<ObjectExtract::Object> objects;
+    const int8_t area_idx = static_cast<int8_t>(area_index);
+    for (const auto &info : area.object_infos) {
+        ObjectExtract::Object obj = ObjectExtract::Object::fromSpawnInfo(info);
+        obj.area_index = area_idx;
+        obj.active_area_index = area_idx;
+        objects.push_back(std::move(obj));
+    }
+    for (const auto &m : area.macro_objects) {
+        if (m.preset < 0 || static_cast<size_t>(m.preset) >= macro_presets.size()) {
+            continue;
+        }
+        const PresetTables::MacroPreset &p = macro_presets[m.preset];
+        if (p.model == 0) {
+            continue; // MODEL_NONE / 生成器（如 goomba 生成器、coin 编队）
+        }
+        ObjectExtract::Object obj = ObjectExtract::Object::fromMacroObject(m, p);
+        obj.area_index = area_idx;
+        obj.active_area_index = area_idx;
+        objects.push_back(std::move(obj));
+    }
+    for (const auto &s : result_.collision.special_objects) {
+        if (static_cast<size_t>(s.preset) >= special_presets.size()) {
+            continue;
+        }
+        const PresetTables::SpecialPreset &p = special_presets[s.preset];
+        if (p.model == 0) {
+            continue; // MODEL_NONE / 生成器
+        }
+        ObjectExtract::Object obj = ObjectExtract::Object::fromSpecialObject(s, p);
+        obj.area_index = area_idx;
+        obj.active_area_index = area_idx;
+        objects.push_back(std::move(obj));
+    }
 
     // 对象模型：每个唯一 model id 只解码一次（复用同模型的所有对象实例）。
     // model_id 0（MODEL_NONE，如传送点）没有几何，跳过。有动画行为的对象
@@ -414,10 +442,10 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
             continue;
         }
         std::optional<ObjectExtract::Frame0Animator> frame0;
-        if (!obj.behavior_script.isNull()) {
+        if (!obj.behavior.isNull()) {
             BehaviorScript::Info bi;
             BehaviorScript::BehaviorScriptVM behavior_vm(seg_table_, bi);
-            behavior_vm.run(obj.behavior_script);
+            behavior_vm.run(obj.behavior);
             // 动画是原生代码选的（LOAD_ANIMATIONS 但无 ANIMATE 命令，如 goomba
             // 由 goomba_update 固定用索引 0）：静态导出默认取第一个动画的 frame-0
             //（通常是静止姿态），否则部件停在裸 geo 锚点上（goomba 会陷入地面且
@@ -445,12 +473,12 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     Collision::CollisionDecoder collision_decoder(seg_table_);
     for (size_t i = 0; i < result_.objects.size(); i++) {
         const auto &obj = result_.objects[i];
-        if (obj.behavior_script.isNull()) {
+        if (obj.behavior.isNull()) {
             continue;
         }
         BehaviorScript::Info bi;
         BehaviorScript::BehaviorScriptVM behavior_vm(seg_table_, bi);
-        behavior_vm.run(obj.behavior_script);
+        behavior_vm.run(obj.behavior);
         if (bi.ok && !bi.collision_data.isNull()) {
             collision_decoder.runObject(bi.collision_data);
             result_.object_collisions[i] = collision_decoder.data();

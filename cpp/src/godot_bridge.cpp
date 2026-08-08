@@ -172,15 +172,16 @@ Array GodotBridge::getObjects() {
     Array out;
     for (const auto &obj : result_.objects) {
         Dictionary d;
-        d["pos"] = Vector3(obj.start_pos.x, obj.start_pos.y, obj.start_pos.z);
+        const Vec3<float> pos = obj.pos();
+        d["pos"] = Vector3(pos.x, pos.y, pos.z);
         // SM64 角度单位 → 弧度，供 Godot 的旋转直接使用
-        d["angle"] = Vector3(sm64AngleToRadians(obj.start_angle.x),
-                             sm64AngleToRadians(obj.start_angle.y),
-                             sm64AngleToRadians(obj.start_angle.z));
+        const Vec3<int16_t> angle = obj.faceAngle();
+        d["angle"] = Vector3(sm64AngleToRadians(angle.x), sm64AngleToRadians(angle.y),
+                             sm64AngleToRadians(angle.z));
         d["model"] = static_cast<int64_t>(obj.model_id);
-        d["behavior_arg"] = static_cast<int64_t>(obj.behavior_arg);
-        d["behavior"] = static_cast<int64_t>((uint32_t(obj.behavior_script.seg) << 24) |
-                                              (obj.behavior_script.offset & 0xFFFFFF));
+        d["behavior_arg"] = static_cast<int64_t>(obj.behaviorArg());
+        d["behavior"] = static_cast<int64_t>((uint32_t(obj.behavior.seg) << 24) |
+                                              (obj.behavior.offset & 0xFFFFFF));
         out.push_back(d);
     }
     return out;
@@ -249,10 +250,11 @@ Array GodotBridge::getObjectCollisions() {
         const auto &obj = result_.objects[i];
 
         Dictionary d;
-        d["pos"] = Vector3(obj.start_pos.x, obj.start_pos.y, obj.start_pos.z);
-        d["angle"] = Vector3(sm64AngleToRadians(obj.start_angle.x),
-                             sm64AngleToRadians(obj.start_angle.y),
-                             sm64AngleToRadians(obj.start_angle.z));
+        const Vec3<float> pos = obj.pos();
+        d["pos"] = Vector3(pos.x, pos.y, pos.z);
+        const Vec3<int16_t> angle = obj.faceAngle();
+        d["angle"] = Vector3(sm64AngleToRadians(angle.x), sm64AngleToRadians(angle.y),
+                             sm64AngleToRadians(angle.z));
 
         PackedVector3Array verts;
         PackedVector3Array normals;

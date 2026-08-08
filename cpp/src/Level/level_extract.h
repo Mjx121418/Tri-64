@@ -28,7 +28,8 @@ struct Result {
     std::string error;
     GBI::Mesh mesh;                      // 合并后的网格（含材质表与纹理源图像）
     std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
-    std::vector<ObjectSpawnInfo> objects; // 对象出生点（未来的对象列表）
+    std::vector<ObjectExtract::Object> objects; // 统一对象（OBJECT 命令 + 宏 +
+                                                // 特殊对象变换而来；行为脚本的作用对象）
     std::map<int16_t, ObjectExtract::ObjectModel> object_models; // 对象模型缓存（按 model id 去重）
     std::vector<Collision::Data> object_collisions; // 与 objects 并行：各对象行为
                                                     // LOAD_COLLISION_DATA 的碰撞（本地空间）

@@ -40,6 +40,112 @@ uint32_t readU32At(const SegmentTable &seg, SegmentedAddress addr, uint32_t offs
 
 } // namespace
 
+// ---- Object：统一对象（镜像 decomp struct Object）----
+
+SegmentedAddress Object::addr(uint8_t f) const {
+    SegmentedAddress a;
+    a.setAddress(raw[f]);
+    return a;
+}
+
+void Object::setAddr(uint8_t f, const SegmentedAddress &a) {
+    raw[f] = (static_cast<uint32_t>(a.seg) << 24) | (a.offset & 0x00FFFFFF);
+}
+
+Vec3<float> Object::pos() const {
+    return {f32(F::PosX), f32(F::PosY), f32(F::PosZ)};
+}
+
+void Object::setPos(const Vec3<float> &p) {
+    f32(F::PosX) = p.x;
+    f32(F::PosY) = p.y;
+    f32(F::PosZ) = p.z;
+}
+
+Vec3<int16_t> Object::faceAngle() const {
+    return {static_cast<int16_t>(s32(F::FaceAnglePitch)),
+            static_cast<int16_t>(s32(F::FaceAngleYaw)),
+            static_cast<int16_t>(s32(F::FaceAngleRoll))};
+}
+
+Vec3<int16_t> Object::moveAngle() const {
+    return {static_cast<int16_t>(s32(F::MoveAnglePitch)),
+            static_cast<int16_t>(s32(F::MoveAngleYaw)),
+            static_cast<int16_t>(s32(F::MoveAngleRoll))};
+}
+
+uint32_t Object::behaviorArg() const {
+    return static_cast<uint32_t>(s32(F::BhvParams));
+}
+
+// OBJECT 命令对象（镜像 game/object_list_processor.c 的 spawn_object_to_pool）：
+// 出生位置/角度、行为参数（oBhvParams + 2ndByte）直接来自 ObjectSpawnInfo。
+Object Object::fromSpawnInfo(const ObjectSpawnInfo &info) {
+    Object o;
+    o.model_id = info.model_id;
+    o.behavior = info.behavior_script;
+    o.area_index = info.area_index;
+    o.active_area_index = info.active_area_index;
+    o.setPos({static_cast<float>(info.start_pos.x), static_cast<float>(info.start_pos.y),
+              static_cast<float>(info.start_pos.z)});
+    o.s32(F::FaceAnglePitch) = info.start_angle.x;
+    o.s32(F::FaceAngleYaw) = info.start_angle.y;
+    o.s32(F::FaceAngleRoll) = info.start_angle.z;
+    o.s32(F::MoveAnglePitch) = info.start_angle.x;
+    o.s32(F::MoveAngleYaw) = info.start_angle.y;
+    o.s32(F::MoveAngleRoll) = info.start_angle.z;
+    o.s32(F::BhvParams) = static_cast<int32_t>(info.behavior_arg);
+    o.s32(F::BhvParams2ndByte) = static_cast<int32_t>((info.behavior_arg >> 16) & 0xFF);
+    return o;
+}
+
+// 宏对象（镜像 spawn_macro_objects + spawn_macro_abs_yrot_2params 的参数规则）。
+// 条目 yaw 已是 SM64 角度单位（level_script 解码时 ×0x200）。
+Object Object::fromMacroObject(const MacroObjectSpawnInfo &entry,
+                               const PresetTables::MacroPreset &preset) {
+    Object o;
+    o.model_id = preset.model;
+    o.behavior = preset.behavior;
+    o.setPos({static_cast<float>(entry.pos.x), static_cast<float>(entry.pos.y),
+              static_cast<float>(entry.pos.z)});
+    o.s32(F::FaceAngleYaw) = entry.yaw;
+    o.s32(F::MoveAngleYaw) = entry.yaw;
+    // 行为参数：preset 默认参数非 0 时替换条目参数的低字节。
+    uint32_t param = static_cast<uint32_t>(static_cast<uint16_t>(entry.bhv_param));
+    if (preset.param != 0) {
+        param = (param & 0xFF00) + (static_cast<uint16_t>(preset.param) & 0x00FF);
+    }
+    // 镜像 spawn_macro_objects：oBhvParams = (param&0xFF)<<16 | (param&0xFF00)。
+    o.s32(F::BhvParams) = static_cast<int32_t>(((param & 0xFF) << 16) + (param & 0xFF00));
+    o.s32(F::BhvParams2ndByte) = static_cast<int32_t>(param & 0xFF);
+    return o;
+}
+
+// 碰撞特殊对象（镜像 spawn_special_objects 的 SPTYPE 处理）。yaw 是 256 一全圈，
+// 用 convert_rotation 转成 SM64 角度单位。
+Object Object::fromSpecialObject(const Collision::SpecialObject &entry,
+                                 const PresetTables::SpecialPreset &preset) {
+    Object o;
+    o.model_id = preset.model;
+    o.behavior = preset.behavior;
+    o.setPos({static_cast<float>(entry.x), static_cast<float>(entry.y),
+              static_cast<float>(entry.z)});
+    const int16_t yaw = convertRotation(entry.yaw);
+    o.s32(F::FaceAngleYaw) = yaw;
+    o.s32(F::MoveAngleYaw) = yaw;
+    switch (preset.type) {
+        case 4: // SPTYPE_DEF_PARAM_AND_YROT：oBhvParams = defParam << 24
+            o.s32(F::BhvParams) = static_cast<int32_t>(static_cast<uint16_t>(preset.def_param) & 0xFF) << 24;
+            break;
+        case 2: // SPTYPE_PARAMS_AND_YROT：oBhvParams = entry.param << 16
+            o.s32(F::BhvParams) = static_cast<int32_t>(static_cast<uint16_t>(entry.param)) << 16;
+            break;
+        default: // 0 / 1 / 3（SPTYPE_UNKNOWN 的 3 个额外 s16 转浮点，暂不导出）
+            break;
+    }
+    return o;
+}
+
 ObjectExtract::Frame0Animator::Frame0Animator(const SegmentTable &seg_table, SegmentedAddress animations,
                                               int16_t animate_index)
     : seg_table_(seg_table) {
@@ -316,71 +422,6 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
                 model_.textures[m] = tex_decoder.texture();
             }
         }
-    }
-}
-
-void ObjectModelDecoder::expandMacroObjects(const std::vector<MacroObjectSpawnInfo> &macro_objects, int8_t area_index,
-                        const std::vector<PresetTables::MacroPreset> &presets,
-                        std::vector<ObjectSpawnInfo> &out) {
-    for (const auto &m : macro_objects) {
-        if (m.preset < 0 || static_cast<size_t>(m.preset) >= presets.size()) {
-            continue;
-        }
-        const PresetTables::MacroPreset &p = presets[m.preset];
-        if (p.model == 0) {
-            continue; // MODEL_NONE / 生成器（如 goomba 生成器、coin 编队）
-        }
-        ObjectSpawnInfo info;
-        info.model_id = p.model;
-        info.start_pos = m.pos;
-        info.start_angle = {0, m.yaw, 0};
-        info.area_index = area_index;
-        info.active_area_index = area_index;
-        // 行为参数：镜像 spawn_macro_objects —— preset 默认参数非 0 时替换条目
-        // 参数的低字节。
-        uint32_t param = static_cast<uint32_t>(static_cast<uint16_t>(m.bhv_param));
-        if (p.param != 0) {
-            param = (param & 0xFF00) + (static_cast<uint16_t>(p.param) & 0x00FF);
-        }
-        info.behavior_arg = param;
-        info.behavior_script = p.behavior;
-        out.push_back(info);
-    }
-}
-
-void ObjectModelDecoder::expandSpecialObjects(const std::vector<Collision::SpecialObject> &special_objects,
-                          int8_t area_index, const std::vector<PresetTables::SpecialPreset> &presets,
-                          std::vector<ObjectSpawnInfo> &out) {
-    for (const auto &s : special_objects) {
-        if (static_cast<size_t>(s.preset) >= presets.size()) {
-            continue;
-        }
-        const PresetTables::SpecialPreset &p = presets[s.preset];
-        if (p.model == 0) {
-            continue; // MODEL_NONE / 生成器
-        }
-        ObjectSpawnInfo info;
-        info.model_id = p.model;
-        info.start_pos = {s.x, s.y, s.z};
-        // 出生数据里的 yaw 是 256 一全圈，需转成 SM64 角度单位（同游戏 convert_rotation）。
-        info.start_angle = {0, convertRotation(s.yaw), 0};
-        info.area_index = area_index;
-        info.active_area_index = area_index;
-        // 行为参数：镜像 spawn_special_objects 的 SPTYPE 处理。
-        switch (p.type) {
-            case 4: // SPTYPE_DEF_PARAM_AND_YROT：用 preset 的默认参数
-                info.behavior_arg = static_cast<uint32_t>(static_cast<uint16_t>(p.def_param) & 0xFF);
-                break;
-            case 2: // SPTYPE_PARAMS_AND_YROT：条目的额外参数
-            case 3:
-                info.behavior_arg = static_cast<uint32_t>(static_cast<uint16_t>(s.param));
-                break;
-            default: // 0 / 1：无参数
-                info.behavior_arg = 0;
-                break;
-        }
-        info.behavior_script = p.behavior;
-        out.push_back(info);
     }
 }
 

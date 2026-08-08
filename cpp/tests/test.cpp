@@ -2,6 +2,7 @@
 #include "LevelScript/test_behavior_script.h"
 #include "LevelScript/test_collision.h"
 #include "LevelScript/test_level_script.h"
+#include "LevelScript/test_object.h"
 #include "Memory/segment.h"
 #include "Scripts/geo_layout.h"
 #include "tree_printer.h"
@@ -29,6 +30,7 @@ int main() {
     testTextureFormats();
     testCollision();
     testBehaviorScript();
+    testObject();
     testDisplayList();
     testMatrixSupport();
     testExportObj();

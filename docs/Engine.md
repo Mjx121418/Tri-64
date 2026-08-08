@@ -310,12 +310,19 @@ per frame.
 
 **Ours** —
 
+- **Unified `Object`** (`ObjectExtract::Object`, mirrors `struct Object`): every
+  OBJECT/macro/special spawn becomes one `Object` via three static transforms
+  (`fromSpawnInfo`/`fromMacroObject`/`fromSpecialObject`), mirroring the game's
+  `spawn_object`/`spawn_macro_object`/`spawn_special_objects`. The behavior
+  interpreter will act on this `Object` (M2); currently the `Info`-based static
+  walk still drives frame-0 animation and object collision decode.
 - **Frame-0 animation baked** into the model cache (`Frame0Animator`, mirrors
   `geo_process_animated_part`). See `Quirks.md`.
 - **Spawn transform**: objects are placed at their spawn pos + yaw (macro objects:
   preset yaw converted to SM64 angle units; special objects: the terrain-stream yaw is
-  256-per-circle, converted). Behavior-driven position deltas, `DROP_TO_FLOOR`,
-  billboard-facing, and runtime `SCALE`/`SET_MODEL` are not applied (Phase-B work item).
+  256-per-circle, converted). `oBhvParams`/`oBhvParams2ndByte` are packed game-exactly
+  per source. Behavior-driven position deltas, `DROP_TO_FLOOR`,
+  billboard-facing, and runtime `SCALE`/`SET_MODEL` are not applied (M2 work item).
 - **Camera**: recorded (Phase 2) but the renderer uses its own camera.
 - **Lights**: parsed (Phase 2) and used for per-vertex shading (`texel × shade` for
   textured-lit, `shade` for flat-lit), so the castle-grounds grass (authored grey,
