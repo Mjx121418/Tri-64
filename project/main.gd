@@ -462,6 +462,11 @@ func _build_material(md: Dictionary) -> StandardMaterial3D:
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	# SM64 是无光照渲染（fast3d 的 G_LIGHTING 仅用于物体），导出模型用 Unshaded
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	# combine 颜色源（C++ 端 GBI::CombineSource）：Combined=0, Texel0=1, Texel1=2,
+	# Primitive=3, Shade=4, Env=5。未纹理时 SHADE 用顶点色作底色，PRIMITIVE/ENV
+	# 用 prim/env 颜色。
+	var color_source: int = md.color_source
+	var alpha: int = md.alpha
 	if md.textured:
 		var img := Image.create_from_data(md.tex_width, md.tex_height, false,
 				Image.FORMAT_RGBA8, md.tex_pixels)
@@ -472,18 +477,24 @@ func _build_material(md: Dictionary) -> StandardMaterial3D:
 				md.repeat_s or md.repeat_t)
 		if _has_alpha(img):
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		# 受光纹理：texel × shade（shade 由 C++ 端按灯光烘焙进顶点色）。
-		if md.lit:
+		# combine 采样 SHADE：texel × 顶点色（shade 由 C++ 端按灯光烘焙）。
+		if md.use_vertex:
 			mat.vertex_color_use_as_albedo = true
-	elif md.lit:
-		# 未纹理 + G_LIGHTING：shade（顶点色 = ambient + Σ n̂·l̂·color）作底色，
-		# 替代固定的 0.55 灰。
+	elif md.use_vertex:
+		# 未纹理 + G_CC_SHADE：顶点色（或光照 shade）就是底色（不再是 prim×顶点）。
+		mat.albedo_color = Color(1, 1, 1, alpha / 255.0)
 		mat.vertex_color_use_as_albedo = true
+		if alpha < 255:
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	else:
-		# 未纹理且未光照：用顶点 RGBA 作为底色（G_CC_SHADE 的顶点色），
-		# prim_color 兜底。
-		mat.albedo_color = md.color
-		mat.vertex_color_use_as_albedo = true
+		# 未纹理 + G_CC_PRIMITIVE / G_CC_ENVIRONMENT：底色取 prim/env 颜色。
+		if color_source == 5:
+			mat.albedo_color = Color(md.env_color.r, md.env_color.g, md.env_color.b,
+					alpha / 255.0)
+		else:
+			mat.albedo_color = Color(md.color.r, md.color.g, md.color.b, alpha / 255.0)
+		if alpha < 255:
+			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	return mat
 
 ## SM64 的 IA16 圆形/遮罩纹理把形状放在 alpha 里（RGB 可能全黑），

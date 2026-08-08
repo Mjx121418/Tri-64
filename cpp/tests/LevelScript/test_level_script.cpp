@@ -358,7 +358,7 @@ void testDisplayList() {
             std::vector<uint32_t> merged_images; // 与 merged_materials 并行：纹理源图像
             for (const auto &dl : dls) {
                 GBI::DLInterpreter interp(setup.seg_table);
-                GBI::Mesh &mesh = interp.run(dl);
+                GBI::Mesh &mesh = interp.run(dl, /*reset_state=*/true);
                 const size_t triangles = mesh.indices.size() / 3;
                 printf("  DL %02x:%06x -> %zu triangles, %zu vertices, %zu materials\n",
                        dl.seg, dl.offset, triangles, mesh.vertices.size(), mesh.materials.size());
@@ -454,7 +454,7 @@ void testMatrixSupport() {
     seg_table.loadSegment(0x1E, 0, static_cast<uint32_t>(seg.size()));
 
     GBI::DLInterpreter interp(seg_table);
-    GBI::Mesh &mesh = interp.run(SegmentedAddress { 0x1E, 0x70 });
+    GBI::Mesh &mesh = interp.run(SegmentedAddress { 0x1E, 0x70 }, /*reset_state=*/true);
     printf("test_matrix: triangles=%zu, vertices=%zu\n", mesh.indices.size() / 3,
            mesh.vertices.size());
     if (mesh.vertices.size() >= 1) {
@@ -568,7 +568,7 @@ void exportDlsToObj(const SegmentTable &seg_table, const std::vector<SegmentedAd
 
     for (const auto &dl : dls) {
         GBI::DLInterpreter interp(seg_table);
-        GBI::Mesh &mesh = interp.run(dl);
+        GBI::Mesh &mesh = interp.run(dl, /*reset_state=*/true);
 
         const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
         merged.vertices.insert(merged.vertices.end(), mesh.vertices.begin(),
@@ -813,7 +813,7 @@ void testDlRspData() {
     seg_table.loadSegment(0x0E, 0, static_cast<uint32_t>(seg.size()));
 
     GBI::DLInterpreter interp(seg_table);
-    GBI::Mesh &mesh = interp.run(SegmentedAddress { 0x0E, 0 });
+    GBI::Mesh &mesh = interp.run(SegmentedAddress { 0x0E, 0 }, /*reset_state=*/true);
 
     if (mesh.indices.size() != 3) {
         printf("test_dl_rsp: FAIL triangle count (expect 1, got %zu)\n", mesh.indices.size() / 3);

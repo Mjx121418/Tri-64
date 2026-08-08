@@ -155,5 +155,53 @@ void testObject() {
                 printf("test_object: wooden-post children=%zu\n", wooden_posts);
             }
         }
+
+        // WF（关卡 24）：LAYER_TRANSPARENT_DECAL 的黄色三角形（顶点色
+        // {0xff,0xff,0x00,0x80}，G_LIGHTING 清除，combine 未设置 —— 继承自前面
+        // DL 的 G_CC_SHADE）。经状态继承后材质应为 未纹理 + 未受光 +
+        // 颜色源 SHADE（顶点色 = 黄），验证 combine 感知修复。
+        {
+            LevelExtract::Result wf = LevelExtract::extract(rom, 24, 1);
+            if (!wf.ok) {
+                printf("test_object: WF extract failed: %s\n", wf.error.c_str());
+                continue;
+            }
+            size_t yellow = 0;
+            bool shade_material = false;
+            int shade_material_alpha = -1;
+            bool shade_material_uniform = true;
+            for (size_t t = 0; t < wf.mesh.material_ids.size(); t++) {
+                const GBI::Material &m = wf.mesh.materials[wf.mesh.material_ids[t]];
+                for (int k = 0; k < 3; k++) {
+                    const auto &c = wf.mesh.vertices[wf.mesh.indices[t * 3 + k]].color;
+                    if (c[0] == 0xFF && c[1] == 0xFF && c[2] == 0x00 && c[3] == 0x80) {
+                        yellow++;
+                        if (!m.textured && !m.lit &&
+                            GBI::combineColorSource(m.combine_w0, m.combine_w1) ==
+                                GBI::CombineSource::Shade) {
+                            shade_material = true;
+                            // 该材质所有顶点 alpha 应一致（0x80），桥端据此导出
+                            // 材质透明度（否则按不透明处理）。
+                            if (shade_material_alpha < 0) {
+                                shade_material_alpha = c[3];
+                            } else if (shade_material_alpha != c[3]) {
+                                shade_material_uniform = false;
+                            }
+                        }
+                    }
+                }
+            }
+            printf("test_object: WF yellow-decal vtx=%zu shade-material=%d alpha=%d uniform=%d\n",
+                   yellow, int(shade_material), shade_material_alpha, int(shade_material_uniform));
+            if (is_vanilla && yellow == 0) {
+                printf("test_object: FAIL WF yellow-decal vertices not found\n");
+            }
+            if (is_vanilla && !shade_material) {
+                printf("test_object: FAIL WF yellow-decal not color-source Shade\n");
+            }
+            if (is_vanilla && (shade_material_alpha != 0x80 || !shade_material_uniform)) {
+                printf("test_object: FAIL WF yellow-decal alpha not uniform 0x80\n");
+            }
+        }
     }
 }

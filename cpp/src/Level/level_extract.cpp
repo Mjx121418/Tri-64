@@ -84,9 +84,20 @@ void loadSegment2(SegmentTable &seg_table, const std::vector<uint8_t> &rom_data)
     }
 }
 
-void collectDisplayLists(const GraphNode &node, std::vector<SegmentedAddress> &out) {
+// 一个待解码的显示列表 + 其渲染层（geo 节点把 drawing_layer 存进 flags 高 8 位）。
+// 游戏按 layer 升序渲染（rendering_graph_node.c 的 geo_process_master_list），
+// RDP 渲染状态跨 DL 继承，因此解码顺序必须按 layer 排序。
+struct DisplayListRef {
+    SegmentedAddress dl;
+    uint8_t layer {0};
+};
+
+void collectDisplayLists(const GraphNode &node, std::vector<DisplayListRef> &out) {
     if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
-        out.push_back(std::get<GraphNodeDisplayList>(node.data).display_list);
+        DisplayListRef ref;
+        ref.dl = std::get<GraphNodeDisplayList>(node.data).display_list;
+        ref.layer = static_cast<uint8_t>(node.flags >> 8);
+        out.push_back(ref);
     }
 
     // 开关节点：只取选中的 case（静态导出 = case 0）
@@ -348,19 +359,24 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
         result_.collision = collision_decoder.data();
     }
 
-    // 收集该区域的所有 DL，合并进一个 GBI::Mesh（去重键与 OBJ 导出一致：
-    // 材质内容 + 解析出的纹理源图像）。
-    std::vector<SegmentedAddress> dls;
+    // 收集该区域的所有 DL（按渲染层），合并进一个 GBI::Mesh（去重键与 OBJ 导出
+    // 一致：材质内容 + 解析出的纹理源图像）。游戏按 layer 升序渲染且 RDP 状态跨
+    // DL 继承，所以按 layer 排序后用同一个解释器连续运行（仅首个 DL 复位）。
+    std::vector<DisplayListRef> dls;
     collectDisplayLists(*area.root_node, dls);
+    std::stable_sort(dls.begin(), dls.end(),
+                     [](const DisplayListRef &a, const DisplayListRef &b) {
+                         return a.layer < b.layer;
+                     });
 
     // 移动纹理（水/熔岩）：扫描该区域引用的段（geo/DL 所在段）里的
     // MovtexQuadCollection，提取四边形数据。
     std::vector<int16_t> movtex_segments;
     for (const auto &dl : dls) {
-        if (dl.seg >= 0 && dl.seg <= 31
-            && std::find(movtex_segments.begin(), movtex_segments.end(), dl.seg)
+        if (dl.dl.seg >= 0 && dl.dl.seg <= 31
+            && std::find(movtex_segments.begin(), movtex_segments.end(), dl.dl.seg)
                    == movtex_segments.end()) {
-            movtex_segments.push_back(dl.seg);
+            movtex_segments.push_back(dl.dl.seg);
         }
     }
     if (!movtex_segments.empty()) {
@@ -370,9 +386,10 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     }
 
     GBI::Mesh &merged = result_.mesh;
-    for (const auto &dl : dls) {
-        GBI::DLInterpreter interp(seg_table_);
-        GBI::Mesh &mesh = interp.run(dl);
+    GBI::DLInterpreter interp(seg_table_);
+    for (size_t i = 0; i < dls.size(); i++) {
+        // 首个 DL 复位 RDP/RSP 状态，其余继承上一个 DL 留下的渲染寄存器。
+        GBI::Mesh &mesh = interp.run(dls[i].dl, /*reset_state=*/i == 0);
         ObjectExtract::ObjectModelDecoder::mergeMesh(merged, std::move(mesh));
     }
 

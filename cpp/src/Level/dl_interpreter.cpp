@@ -9,6 +9,34 @@ namespace {
 constexpr uint64_t kMaxSteps = 10'000'000;
 constexpr size_t kMaxDLDepth = 32;
 
+CombineSource decodeColorMux(uint32_t v) {
+    switch (v & 0xF) {
+        case 0: return CombineSource::Combined;
+        case 1: return CombineSource::Texel0;
+        case 2: return CombineSource::Texel1;
+        case 3: return CombineSource::Primitive;
+        case 4: return CombineSource::Shade;
+        case 5: return CombineSource::Env;
+        case 6: return CombineSource::One;
+        case 7: return CombineSource::Noise;
+        default: return CombineSource::Other;
+    }
+}
+
+CombineSource decodeAlphaMux(uint32_t v) {
+    switch (v & 0x7) {
+        case 0: return CombineSource::Combined;
+        case 1: return CombineSource::Texel0;
+        case 2: return CombineSource::Texel1;
+        case 3: return CombineSource::Primitive;
+        case 4: return CombineSource::Shade;
+        case 5: return CombineSource::Env;
+        default: return CombineSource::Other;
+    }
+}
+
+} // namespace
+
 // 解码 G_SETCOMBINE 的 mux（gbi.h 的 GCCc0w0/GCCc1w0/GCCc0w1/GCCc1w1 打包布局），
 // 检查颜色/alpha 的 A/B/C/D 输入是否用到 TEXEL0(1)/TEXEL1(2) —— RDP 只有此时
 // 才采样纹理。G_CC_SHADE（全 SHADE，无 TEXEL）应判为未纹理。
@@ -39,32 +67,70 @@ bool combineUsesTexel(uint32_t mux0, uint32_t mux1) {
     return false;
 }
 
-} // namespace
+// 颜色输出是否用到 SHADE（顶点色 / 光照 shade）。
+bool combineUsesShade(uint32_t mux0, uint32_t mux1) {
+    const uint32_t a = (mux0 >> 20) & 0xF;
+    const uint32_t c = (mux0 >> 15) & 0x1F;
+    const uint32_t b = (mux1 >> 28) & 0xF;
+    const uint32_t d = (mux1 >> 15) & 0x7;
+    return a == 4 || b == 4 || c == 4 || d == 4;
+}
 
-Mesh &DLInterpreter::run(SegmentedAddress dl) {
+// 颜色输出源：C 为 0/COMBINED/零（G_CCMUX_0=31）时输出 ≈ D；否则混入 A/B/C。
+// 未纹理的常见组合（G_CC_SHADE / G_CC_PRIMITIVE / G_CC_ENVIRONMENT）都是输出 = D。
+CombineSource combineColorSource(uint32_t mux0, uint32_t mux1) {
+    const uint32_t a = (mux0 >> 20) & 0xF;
+    const uint32_t c = (mux0 >> 15) & 0x1F;
+    const uint32_t b = (mux1 >> 28) & 0xF;
+    const uint32_t d = (mux1 >> 15) & 0x7;
+    if (a == 1 || a == 2 || b == 1 || b == 2 || c == 1 || c == 2 || d == 1 || d == 2) {
+        return CombineSource::Texel0; // 具体哪个纹素不影响"有纹理"的判定
+    }
+    const CombineSource cs = decodeColorMux(c);
+    if (c == 31 || cs == CombineSource::Combined || cs == CombineSource::Zero) {
+        return decodeColorMux(d);
+    }
+    const CombineSource ds = decodeColorMux(d);
+    if (ds != CombineSource::Combined && ds != CombineSource::Zero) {
+        return ds;
+    }
+    return decodeColorMux(a);
+}
+
+// alpha 输出源（1-cycle：(A0-B0)*C0 + D0）。G_CC_SHADE 的 alpha D0 = SHADE_ALPHA。
+CombineSource combineAlphaSource(uint32_t mux0, uint32_t mux1) {
+    const uint32_t a0 = (mux0 >> 12) & 0x7;
+    const uint32_t c0 = (mux0 >> 9) & 0x7;
+    const uint32_t d0 = (mux1 >> 9) & 0x7;
+    if (c0 == 0) {
+        return decodeAlphaMux(d0);
+    }
+    const CombineSource ds = decodeAlphaMux(d0);
+    if (ds != CombineSource::Combined) {
+        return ds;
+    }
+    return decodeAlphaMux(a0);
+}
+
+Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state) {
     dl_stack_.clear();
-    // 模型视图矩阵栈初始为单位阵（不使用矩阵的 DL 输出原始顶点）
-    state_.matrix_stack.clear();
-    state_.matrix_stack.push_back(mtxfIdentity());
+    mesh_ = {};
     finished = false;
     steps_ = 0;
-    // 游戏启动的默认几何模式（game_init.c:120），依赖默认光照的对象据此判定 lit。
-    geometry_mode_ = kDefaultGeometryMode;
+    if (reset_state) {
+        // 场景第一个 DL：RDP/RSP 复位。combine/prim/env/fog/tile 清 0（RDP 复位
+        // 默认）；几何模式 = 游戏启动默认（game_init.c:120，依赖默认光照的对象
+        // 据此判定 lit）；num_lights = 1（游戏持久 NUMLIGHTS_1，关卡 DL 不设置）。
+        state_ = {};
+        state_.num_lights = 1;
+        state_.geometry_mode = kDefaultGeometryMode;
+    }
+    // 模型视图矩阵栈初始为单位阵（不使用矩阵的 DL 输出原始顶点）。继续运行时
+    // 保留上一个 DL 的渲染寄存器（combine/颜色/tile/几何模式/纹理绑定/灯光）——
+    // 游戏只在分层渲染时改 render mode，其余状态跨顶层 DL 继承。
+    state_.matrix_stack.clear();
+    state_.matrix_stack.push_back(mtxfIdentity());
     material_ = {};
-    material_.lit = (geometry_mode_ & G_LIGHTING) != 0;
-    state_.tile_tmem = {};
-    state_.tmem_images = {};
-    state_.tex_scale_s = 0;
-    state_.tex_scale_t = 0;
-    state_.tex_image = {};
-    state_.tex_image_width = 0;
-    state_.lights = {};
-    // 游戏的光照默认是 1 个方向光 + 环境光（NUMLIGHTS_1）；关卡地形 DL 不设置
-    // G_MW_NUMLIGHT（沿用游戏渲染 setup 的持久值），这里默认 1。
-    state_.num_lights = 1;
-    state_.lights_loaded = false;
-    state_.othermode = 0;
-    state_.tlut_images = {};
 
     SegmentedAddress pc = dl;
     while (!finished) {
@@ -140,41 +206,40 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
     case G_POPMTX:
         handlePopMtx(cmd);
         break;
-    // --- 材质/渲染状态 ---
+    // --- 材质/渲染状态（写入 state_ 的持久 RDP 寄存器；Material 在 drawTriangle
+    //     时从 state_ 快照）---
     case G_SETCOMBINE:
-        material_.combine_w0 = cmd.combineMux0();
-        material_.combine_w1 = cmd.combineMux1();
-        material_.combine_uses_texel = combineUsesTexel(material_.combine_w0, material_.combine_w1);
-        updateTextured();
+        state_.combine_w0 = cmd.combineMux0();
+        state_.combine_w1 = cmd.combineMux1();
         break;
     case G_SETPRIMCOLOR:
-        material_.prim_color[0] = cmd.colorR();
-        material_.prim_color[1] = cmd.colorG();
-        material_.prim_color[2] = cmd.colorB();
-        material_.prim_color[3] = cmd.colorA();
+        state_.prim_color[0] = cmd.colorR();
+        state_.prim_color[1] = cmd.colorG();
+        state_.prim_color[2] = cmd.colorB();
+        state_.prim_color[3] = cmd.colorA();
         break;
     case G_SETENVCOLOR:
-        material_.env_color[0] = cmd.colorR();
-        material_.env_color[1] = cmd.colorG();
-        material_.env_color[2] = cmd.colorB();
-        material_.env_color[3] = cmd.colorA();
+        state_.env_color[0] = cmd.colorR();
+        state_.env_color[1] = cmd.colorG();
+        state_.env_color[2] = cmd.colorB();
+        state_.env_color[3] = cmd.colorA();
         break;
     case G_SETFOGCOLOR:
-        material_.fog_color[0] = cmd.colorR();
-        material_.fog_color[1] = cmd.colorG();
-        material_.fog_color[2] = cmd.colorB();
-        material_.fog_color[3] = cmd.colorA();
+        state_.fog_color[0] = cmd.colorR();
+        state_.fog_color[1] = cmd.colorG();
+        state_.fog_color[2] = cmd.colorB();
+        state_.fog_color[3] = cmd.colorA();
         break;
     case G_SETTILE:
-        material_.tile_fmt = cmd.rdpFmt();
-        material_.tile_siz = cmd.rdpSize();
+        state_.tile_fmt = cmd.rdpFmt();
+        state_.tile_siz = cmd.rdpSize();
         // G_SETTILE 的 S/T clamp/mirror 模式（0=WRAP 1=MIRROR 2=CLAMP）。
         // 导出到 Godot 的 texture_repeat：CLAMP 关闭重复，否则开启。
-        material_.tex_clamp_s = cmd.tileClampS() == 2;
-        material_.tex_clamp_t = cmd.tileClampT() == 2;
+        state_.tex_clamp_s = cmd.tileClampS() == 2;
+        state_.tex_clamp_t = cmd.tileClampT() == 2;
         // palette（CI4 调色板索引）与 line（TMEM 行跨度）——CI 纹理解码需要。
-        material_.tex_palette = cmd.tilePalette();
-        material_.tex_line = cmd.tileLine();
+        state_.tex_palette = cmd.tilePalette();
+        state_.tex_line = cmd.tileLine();
         // 防御性绑定：记录该 tile 的 tmem 地址（LOAD 时绑定图像用）
         state_.tile_tmem[cmd.tileNum()] = cmd.tileTMEM();
         break;
@@ -189,14 +254,14 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         // G_LOADBLOCK 的 DXT（w1 低 12 位）编码了源图像每行的 64 位字数
         // （dxt = ceil(2^11/words)，见 gbi.h 的 CALC_DXT），纹理解码用它反推行宽；
         // G_LOADTILE 无 DXT，重置后解码退回图块宽。
-        material_.tex_dxt = (cmd.opcode == G_LOADBLOCK) ? cmd.highT() : 0;
+        state_.tex_dxt = (cmd.opcode == G_LOADBLOCK) ? cmd.highT() : 0;
         break;
     case G_SETTILESIZE: {
         // w0: uls<<12 | ult ; w1: lrs<<12 | lrt；尺寸 = (lrs-uls)/4 + 1（RDP 单位 1/4 纹素）
-        material_.tex_sl = cmd.lowS();
-        material_.tex_tl = cmd.lowT();
-        material_.tex_sh = cmd.highS();
-        material_.tex_th = cmd.highT();
+        state_.tex_sl = cmd.lowS();
+        state_.tex_tl = cmd.lowT();
+        state_.tex_sh = cmd.highS();
+        state_.tex_th = cmd.highT();
         break;
     }
     case G_SETTEXIMAGE:
@@ -211,16 +276,15 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         // w1 = (S<<16)|T 是纹理坐标缩放（16.16 定点，0xFFFF≈1.0），
         // 由 dma_VTX 在载入顶点时应用（与开关位无关，G_OFF 也照样存储）。
         if (cmd.texOn()) {
-            geometry_mode_ |= G_TEXTURE_ENABLE;
+            state_.geometry_mode |= G_TEXTURE_ENABLE;
         } else {
-            geometry_mode_ &= ~G_TEXTURE_ENABLE;
+            state_.geometry_mode &= ~G_TEXTURE_ENABLE;
         }
         state_.tex_scale_s = cmd.texScaleS();
         state_.tex_scale_t = cmd.texScaleT();
         // 记录渲染 tile 与 mipmap 层级（SM64 用 tile 0；多 tile 渲染未模拟）。
         state_.texture_tile = cmd.texTile();
         state_.texture_lod = cmd.texLevel();
-        updateTextured();
         break;
     case G_SETGEOMETRYMODE:
         handleGeometryMode(cmd, true);
@@ -311,18 +375,36 @@ void DLInterpreter::handlePopMtx(const DecodedCommand &cmd) {
 void DLInterpreter::handleGeometryMode(const DecodedCommand &cmd, bool set) {
     const uint32_t bits = cmd.geometryMode();
     if (set) {
-        geometry_mode_ |= bits;
+        state_.geometry_mode |= bits;
     } else {
-        geometry_mode_ &= ~bits;
+        state_.geometry_mode &= ~bits;
     }
-    updateTextured();
 }
 
-void DLInterpreter::updateTextured() {
-    material_.lit = (geometry_mode_ & G_LIGHTING) != 0;
-    // RDP 采样纹理由 G_SETCOMBINE 决定（用 TEXEL0/1 才取纹理）。有些 DL 依赖
-    // 父 DL 设置的 G_TEXTURE_ENABLE（子 DL 不再 G_ON），逐顶层 DL 解释会丢掉
-    // 该状态，故这里只以 combine 是否采样 TEXEL 为准。
+// 从 state_ 的持久 RDP 寄存器重建当前材质快照（drawTriangle 时调用）。
+void DLInterpreter::snapshotMaterial() {
+    material_ = {};
+    material_.combine_w0 = state_.combine_w0;
+    material_.combine_w1 = state_.combine_w1;
+    std::copy(state_.prim_color, state_.prim_color + 4, material_.prim_color);
+    std::copy(state_.env_color, state_.env_color + 4, material_.env_color);
+    std::copy(state_.fog_color, state_.fog_color + 4, material_.fog_color);
+    material_.tile_fmt = state_.tile_fmt;
+    material_.tile_siz = state_.tile_siz;
+    material_.tex_sl = state_.tex_sl;
+    material_.tex_tl = state_.tex_tl;
+    material_.tex_sh = state_.tex_sh;
+    material_.tex_th = state_.tex_th;
+    material_.tex_dxt = state_.tex_dxt;
+    material_.tex_clamp_s = state_.tex_clamp_s;
+    material_.tex_clamp_t = state_.tex_clamp_t;
+    material_.tex_palette = state_.tex_palette;
+    material_.tex_line = state_.tex_line;
+    material_.lut_type = state_.lut_type;
+    material_.lit = (state_.geometry_mode & G_LIGHTING) != 0;
+    // RDP 采样纹理由 G_SETCOMBINE 决定（用 TEXEL0/1 才取纹理）。G_TEXTURE_ENABLE
+    // 由父 DL 设置、子 DL 常不再 G_ON，跨顶层 DL 持久后这里仍以 combine 为准。
+    material_.combine_uses_texel = combineUsesTexel(state_.combine_w0, state_.combine_w1);
     material_.textured = material_.combine_uses_texel;
 }
 
@@ -401,9 +483,9 @@ void DLInterpreter::handleRdpOtherMode(const DecodedCommand &cmd) {
 }
 
 void DLInterpreter::updateOtherModeFields() {
-    // TEXTLUT 类型（CI 调色板格式）→ material_.lut_type；周期类型/纹理过滤等
+    // TEXTLUT 类型（CI 调色板格式）→ state_.lut_type；周期类型/纹理过滤等
     // 记录在 state_.othermode（渲染参数，导出暂不用）。
-    material_.lut_type = static_cast<uint8_t>((state_.othermode >> G_MDSFT_TEXTLUT) & 0x3);
+    state_.lut_type = static_cast<uint8_t>((state_.othermode >> G_MDSFT_TEXTLUT) & 0x3);
 }
 
 void DLInterpreter::handleLoadTLUT(const DecodedCommand &cmd) {
@@ -456,6 +538,8 @@ void DLInterpreter::loadVertices(const DecodedCommand &cmd) {
 }
 
 void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
+    // 本三角形按 draw 时刻的 RDP 状态归组（combine/颜色/tile/几何模式）。
+    snapshotMaterial();
     uint8_t v0 = cmd.triV0();
     uint8_t v1 = cmd.triV1();
     uint8_t v2 = cmd.triV2();

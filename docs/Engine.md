@@ -208,9 +208,27 @@ microcode, so all GBI encodings here are the F3D layouts.
 - **`G_SETTILE`**: palette + line fields captured (Phase 2) for CI textures.
 - **Geometry mode**: we start at the game's startup default (`G_SHADE|G_SHADING_SMOOTH|
   G_CULL_BACK|G_LIGHTING`, `game_init.c:120`). The RSP starts at 0 and the game sets it.
+- **Persistent RDP render state**: the game renders the scene graph's display lists
+  grouped by layer in numeric order (rendering_graph_node.c `geo_process_master_list`)
+  and only sets the render **mode** per layer — the combine/prim/env/fog colors/tile/
+  geometry mode/texture bindings/lights **persist across DLs**. We mirror this: the
+  area's DLs are collected with their layer, sorted ascending, and decoded through ONE
+  `DLInterpreter` with a persistent `RSPState` (`reset_state` only for the first DL;
+  the initial combine is the RDP reset value 0). `Material` is snapshotted from
+  `RSPState` at each triangle (so a DL that sets no combine — e.g. WF's
+  `LAYER_TRANSPARENT_DECAL` yellow decal — inherits the preceding DL's G_CC_SHADE).
+  Object models are still decoded with fresh per-DL state (not inherited).
+- **Untextured color source**: `combineColorSource` decodes the combine mux to decide
+  whether the color comes from SHADE (vertex color), PRIMITIVE, or ENVIRONMENT; the
+  bridge exports `use_vertex` (= combine uses SHADE) and the prim/env colors, so the
+  renderer shows the vertex color (SHADE), prim color, or env color instead of the old
+  `prim_color × vertex_color` (which rendered black when prim was unset). **Untextured
+  transparency**: `combineAlphaSource` (SHADE → uniform vertex alpha, PRIMITIVE/ENV →
+  their alpha) gives a per-material alpha the renderer applies as transparency — WF's
+  yellow decal (vertex `{0xff,0xff,0x00,0x80}`) now renders semi-transparent yellow.
 - **Textured vs flat**: `textured` = the combine samples TEXEL0/1 (NOT gated on
-  `G_TEXTURE_ENABLE`, because some DLs rely on a parent DL's `G_ON` that our per-DL
-  interpreter resets). See `Quirks.md` "textured vs flat".
+  `G_TEXTURE_ENABLE`, because some DLs rely on a parent DL's `G_ON`; the RDP render
+  state is now persistent across top-level DLs). See `Quirks.md` "textured vs flat".
 - **Ignored RDP state**: fog color recorded but fog not rendered; `G_SETCIMG`/`G_SETZIMG`/
   scissor/fill/rect are recognized but not used (runtime render targets/backgrounds).
 

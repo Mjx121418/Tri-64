@@ -9,6 +9,24 @@
 
 namespace GBI {
 
+// G_SETCOMBINE 的 mux 输入源（gbi.h G_CCMUX/G_ACMUX）。用于决定未纹理材质的
+// 底色来源（SHADE=顶点色 / PRIMITIVE / ENVIRONMENT）与 alpha 来源。
+enum class CombineSource : uint8_t {
+    Combined = 0, Texel0, Texel1, Primitive, Shade, Env, One, Zero, Noise, Other,
+};
+
+// 解码 G_SETCOMBINE 两个 mux 字：颜色/alpha 输出的有效来源。C 输入为 0（或
+// G_CCMUX_0=31）时输出 ≈ D；否则混入 A/B/C（常见的是 G_CC_MODULATERGB 的
+// TEXEL0×SHADE，已由 combineUsesTexel 判为纹理）。未纹理的常见组合（G_CC_SHADE
+// /G_CC_PRIMITIVE/G_CC_ENVIRONMENT）都落在"输出 = D"上。
+CombineSource combineColorSource(uint32_t mux0, uint32_t mux1);
+CombineSource combineAlphaSource(uint32_t mux0, uint32_t mux1);
+// 颜色输出是否用到 SHADE（顶点色/光照 shade）：G_CC_MODULATERGB（C=SHADE）、
+// G_CC_SHADE（D=SHADE）等。渲染端据此决定是否用顶点色调制/作底色。
+bool combineUsesShade(uint32_t mux0, uint32_t mux1);
+// 颜色输出是否采样纹素（与 combineUsesTexel 等价，供渲染端判断纹理材质）。
+bool combineUsesTexel(uint32_t mux0, uint32_t mux1);
+
 // 输出网格顶点（模型空间）
 struct MeshVertex {
     float position[3];
@@ -148,6 +166,33 @@ struct RSPState {
     // G_LOADTLUT 加载的调色板（tmem 槽位 → 源图像段地址，0 = 未加载）：
     // CI 纹理解码时查表得到调色板图像。
     std::array<uint32_t, kTMEMWords> tlut_images {};
+
+    // --- 持久 RDP 渲染寄存器 ---
+    // 游戏只在分层渲染时改 render mode，其余渲染状态（combine/颜色/tile/几何
+    // 模式/纹理绑定/灯光）跨顶层 DL 继承（rendering_graph_node.c 的
+    // geo_process_master_list）。这些寄存器放在 RSPState（而非 Material），
+    // 解释器"继续运行"时保留，Material 在 drawTriangle 时从它们快照。
+    uint32_t geometry_mode {0}; // 几何模式位（G_LIGHTING / G_TEXTURE_ENABLE 等）
+    // G_SETCOMBINE 的两个 mux 字：颜色/alpha 混合的 A/B/C/D 输入。RDP 复位默认
+    // 为 0（全 COMBINED）；未设置 combine 的 DL 继承前一个 DL 留下的值。
+    uint32_t combine_w0 {0};
+    uint32_t combine_w1 {0};
+    uint8_t prim_color[4] {0, 0, 0, 0}; // G_SETPRIMCOLOR
+    uint8_t env_color[4] {0, 0, 0, 0};  // G_SETENVCOLOR
+    uint8_t fog_color[4] {0, 0, 0, 0};  // G_SETFOGCOLOR
+    // G_SETTILE / G_SETTILESIZE / G_LOADBLOCK 的渲染 tile 配置。
+    uint8_t tile_fmt {0};            // 纹理格式（0=RGBA 2=CI 3=IA 4=I）
+    uint8_t tile_siz {0};            // 位深（0=4b 1=8b 2=16b 3=32b）
+    uint16_t tex_sl {0};          // 纹理横坐标最小值
+    uint16_t tex_tl {0};          // 纹理纵坐标最小值
+    uint16_t tex_sh {0};          // 纹理横坐标最大值
+    uint16_t tex_th {0};          // 纹理纵坐标最大值
+    uint16_t tex_dxt {0};            // G_LOADBLOCK 的 DXT（编码源图像行宽）
+    bool tex_clamp_s {false};        // S 方向 G_TX_CLAMP（否则 WRAP/MIRROR）
+    bool tex_clamp_t {false};        // T 方向 G_TX_CLAMP
+    uint8_t tex_palette {0};         // CI4 调色板索引
+    uint16_t tex_line {0};           // TMEM 行跨度（64 位字）
+    uint8_t lut_type {0};            // OTHERMODE 的 TEXTLUT（CI 调色板格式）
 };
 
 // DL 解释器：执行一条 DL（含子 DL 调用），累积三角形到 Mesh。
@@ -166,14 +211,20 @@ class DLInterpreter {
     uint64_t steps_ {0};
 
     bool finished {false};
-    uint32_t geometry_mode_ {0}; // fast3d 几何模式位（G_TEXTURE_ENABLE 等）
-    Material material_;          // 当前累积的材质
+    Material material_;          // 当前材质快照（drawTriangle 时从 state_ 重建）
 
 public:
     explicit DLInterpreter(const SegmentTable &seg_table) :
         seg_table_(seg_table), cmd_decoder_(seg_table) {}
 
-    Mesh &run(SegmentedAddress dl);
+    // 执行 dl。reset_state 为 true（场景第一个 DL）时把 RDP/RSP 复位（combine
+    // 清 0、几何模式=游戏启动默认、num_lights=1、清空纹理绑定/灯光）；false 时
+    // 保留上个 DL 的渲染寄存器（游戏里跨 DL 继承）。矩阵栈总是重置为单位阵。
+    // 每次 run 从空 mesh_ 开始，本 DL 的三角形经 mesh() 取得。
+    Mesh &run(SegmentedAddress dl, bool reset_state);
+
+    // 本 DL 累积的网格（run 后读取）。
+    Mesh &mesh() { return mesh_; }
 
     // 只读访问 RSP 状态（灯光/OTHERMODE/fog/TLUT 等提取的数据），供测试与未来
     // 光照实现使用。
@@ -196,15 +247,15 @@ private:
     void handleRdpOtherMode(const DecodedCommand &cmd);
     // G_LOADTLUT：记录调色板加载（tmem → 源图像），供 CI 纹理解码。
     void handleLoadTLUT(const DecodedCommand &cmd);
-    // 从 OTHERMODE 提取材质相关字段（TEXTLUT 类型 → material_.lut_type）。
+    // 从 OTHERMODE 提取材质相关字段（TEXTLUT 类型 → state_.lut_type）。
     void updateOtherModeFields();
     void loadVertices(const DecodedCommand &cmd);
     void drawTriangle(const DecodedCommand &cmd);
     void appendVertex(const Vtx &v);
     uint32_t materialId(uint32_t tex_image, uint32_t tlut);
-    // material_.textured = G_TEXTURE_ENABLE && 材质采样 TEXEL（在 G_SETCOMBINE /
-    // G_TEXTURE / 几何模式变化后调用）。
-    void updateTextured();
+    // 从 state_ 的渲染寄存器重建 material_（drawTriangle 时调用；三角形按
+    // combine/颜色/tile/几何模式等内容归组去重）。
+    void snapshotMaterial();
 };
 
 } // namespace GBI

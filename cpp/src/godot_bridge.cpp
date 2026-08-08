@@ -23,14 +23,14 @@ Array meshDicts(const GBI::Mesh &mesh) {
         PackedVector2Array uvs;
         PackedInt32Array indices;
 
-        // 顶点色导出规则：
-        // - 受光材质（lit）：顶点第 4 字是法线，DL 解释器已把逐顶点 shade
-        //   （ambient + Σ n̂·l̂·color）烘焙进 MeshVertex.color，这里导出让 Godot
-        //   用 texture × shade（纹理）或 shade（纯色）。
-        // - 未纹理 + 未光照：顶点第 4 字是真正的 RGBA 色（G_CC_SHADE），导出。
-        // - 未纹理 + 受光：shade 作底色（同样导出）。
-        // - 纹理 + 未光照：顶点第 4 字与法线无关，不导出（纹素直接显示）。
-        const bool use_vertex_colors = mesh.materials[m].lit || !mesh.materials[m].textured;
+        // 顶点色导出规则（按 combine 是否用到 SHADE）：
+        // - combine 用到 SHADE（G_CC_MODULATERGB 的 C=SHADE、G_CC_SHADE 的
+        //   D=SHADE 等）：受光时顶点第 4 字是法线、shade 已烘焙进顶点色；未受光
+        //   时顶点第 4 字就是 RGBA 色。导出让 Godot 用 texture × shade 或 shade。
+        // - 纯 PRIMITIVE / ENVIRONMENT（D=PRIMITIVE/ENV）：顶点色不参与，底色取
+        //   prim/env 颜色（materialDicts 的 color），不导出顶点色。
+        const bool use_vertex_colors =
+            GBI::combineUsesShade(mesh.materials[m].combine_w0, mesh.materials[m].combine_w1);
         PackedColorArray colors;
 
         for (size_t t = 0; t < mesh.material_ids.size(); t++) {
@@ -76,9 +76,56 @@ Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &text
         const GBI::Material &state = mesh.materials[m];
         const bool has_tex = m < textures.size() && !textures[m].pixels.empty();
         d["textured"] = has_tex;
-        d["lit"] = state.lit; // G_LIGHTING（未纹理材质：受光 → 环境色兜底）
+        d["lit"] = state.lit; // G_LIGHTING
+        // combine 颜色源（G_CC_SHADE → 顶点色；PRIMITIVE → prim；ENV → env）。
+        // 渲染端据此决定底色：SHADE 用 WHITE × 顶点色，PRIMITIVE/ENV 用对应色。
+        const GBI::CombineSource color_source =
+            GBI::combineColorSource(state.combine_w0, state.combine_w1);
+        d["use_vertex"] = GBI::combineUsesShade(state.combine_w0, state.combine_w1);
+        d["color_source"] = static_cast<int64_t>(static_cast<uint8_t>(color_source));
         d["color"] = Color(state.prim_color[0] / 255.0f, state.prim_color[1] / 255.0f,
                            state.prim_color[2] / 255.0f);
+        d["env_color"] = Color(state.env_color[0] / 255.0f, state.env_color[1] / 255.0f,
+                               state.env_color[2] / 255.0f);
+        // 材质 alpha（0-255，255 = 不透明）：来自 combine 的 alpha 源——
+        // SHADE → 材质所有顶点统一的顶点 alpha（否则 255）；PRIMITIVE/ENV →
+        // prim/env 的 alpha；否则 255。渲染端据此开透明度。
+        int alpha = 255;
+        switch (GBI::combineAlphaSource(state.combine_w0, state.combine_w1)) {
+            case GBI::CombineSource::Primitive:
+                alpha = state.prim_color[3];
+                break;
+            case GBI::CombineSource::Env:
+                alpha = state.env_color[3];
+                break;
+            case GBI::CombineSource::Shade: {
+                // 顶点 alpha：材质所有顶点一致才用，否则按不透明处理（渐变需要
+                // 逐顶点 alpha，StandardMaterial3D 不支持，近似为均匀值）。
+                int valpha = -1;
+                bool uniform = true;
+                for (size_t t = 0; t < mesh.material_ids.size(); t++) {
+                    if (mesh.material_ids[t] != m) {
+                        continue;
+                    }
+                    for (int k = 0; k < 3; k++) {
+                        const auto &c =
+                            mesh.vertices[mesh.indices[t * 3 + k]].color[3];
+                        if (valpha < 0) {
+                            valpha = c;
+                        } else if (valpha != c) {
+                            uniform = false;
+                        }
+                    }
+                }
+                if (uniform && valpha >= 0) {
+                    alpha = valpha;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        d["alpha"] = static_cast<int64_t>(alpha);
         // G_SETTILE 的 S/T clamp 模式 → Godot texture_repeat（true=重复/平铺）。
         d["repeat_s"] = !state.tex_clamp_s;
         d["repeat_t"] = !state.tex_clamp_t;
