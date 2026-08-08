@@ -5,7 +5,8 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled;
 
-uniform sampler2D albedo_tex;
+uniform sampler2D albedo_tex : source_color; // sRGB→linear，与 StandardMaterial3D 的
+                                            // albedo_texture 一致（否则纹理会偏亮）
 uniform bool use_texel = false;      // 纹理采样（G_CC_MODULATERGB 等）
 uniform bool clamp_uv = false;       // 两轴 CLAMP（否则 WRAP）
 uniform vec4 uv_clamp = vec4(0.0, 0.0, 1.0, 1.0); // clamp 区域的归一化 UV
@@ -29,6 +30,8 @@ void fragment() {
 			shade += max(dot(n, normalize(light_dirs[i])), 0.0) * light_cols[i];
 		}
 	}
+	// 与 C++ 端烘焙 shade 的 min(255) 一致：clamp 到 [0,1]，否则高光 >1 被拉伸/洗白。
+	shade = clamp(shade, 0.0, 1.0);
 	vec2 uv = UV;
 	if (clamp_uv) {
 		uv = clamp(UV, uv_clamp.xy, uv_clamp.zw);
