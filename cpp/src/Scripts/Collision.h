@@ -4,6 +4,7 @@
 #include "Math/math.h"
 #include "Memory/segment.h"
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -83,6 +84,12 @@ struct TriangleMesh {
 
 // 把表面（顶点索引）解析成三角形网格；越界/退化三角形跳过。
 TriangleMesh buildTriangleMesh(const Data &data);
+
+// 查询 (x, z) 脚下最高的 floor 高度，镜像 decomp 的 find_floor /
+// find_floor_from_list（surface_collision.c，非相机路径）：只考虑 FLOOR 分类
+// 表面、跳过 SURFACE_CAMERA_BOUNDARY (0x72) 与 ny==0，点在三角形内时用平面
+// 插值求高，且查询点 y 必须 ≥ floor - 78。没有命中返回 nullopt。
+std::optional<float> findFloorHeight(const Data &data, float x, float y, float z);
 
 // 碰撞（terrain）数据解码器（镜像 LevelScriptVM 的结构）：构造时绑定段表，
 // run(terrain[, rooms]) 重置并解码，结果经 data() 取得。解码失败时

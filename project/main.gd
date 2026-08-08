@@ -243,6 +243,9 @@ func _render_geometry() -> void:
 
 	var rendered_objects := 0
 	for obj in objects:
+		# 出生状态（行为脚本）：HIDE/DISABLE_RENDERING/DEACTIVATE 的对象不渲染。
+		if obj.hidden:
+			continue
 		var model_id: int = obj.model
 		if model_id == 0 or not model_cache.has(model_id):
 			continue
@@ -253,9 +256,19 @@ func _render_geometry() -> void:
 		oi.mesh = entry.mesh
 		oi.position = obj.pos
 		oi.rotation = obj.angle
+		oi.scale = obj.scale
 		var surface_materials: Array = entry.surface_materials
-		for s in surface_materials.size():
-			oi.set_surface_override_material(s, surface_materials[s])
+		var opacity: int = obj.opacity
+		if opacity < 255:
+			# 行为显式设置了 oOpacity：克隆材质并应用半透明（不污染共享缓存）。
+			for s in surface_materials.size():
+				var mat: StandardMaterial3D = surface_materials[s].duplicate()
+				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				mat.albedo_color.a = opacity / 255.0
+				oi.set_surface_override_material(s, mat)
+		else:
+			for s in surface_materials.size():
+				oi.set_surface_override_material(s, surface_materials[s])
 		model_root.add_child(oi)
 		rendered_objects += 1
 

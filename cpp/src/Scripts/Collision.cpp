@@ -364,4 +364,72 @@ TriangleMesh buildTriangleMesh(const Data &data) {
     return mesh;
 }
 
+// 镜像 decomp 的 find_floor_from_list（surface_collision.c，非相机路径）：
+// 查询 (x,z) 脚下最高的 floor。返回 nullopt 表示脚下没有 floor。
+std::optional<float> findFloorHeight(const Data &data, float x, float y, float z) {
+    float best = 0.0f;
+    bool found = false;
+    for (const auto &s : data.surfaces) {
+        if (s.surfaceClass() != SURFACE_CLASS_FLOOR) {
+            continue;
+        }
+        if (s.type == 0x72) { // SURFACE_CAMERA_BOUNDARY：非相机路径忽略
+            continue;
+        }
+        if (s.v1 >= data.vertices.size() || s.v2 >= data.vertices.size() ||
+            s.v3 >= data.vertices.size()) {
+            continue;
+        }
+        const auto &a = data.vertices[s.v1];
+        const auto &b = data.vertices[s.v2];
+        const auto &c = data.vertices[s.v3];
+
+        // 点在三角形内（decomp 的三个叉积判定，坐标转为 f32）。
+        const float ax = static_cast<float>(a.x), az = static_cast<float>(a.z);
+        const float bx = static_cast<float>(b.x), bz = static_cast<float>(b.z);
+        const float cx = static_cast<float>(c.x), cz = static_cast<float>(c.z);
+        if ((az - z) * (bx - ax) - (ax - x) * (bz - az) < 0.0f) {
+            continue;
+        }
+        if ((bz - z) * (cx - bx) - (bx - x) * (cz - bz) < 0.0f) {
+            continue;
+        }
+        if ((cz - z) * (ax - cx) - (cx - x) * (az - cz) < 0.0f) {
+            continue;
+        }
+
+        // 面法线（归一化）与 originOffset（oo = -n·a）。
+        Vec3<float> n {
+            static_cast<float>(b.y - a.y) * (c.z - a.z) - static_cast<float>(b.z - a.z) * (c.y - a.y),
+            static_cast<float>(b.z - a.z) * (c.x - a.x) - static_cast<float>(b.x - a.x) * (c.z - a.z),
+            static_cast<float>(b.x - a.x) * (c.y - a.y) - static_cast<float>(b.y - a.y) * (c.x - a.x),
+        };
+        const float len = std::sqrt(n.x * n.x + n.y * n.y + n.z * n.z);
+        if (len < 1e-6f) {
+            continue;
+        }
+        n.x /= len;
+        n.y /= len;
+        n.z /= len;
+        if (n.y == 0.0f) { // 墙（floor 列表里理论不会出现）
+            continue;
+        }
+        const float oo = -(n.x * static_cast<float>(a.x) + n.y * static_cast<float>(a.y) +
+                           n.z * static_cast<float>(a.z));
+        const float height = -(x * n.x + z * n.z + oo) / n.y;
+        // decomp：查询点必须在 floor 上方至少 78 单位（y ≥ height - 78）。
+        if (y - (height - 78.0f) < 0.0f) {
+            continue;
+        }
+        if (!found || height > best) {
+            best = height;
+            found = true;
+        }
+    }
+    if (!found) {
+        return std::nullopt;
+    }
+    return best;
+}
+
 } // namespace Collision

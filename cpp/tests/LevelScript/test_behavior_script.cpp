@@ -16,12 +16,19 @@
 
 namespace {
 
-// BehaviorScriptVM 的便捷包装：返回走查结果 Info。
-BehaviorScript::Info analyzeBehavior(const SegmentTable &seg_table, SegmentedAddress entry) {
-    BehaviorScript::Info info;
-    BehaviorScript::BehaviorScriptVM vm(seg_table, info);
-    vm.run(entry);
-    return info;
+// BehaviorScriptVM 的便捷包装：跑完 entry 处的行为脚本，返回作用对象与是否
+// 正常走查到底。
+struct AnalyzedBehavior {
+    ObjectExtract::Object obj;
+    bool ok {false};
+};
+
+AnalyzedBehavior analyzeBehavior(const SegmentTable &seg_table, SegmentedAddress entry) {
+    AnalyzedBehavior out;
+    BehaviorScript::BehaviorScriptVM vm(seg_table);
+    vm.run(out.obj, entry);
+    out.ok = vm.ok();
+    return out;
 }
 
 // 在段 0x13 的 span 里按命令形状扫描 bhvDoor：
@@ -69,45 +76,46 @@ void testDoorBehavior(const LevelScriptSetup &setup) {
     const SegmentedAddress door { 0x13, static_cast<uint32_t>(begin_off) };
     printf("  door behavior @ 0x%04x%06x\n", door.seg, door.offset);
 
-    const BehaviorScript::Info info = analyzeBehavior(setup.seg_table, door);
-    if (!info.ok) {
-        printf("  [FAIL] analyze returned ok=false for the door behavior\n");
+    const AnalyzedBehavior a = analyzeBehavior(setup.seg_table, door);
+    const ObjectExtract::Object &obj = a.obj;
+    const SegmentedAddress anims = obj.addr(ObjectExtract::F::Animations);
+    const SegmentedAddress collision = obj.collision_data;
+    if (!a.ok) {
+        printf("  [FAIL] walk returned ok=false for the door behavior\n");
         return;
     }
-    if (info.animate_index != 0 || info.animations.seg != 0x03 || info.animations.isNull() ||
-        info.collision_data.seg != 0x03 || info.collision_data.isNull()) {
+    if (obj.animate_index != 0 || anims.seg != 0x03 || anims.isNull() ||
+        collision.seg != 0x03 || collision.isNull()) {
         printf("  [FAIL] door animations/animate/collision: anims=seg%#04x off%#06x "
                "idx=%d collision=seg%#04x off%#06x\n",
-               info.animations.seg, info.animations.offset, info.animate_index,
-               info.collision_data.seg, info.collision_data.offset);
+               anims.seg, anims.offset, obj.animate_index, collision.seg, collision.offset);
         return;
     }
-    if (info.hitbox_radius != 80 || info.hitbox_height != 100) {
-        printf("  [FAIL] door hitbox %dx%d (expected 80x100)\n", info.hitbox_radius,
-               info.hitbox_height);
+    if (obj.hitbox_radius != 80 || obj.hitbox_height != 100) {
+        printf("  [FAIL] door hitbox %.0fx%.0f (expected 80x100)\n", obj.hitbox_radius,
+               obj.hitbox_height);
         return;
     }
-    printf("  door anims=0x%04x%06x idx=%d collision=0x%04x%06x hitbox=%dx%d interact=0x%X "
-           "flags=0x%X physics=%s ok\n",
-           info.animations.seg, info.animations.offset, info.animate_index,
-           info.collision_data.seg, info.collision_data.offset, info.hitbox_radius,
-           info.hitbox_height, info.interactType(), info.flags(),
-           info.physics_seen ? "yes" : "no");
+    printf("  door anims=0x%04x%06x idx=%d collision=0x%04x%06x hitbox=%.0fx%.0f "
+           "interact=0x%X flags=0x%X\n",
+           anims.seg, anims.offset, obj.animate_index, collision.seg, collision.offset,
+           obj.hitbox_radius, obj.hitbox_height, obj.u32(ObjectExtract::F::InteractType),
+           obj.u32(ObjectExtract::F::Flags));
     // 门的行为设置了交互类型（INTERACT_DOOR = 0x8）与 OBJ_FLAG（OR_INT）
-    if (info.interactType() == 0) {
+    if (obj.u32(ObjectExtract::F::InteractType) == 0) {
         printf("  [FAIL] door interact type not extracted\n");
     }
-    if (info.flags() == 0) {
+    if (obj.u32(ObjectExtract::F::Flags) == 0) {
         printf("  [FAIL] door OBJ_FLAG (OR_INT) not extracted\n");
     }
-    // 门的 SET_INT(oInteractType) 应被记录，但 hurtbox 不应（门没有 SET_HURTBOX）
-    if (info.hurtbox_radius != 0) {
+    // 门没有 SET_HURTBOX
+    if (obj.hurtbox_radius != 0) {
         printf("  [FAIL] door should have no hurtbox\n");
     }
 }
 
 void testRobustness(const LevelScriptSetup &setup) {
-    // 对关卡所有对象的行为脚本做健壮性走查：不崩溃；合法脚本返回 ok。
+    // 对关卡所有对象的行为脚本做健壮性走查：不崩溃；合法脚本正常走查到底。
     size_t analyzed = 0;
     size_t failed = 0;
     for (const auto &area : setup.level.areas) {
@@ -115,10 +123,10 @@ void testRobustness(const LevelScriptSetup &setup) {
             if (obj.behavior_script.isNull()) {
                 continue;
             }
-            const BehaviorScript::Info info =
+            const AnalyzedBehavior a =
                 analyzeBehavior(setup.seg_table, obj.behavior_script);
             analyzed++;
-            if (!info.ok) {
+            if (!a.ok) {
                 failed++;
                 printf("  [note] object model %d behavior 0x%04x%06x -> !ok\n", obj.model_id,
                        obj.behavior_script.seg, obj.behavior_script.offset);
@@ -127,15 +135,15 @@ void testRobustness(const LevelScriptSetup &setup) {
     }
 
     // 段 0x13 开头的第一个行为（原版/两版都是一个表面对象）。
-    const BehaviorScript::Info first = analyzeBehavior(
+    const AnalyzedBehavior first = analyzeBehavior(
         setup.seg_table, SegmentedAddress { 0x13, 0 });
     printf("  robustness: %zu object behaviors walked (%zu !ok), first-behavior ok=%d "
-           "obj_list=%d hitbox=%dx%d\n",
-           analyzed, failed, first.ok, first.obj_list, first.hitbox_radius,
-           first.hitbox_height);
+           "obj_list=%d hitbox=%.0fx%.0f\n",
+           analyzed, failed, first.ok, first.obj.obj_list, first.obj.hitbox_radius,
+           first.obj.hitbox_height);
 
     // 越界/空地址要优雅地返回 !ok（不崩溃）。
-    const BehaviorScript::Info bad =
+    const AnalyzedBehavior bad =
         analyzeBehavior(setup.seg_table, SegmentedAddress { 0x13, 0xFFFFFF });
     if (bad.ok) {
         printf("  [FAIL] out-of-bounds behavior address returned ok\n");

@@ -182,6 +182,14 @@ Array GodotBridge::getObjects() {
         d["behavior_arg"] = static_cast<int64_t>(obj.behaviorArg());
         d["behavior"] = static_cast<int64_t>((uint32_t(obj.behavior.seg) << 24) |
                                               (obj.behavior.offset & 0xFFFFFF));
+        // 出生状态（行为脚本作用于 Object 后的结果）：隐藏/反生成、缩放、
+        // 透明度、billboard。
+        d["hidden"] = obj.deactivated || obj.invisible;
+        d["scale"] = Vector3(obj.scale.x, obj.scale.y, obj.scale.z);
+        // oOpacity 默认 0（对象池清零），只在行为显式 SET 后有意义；未设置按 255。
+        const int32_t opacity = obj.s32(ObjectExtract::F::Opacity);
+        d["opacity"] = static_cast<int64_t>(opacity == 0 ? 255 : opacity);
+        d["billboard"] = obj.billboard;
         out.push_back(d);
     }
     return out;
@@ -248,6 +256,9 @@ Array GodotBridge::getObjectCollisions() {
             continue;
         }
         const auto &obj = result_.objects[i];
+        if (obj.deactivated) {
+            continue; // DEACTIVATE 反生成的对象没有碰撞
+        }
 
         Dictionary d;
         const Vec3<float> pos = obj.pos();

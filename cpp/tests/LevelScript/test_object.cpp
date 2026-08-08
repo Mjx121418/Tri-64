@@ -97,9 +97,9 @@ void testObject() {
         }
 
         if (is_vanilla) {
-            if (r.objects.size() != 101 || with_model != 91) {
+            if (r.objects.size() != 103 || with_model != 92) {
                 printf("test_object: FAIL BOB object counts (objects=%zu model!=0=%zu, expect "
-                       "101/91)\n",
+                       "103/92)\n",
                        r.objects.size(), with_model);
             }
             if (goombas != 2 || bobombs != 12 || bubble_trees != 17) {
@@ -109,21 +109,24 @@ void testObject() {
             }
 
             // 木牌（macro_wooden_signpost，bhvMessagePanel，DIALOG_050=0x32）：
-            // 检查宏对象的 oBhvParams 打包规则（spawn_macro_objects）。
+            // oBhvParams 打包规则 + DROP_TO_FLOOR 落到脚下（出生 y=1415 → 地面）。
             const ObjectExtract::Object *signpost = nullptr;
             for (const auto &obj : r.objects) {
-                if (obj.model_id == 0x7C &&
-                    closeEnough(obj.pos().x, -3530) && closeEnough(obj.pos().y, 1415) &&
+                if (obj.model_id == 0x7C && closeEnough(obj.pos().x, -3530) &&
                     closeEnough(obj.pos().z, 430)) {
                     signpost = &obj;
                     break;
                 }
             }
             if (signpost == nullptr) {
-                printf("test_object: FAIL wooden signpost (-3530,1415,430) not found\n");
+                printf("test_object: FAIL wooden signpost (-3530,?,430) not found\n");
             } else {
-                printf("test_object: signpost pos=(%.0f,%.0f,%.0f) yaw=%d\n", signpost->pos().x,
-                       signpost->pos().y, signpost->pos().z, signpost->faceAngle().y);
+                const float floor =
+                    Collision::findFloorHeight(r.collision, -3530, 1415 + 200, 430)
+                        .value_or(-1e9f);
+                printf("test_object: signpost pos=(%.0f,%.0f,%.0f) yaw=%d floor=%.0f\n",
+                       signpost->pos().x, signpost->pos().y, signpost->pos().z,
+                       signpost->faceAngle().y, floor);
                 if (signpost->s32(ObjectExtract::F::BhvParams) != 0x00320000 ||
                     signpost->s32(ObjectExtract::F::BhvParams2ndByte) != 0x32) {
                     printf("test_object: FAIL signpost oBhvParams=%08x 2ndByte=%x (expect "
@@ -131,9 +134,25 @@ void testObject() {
                            static_cast<uint32_t>(signpost->s32(ObjectExtract::F::BhvParams)),
                            static_cast<uint32_t>(signpost->s32(ObjectExtract::F::BhvParams2ndByte)));
                 }
-                if (signpost->faceAngle().y == 0) {
-                    printf("test_object: FAIL signpost yaw is 0\n");
+                if (signpost->pos().y >= 1415 ||
+                    !closeEnough(signpost->pos().y, floor, 1.0f)) {
+                    printf("test_object: FAIL signpost not dropped to floor (y=%.0f floor=%.0f)\n",
+                           signpost->pos().y, floor);
                 }
+            }
+
+            // 链锁汪汪（bhvChainChomp）在出生路径 SPAWN_CHILD_WITH_PARAM 出木头桩
+            // （MODEL_WOODEN_POST = 0x6B）子对象（frame-0 即存在）。
+            size_t wooden_posts = 0;
+            for (const auto &obj : r.objects) {
+                if (obj.model_id == 0x6B) {
+                    wooden_posts++;
+                }
+            }
+            if (wooden_posts == 0) {
+                printf("test_object: FAIL no wooden-post children (SPAWN_CHILD expansion)\n");
+            } else {
+                printf("test_object: wooden-post children=%zu\n", wooden_posts);
             }
         }
     }

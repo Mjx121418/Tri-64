@@ -24,6 +24,8 @@ namespace F {
         PosX               = 0x06, // oPosX (F32)
         PosY               = 0x07, // oPosY (F32)
         PosZ               = 0x08, // oPosZ (F32)
+        VelY               = 0x0A, // oVelY (F32)
+        ForwardVel         = 0x0C, // oForwardVel (F32)
         MoveAnglePitch     = 0x0F, // oMoveAnglePitch (S32)
         MoveAngleYaw       = 0x10, // oMoveAngleYaw (S32)
         MoveAngleRoll      = 0x11, // oMoveAngleRoll (S32)
@@ -31,10 +33,20 @@ namespace F {
         FaceAngleYaw       = 0x13, // oFaceAngleYaw (S32)
         FaceAngleRoll      = 0x14, // oFaceAngleRoll (S32)
         GraphYOffset       = 0x15, // oGraphYOffset (F32)
+        ActiveParticleFlags = 0x16, // oActiveParticleFlags (U32)
+        Gravity            = 0x17, // oGravity (F32)
         AnimState          = 0x1A, // oAnimState (S32)
         Animations         = 0x26, // oAnimations（动画数组指针）
+        WallHitboxRadius   = 0x28, // oWallHitboxRadius (F32)
+        DragStrength       = 0x29, // oDragStrength (F32)
         InteractType       = 0x2A, // oInteractType (U32)
         BhvParams2ndByte   = 0x2F, // oBhvParams2ndByte (S32)
+        Bounciness         = 0x34, // oBounciness (F32)
+        HomeX              = 0x37, // oHomeX (F32)
+        HomeY              = 0x38, // oHomeY (F32)
+        HomeZ              = 0x39, // oHomeZ (F32)
+        Friction           = 0x3A, // oFriction (F32)
+        Buoyancy           = 0x3B, // oBuoyancy (F32)
         Opacity            = 0x3D, // oOpacity (S32)
         BhvParams          = 0x40, // oBhvParams (S32)
         InteractionSubtype = 0x42, // oInteractionSubtype
@@ -85,6 +97,15 @@ public:
     bool invisible {false};             // GRAPH_RENDER_INVISIBLE（HIDE）
     bool billboard {false};             // GRAPH_RENDER_BILLBOARD
     bool deactivated {false};           // ACTIVE_FLAG_DEACTIVATED（DEACTIVATE）
+
+    // 出生路径上的 SPAWN_CHILD/SPAWN_OBJ 子对象（镜像 spawn_object_at_origin：
+    // 子对象在父对象位置/朝向出生，SPAWN_CHILD_WITH_PARAM 的 bhvParam 进 2ndByte）。
+    struct ChildSpawn {
+        int16_t model {0};
+        SegmentedAddress behavior {};
+        int32_t param {0};
+    };
+    std::vector<ChildSpawn> spawned_children;
 
     // --- 常用字段便捷访问 ---
     Vec3<float> pos() const;            // oPosX/Y/Z

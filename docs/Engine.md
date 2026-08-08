@@ -280,22 +280,24 @@ boxes) and rooms are assigned.
 first `BHV_PROC_BREAK`; `BEGIN_LOOP/END_LOOP` loops forever.
 
 **Ours** — `BehaviorScriptVM` statically walks a behavior once (bounded budget, 100k
-commands):
+commands) **directly against the object** (`ObjectExtract::Object`, like the game's
+`gCurrentObject`), so `SET/ADD/OR/SUM` field arithmetic applies in command order:
 
-- **`CALL_NATIVE` is opaque** (we can't run C), skipped.
-- **`DELAY`/`DELAY_VAR` terminate the walk** (the spawn path ends at the first BREAK).
-- **Loops are walked once** (`BEGIN_LOOP`/`END_LOOP`), then the walk terminates — the
-  game re-enters forever; bytes after the loop are a neighbor behavior, not reachable.
-- **No object state / timers / randomness / field arithmetic**: `SET_*/ADD_*` advance the
-  pc. But (Phase 2) **all field writes are captured** into `Info.set_int_fields` /
-  `set_float_fields` (keyed by the `object_fields.h` index, `OR_INT` accumulates), with
-  named accessors for the render-relevant ones (oFlags, oOpacity, oAnimState,
-  oGraphYOffset, oDrawingDistance, oCollisionDistance, interactType/Subtype).
-- **Extracted data**: model, animations + first `ANIMATE` index (or default 0 for
-  native-selected animations — see `Quirks.md`), collision data, hitbox, hurtbox,
-  scale, billboard/hide/disable-rendering, `SET_OBJ_PHYSICS`, `ANIMATE_TEXTURE`,
-  `SPAWN_WATER_DROPLET` params, and `SPAWN_*` model ids + behaviors (the game spawns
-  child objects; we record the targets).
+- **`CALL_NATIVE` is opaque** (we can't run C), skipped; random commands (0x13-0x17)
+  can't be reproduced, skipped.
+- **Frame break at the first `BHV_PROC_BREAK`**: `DELAY`/`DELAY_VAR`/`END_REPEAT`
+  (0x06)/`END_LOOP`/`BREAK`/`DEACTIVATE` end the spawn-path walk; `END_REPEAT_CONTINUE`
+  (0x07) unrolls the loop in the same frame like the game.
+- **`DROP_TO_FLOOR` (0x1E)** queries the area terrain via `Collision::findFloorHeight`
+  (mirrors `find_floor`/`find_floor_from_list`: highest floor under (x,z), skips
+  `SURFACE_CAMERA_BOUNDARY` 0x72, requires `y ≥ floor−78`). We return the **highest**
+  floor rather than the game's first-in-cell-list match (a "surface cucking" list-order
+  quirk we can't reproduce — deterministic choice).
+- **Loops run once** (`BEGIN_LOOP`/`END_LOOP`), then the walk terminates — the game
+  re-enters forever; bytes after the loop are a neighbor behavior, not reachable.
+- **Child objects**: `SPAWN_CHILD`/`SPAWN_OBJ`/`SPAWN_CHILD_WITH_PARAM` in the spawn
+  path are expanded into child objects at the parent's pos/angle (their behavior runs);
+  per-frame runtime children (e.g. goomba trios) are still not spawned.
 - **`cur_obj_scale` (runtime scale) is not applied** — only `GEO_SCALE` (geo data) and
   the behavior `SCALE` command. See `Quirks.md`.
 
@@ -314,15 +316,19 @@ per frame.
   OBJECT/macro/special spawn becomes one `Object` via three static transforms
   (`fromSpawnInfo`/`fromMacroObject`/`fromSpecialObject`), mirroring the game's
   `spawn_object`/`spawn_macro_object`/`spawn_special_objects`. The behavior
-  interpreter will act on this `Object` (M2); currently the `Info`-based static
-  walk still drives frame-0 animation and object collision decode.
+  interpreter acts on this `Object` (§8), mutating it in command order.
+- **Spawn state**: after the behavior walk the object's position/angle/scale/opacity/
+  hidden/model are the frame-0 state; `getObjects` exports hidden/scale/opacity/
+  billboard and the renderer skips hidden objects and applies scale + opacity.
+  `DROP_TO_FLOOR` snaps spawn-path objects (signposts etc.) to the terrain.
+  Billboard-facing (coins) and runtime `cur_obj_scale`/per-frame children remain
+  non-goals.
 - **Frame-0 animation baked** into the model cache (`Frame0Animator`, mirrors
   `geo_process_animated_part`). See `Quirks.md`.
 - **Spawn transform**: objects are placed at their spawn pos + yaw (macro objects:
   preset yaw converted to SM64 angle units; special objects: the terrain-stream yaw is
   256-per-circle, converted). `oBhvParams`/`oBhvParams2ndByte` are packed game-exactly
-  per source. Behavior-driven position deltas, `DROP_TO_FLOOR`,
-  billboard-facing, and runtime `SCALE`/`SET_MODEL` are not applied (M2 work item).
+  per source.
 - **Camera**: recorded (Phase 2) but the renderer uses its own camera.
 - **Lights**: parsed (Phase 2) and used for per-vertex shading (`texel × shade` for
   textured-lit, `shade` for flat-lit), so the castle-grounds grass (authored grey,

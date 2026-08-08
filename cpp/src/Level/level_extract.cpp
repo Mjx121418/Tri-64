@@ -433,27 +433,63 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
         objects.push_back(std::move(obj));
     }
 
+    // 对每个对象执行行为脚本（作用于 Object，像游戏里作用于 gCurrentObject）：
+    // 位置/角度增量、DROP_TO_FLOOR（用当前区域地形碰撞）、隐藏/缩放/模型覆盖、
+    // 动画与碰撞数据地址、出生子对象列表。然后在出生帧结束时展开子对象。
+    BehaviorScript::BehaviorScriptVM behavior_vm(seg_table_);
+    for (auto &obj : objects) {
+        if (obj.behavior.isNull()) {
+            continue;
+        }
+        behavior_vm.run(obj, obj.behavior, &result_.collision);
+    }
+    // SPAWN_CHILD/SPAWN_OBJ 的子对象（如炮管的炮筒 bhvCannonBarrel）：在父对象
+    // 位置/朝向出生（spawn_object_at_origin 复制父对象 pos/angle），然后执行
+    // 子行为。用索引循环，新追加的子对象也会被处理。
+    for (size_t i = 0; i < objects.size(); i++) {
+        const std::vector<ObjectExtract::Object::ChildSpawn> children =
+            objects[i].spawned_children; // 拷贝：push_back 会失效引用
+        const Vec3<float> parent_pos = objects[i].pos();
+        const int32_t face_p = objects[i].s32(ObjectExtract::F::FaceAnglePitch);
+        const int32_t face_y = objects[i].s32(ObjectExtract::F::FaceAngleYaw);
+        const int32_t face_r = objects[i].s32(ObjectExtract::F::FaceAngleRoll);
+        const int8_t area_idx = objects[i].area_index;
+        for (const auto &ch : children) {
+            ObjectExtract::Object child;
+            child.model_id = ch.model;
+            child.behavior = ch.behavior;
+            child.area_index = area_idx;
+            child.active_area_index = area_idx;
+            child.setPos(parent_pos);
+            child.s32(ObjectExtract::F::FaceAnglePitch) = face_p;
+            child.s32(ObjectExtract::F::FaceAngleYaw) = face_y;
+            child.s32(ObjectExtract::F::FaceAngleRoll) = face_r;
+            child.s32(ObjectExtract::F::MoveAnglePitch) = face_p;
+            child.s32(ObjectExtract::F::MoveAngleYaw) = face_y;
+            child.s32(ObjectExtract::F::MoveAngleRoll) = face_r;
+            child.s32(ObjectExtract::F::BhvParams2ndByte) = ch.param;
+            if (!child.behavior.isNull()) {
+                behavior_vm.run(child, child.behavior, &result_.collision);
+            }
+            objects.push_back(std::move(child));
+        }
+    }
+
     // 对象模型：每个唯一 model id 只解码一次（复用同模型的所有对象实例）。
     // model_id 0（MODEL_NONE，如传送点）没有几何，跳过。有动画行为的对象
-    // （LOAD_ANIMATIONS + ANIMATE）在烘焙时叠加动画 frame-0 值（如门）。
+    // （LOAD_ANIMATIONS + ANIMATE）在烘焙时叠加动画 frame-0 值（如门）。动画是
+    // 原生代码选的（LOAD_ANIMATIONS 但无 ANIMATE 命令，如 goomba 由 goomba_update
+    // 固定用索引 0）：静态导出默认取第一个动画的 frame-0（通常是静止姿态），
+    // 否则部件停在裸 geo 锚点上（goomba 会陷入地面且朝向错误，见 docs/Quirks.md）。
     std::map<int16_t, ObjectExtract::ObjectModel> object_models;
     for (const auto &obj : objects) {
         if (obj.model_id <= 0 || object_models.contains(obj.model_id)) {
             continue;
         }
         std::optional<ObjectExtract::Frame0Animator> frame0;
-        if (!obj.behavior.isNull()) {
-            BehaviorScript::Info bi;
-            BehaviorScript::BehaviorScriptVM behavior_vm(seg_table_, bi);
-            behavior_vm.run(obj.behavior);
-            // 动画是原生代码选的（LOAD_ANIMATIONS 但无 ANIMATE 命令，如 goomba
-            // 由 goomba_update 固定用索引 0）：静态导出默认取第一个动画的 frame-0
-            //（通常是静止姿态），否则部件停在裸 geo 锚点上（goomba 会陷入地面且
-            // 朝向错误，见 docs/engine-notes.md）。
-            if (bi.ok && !bi.animations.isNull()) {
-                const int16_t anim_index = (bi.animate_index >= 0) ? bi.animate_index : 0;
-                frame0.emplace(seg_table_, bi.animations, anim_index);
-            }
+        if (obj.raw[ObjectExtract::F::Animations] != 0) {
+            const int16_t anim_index = (obj.animate_index >= 0) ? obj.animate_index : 0;
+            frame0.emplace(seg_table_, obj.addr(ObjectExtract::F::Animations), anim_index);
         }
         ObjectExtract::ObjectModelDecoder model_decoder(seg_table_);
         model_decoder.runModel(level_.loaded_graph_node[obj.model_id].get(),
@@ -469,20 +505,16 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     result_.objects = std::move(objects);
 
     // 各对象的碰撞数据（行为 LOAD_COLLISION_DATA；本地空间，不做对象变换）。
+    // 行为已在上面的统一走查中设置 obj.collision_data。
     result_.object_collisions.resize(result_.objects.size());
     Collision::CollisionDecoder collision_decoder(seg_table_);
     for (size_t i = 0; i < result_.objects.size(); i++) {
         const auto &obj = result_.objects[i];
-        if (obj.behavior.isNull()) {
+        if (obj.deactivated || obj.collision_data.isNull()) {
             continue;
         }
-        BehaviorScript::Info bi;
-        BehaviorScript::BehaviorScriptVM behavior_vm(seg_table_, bi);
-        behavior_vm.run(obj.behavior);
-        if (bi.ok && !bi.collision_data.isNull()) {
-            collision_decoder.runObject(bi.collision_data);
-            result_.object_collisions[i] = collision_decoder.data();
-        }
+        collision_decoder.runObject(obj.collision_data);
+        result_.object_collisions[i] = collision_decoder.data();
     }
     result_.mario_start_pos = { static_cast<float>(level_.mario_start_pos.x),
                                 static_cast<float>(level_.mario_start_pos.y),
