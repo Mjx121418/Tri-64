@@ -342,9 +342,11 @@ Not implemented (opcodes we skip, plus spawn-path side effects we don't mirror):
   `OBJ_LIST_UNIMPORTANT` → `ACTIVE_FLAG_UNIMPORTANT` flag and the
   GENACTOR/PUSHABLE/POLELIKE `snap_object_to_floor` call (a no-op bug — it snaps to the
   floor beneath the origin before the caller sets the position) are not mirrored.
-- **Captured but not applied to rendering**: `oGraphYOffset` (30+ behaviors set ±values;
-  the game renders at `oPosY + oGraphYOffset`, we place at `oPosY`), `oAnimState`,
-  `oDrawingDistance`, `oCollisionDistance`.
+- **Captured but not applied to rendering**: `oAnimState`, `oDrawingDistance`,
+  `oCollisionDistance`. (`oGraphYOffset` IS applied — the bridge exports
+  `pos.y + oGraphYOffset` for the model placement; object collision stays at `oPosY`.)
+- **`oGraphYOffset`**: the bridge places the model at `oPosY + oGraphYOffset` (mirroring
+  `obj_update_gfx_pos_and_angle`); object collision stays at `oPosY`.
 
 ---
 
@@ -367,8 +369,8 @@ per frame.
   billboard and the renderer skips hidden objects and applies scale + opacity.
   `DROP_TO_FLOOR` snaps spawn-path objects (signposts etc.) to the terrain.
   Billboard-facing (coins) and runtime `cur_obj_scale`/per-frame children remain
-  non-goals. `oGraphYOffset` is captured but **not applied** (the game renders at
-  `oPosY + oGraphYOffset`; we place at `oPosY`) — see §8.
+  non-goals. `oGraphYOffset` is applied: `getObjects` exports `pos.y + oGraphYOffset`
+  for the model placement; the object collision stays at `oPosY` (see §8).
 - **Frame-0 animation baked** into the model cache (`Frame0Animator`, mirrors
   `geo_process_animated_part`). See `Quirks.md`.
 - **Spawn transform**: objects are placed at their spawn pos + yaw (macro objects:

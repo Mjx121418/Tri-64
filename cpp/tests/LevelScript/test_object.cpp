@@ -155,6 +155,19 @@ void testObject() {
                 printf("test_object: wooden-post children=%zu\n", wooden_posts);
             }
 
+            // oGraphYOffset：行为 SET_FLOAT 捕获到字段（渲染位置 = oPosY + offset）。
+            size_t off_objects = 0;
+            for (const auto &obj : r.objects) {
+                if (obj.f32(ObjectExtract::F::GraphYOffset) != 0.0f) {
+                    off_objects++;
+                    printf("test_object: graphYOffset obj model=0x%02X offset=%.0f\n",
+                           obj.model_id, obj.f32(ObjectExtract::F::GraphYOffset));
+                }
+            }
+            if (off_objects == 0) {
+                printf("test_object: FAIL no BOB object sets oGraphYOffset\n");
+            }
+
             // 世界空间光照：对象模型材质应携带自己的灯光（goomba 用 Lights1：
             // 1 个方向光 + 环境光），供渲染端 shader 用。
             bool goomba_lights = false;

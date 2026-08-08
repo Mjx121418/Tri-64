@@ -248,7 +248,9 @@ Array GodotBridge::getObjects() {
     for (const auto &obj : result_.objects) {
         Dictionary d;
         const Vec3<float> pos = obj.pos();
-        d["pos"] = Vector3(pos.x, pos.y, pos.z);
+        // 渲染位置 = oPos + oGraphYOffset（游戏 obj_update_gfx_pos_and_angle 只给
+        // Y 加偏移；碰撞仍是 oPos，见 getObjectCollisions）。
+        d["pos"] = Vector3(pos.x, pos.y + obj.f32(ObjectExtract::F::GraphYOffset), pos.z);
         // SM64 角度单位 → 弧度，供 Godot 的旋转直接使用
         const Vec3<int16_t> angle = obj.faceAngle();
         d["angle"] = Vector3(sm64AngleToRadians(angle.x), sm64AngleToRadians(angle.y),
