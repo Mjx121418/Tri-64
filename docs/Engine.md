@@ -135,6 +135,20 @@ emits a runtime DL (movtex water, envfx, paintings), billboards face the camera,
 
 **Ours** — `GeoLayoutProcessor` builds the graph once (frame-0 static). Differences:
 
+- **Out-of-range geo addresses**: `processGeoLayout` catches a segment read past the
+  loaded data and returns `nullptr` instead of throwing; the model/area is skipped. The
+  game reads garbage at such addresses without checking (e.g. a binary hack's
+  `script_func_global_16` adds `LOAD_MODEL_FROM_GEO(MODEL_UNKNOWN_DOOR_2A, 0x005F9FE0)`
+  — seg-0 beyond the main segment). `LevelExtractor::run` also guards `runLevelScript`
+  with try/catch so any residual out-of-bounds data is an extraction error, not a crash.
+- **Guarded-exception logging**: every guarded `std::out_of_range` / skipped geometry /
+  decode failure is recorded into a per-extraction `WarningLog` (`cpp/src/Log.h`) —
+  level script paused on a read past its segment, unknown command, geo address past its
+  segment (with address + segment size), display list command past its segment, terrain
+  / object-collision decode failure, texture decode failure, and the top-level `run()`
+  catches. The log lands in `Result::warnings` and is exposed to Godot via
+  `getWarnings()` for a pop-up (vanilla = 0 warnings; the SMTW Dream Edition hack = 2
+  geo warnings per level).
 - **Switch-case (0x0E)**: the game's case-selection function (anim state, room) is
   runtime. For **area/room geometry** (`collectDisplayLists`) we now collect **all**
   branches (all rooms) — repeated DLs shared between cases are not deduplicated. For

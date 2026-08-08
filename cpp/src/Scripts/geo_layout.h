@@ -2,6 +2,7 @@
 #define GEO_LAYOUT_H
 
 #include "Level/graph_node.h"
+#include "Log.h"
 #include "Memory/segment.h"
 #include <array>
 #include <cstdint>
@@ -13,6 +14,7 @@ class GeoLayoutProcessor {
     };
 
     SegmentTable &seg_table;
+    WarningLog &warnings_;
 
     std::unique_ptr<GraphNode> root_graph_node;
     // std::unique_ptr<GraphNodeStart> obj_parent_graph_node;
@@ -104,7 +106,7 @@ class GeoLayoutProcessor {
     void cmdNodeCullingRadius();
 
 public:
-    GeoLayoutProcessor(SegmentTable &seg_table);
+    GeoLayoutProcessor(SegmentTable &seg_table, WarningLog &warnings);
     std::unique_ptr<GraphNode> processGeoLayout(SegmentedAddress seg_ptr);
 };
 

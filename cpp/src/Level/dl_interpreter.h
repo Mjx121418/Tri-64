@@ -2,6 +2,7 @@
 #define DL_INTERPRETER_H
 
 #include "Level/dl_command.h"
+#include "Log.h"
 #include "Memory/segment.h"
 #include <algorithm>
 #include <array>
@@ -233,13 +234,14 @@ class DLInterpreter {
     std::vector<SegmentedAddress> dl_stack_;
     Mesh mesh_;
     uint64_t steps_ {0};
+    WarningLog &warnings_;
 
     bool finished {false};
     Material material_;          // 当前材质快照（drawTriangle 时从 state_ 重建）
 
 public:
-    explicit DLInterpreter(const SegmentTable &seg_table) :
-        seg_table_(seg_table), cmd_decoder_(seg_table) {}
+    DLInterpreter(const SegmentTable &seg_table, WarningLog &warnings) :
+        seg_table_(seg_table), cmd_decoder_(seg_table), warnings_(warnings) {}
 
     // 执行 dl。reset_state 为 true（场景第一个 DL）时把 RDP/RSP 复位（combine
     // 清 0、几何模式=游戏启动默认、num_lights=1、清空纹理绑定/灯光）；false 时

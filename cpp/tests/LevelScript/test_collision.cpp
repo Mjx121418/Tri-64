@@ -274,3 +274,68 @@ void testCollision() {
         }
     }
 }
+
+void testHackRobustness() {
+    // 找 SMTW Dream Edition 宏（SMTW*.z64，存在才测）。
+    std::filesystem::path smtw;
+    for (const char *dir : { ".", "tests" }) {
+        if (!std::filesystem::is_directory(dir)) {
+            continue;
+        }
+        for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+            const std::string name = entry.path().filename().string();
+            if (name.rfind("SMTW", 0) == 0 && name.size() > 4) {
+                smtw = entry.path();
+            }
+        }
+    }
+    if (smtw.empty()) {
+        printf("test_hack_robustness: no SMTW ROM found, skipped\n");
+        return;
+    }
+    printf("test_hack_robustness: ROM %s\n", smtw.filename().string().c_str());
+
+    ROM rom;
+    rom.load(smtw);
+    if (!rom.is_loaded) {
+        printf("test_hack_robustness: FAIL could not load ROM\n");
+        return;
+    }
+    // 各关卡 area 1：越界 geo/脚本地址不应导致崩溃（提取应成功或返回错误，
+    // 而不是抛未捕获异常终止进程），且被跳过的数据应记录进 Result::warnings。
+    int ok = 0, failed = 0;
+    size_t total_warnings = 0;
+    for (int lv : {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+                   21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 33, 34, 36}) {
+        LevelExtract::Result r = LevelExtract::extract(rom, lv, 1);
+        if (!r.ok) {
+            failed++;
+            printf("test_hack_robustness: FAIL level %d: %s\n", lv, r.error.c_str());
+        } else {
+            ok++;
+        }
+        total_warnings += r.warnings.size();
+        // SMTW 的 script_func_global_16 引用了两个主段之外的 geo 地址，应被跳过
+        // 并记录为 geo 警告（而不是崩溃）。
+        if (lv == 4) {
+            bool geo_warn = false;
+            for (const auto &w : r.warnings) {
+                if (w.stage == "geo") {
+                    geo_warn = true;
+                }
+            }
+            if (!geo_warn) {
+                printf("test_hack_robustness: FAIL level 4: no geo warnings recorded\n");
+            }
+        }
+    }
+    printf("test_hack_robustness: ok=%d failed=%d total_warnings=%zu\n", ok, failed,
+           total_warnings);
+    if (ok == 0) {
+        printf("test_hack_robustness: FAIL no level extracted cleanly\n");
+    }
+    if (total_warnings == 0) {
+        printf("test_hack_robustness: FAIL no warnings recorded (bad data was skipped "
+               "but not logged)\n");
+    }
+}

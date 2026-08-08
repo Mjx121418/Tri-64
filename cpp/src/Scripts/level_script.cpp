@@ -14,10 +14,11 @@ constexpr int64_t MAX_INSTRUCTIONS = 10'000'000;
 
 }
 
-LevelScriptVM::LevelScriptVM(SegmentTable &seg_table, Level &level) :
+LevelScriptVM::LevelScriptVM(SegmentTable &seg_table, Level &level, WarningLog &warnings) :
     level(level),
-    geo_layout_processor(GeoLayoutProcessor(seg_table)),
-    seg_table(seg_table) {
+    geo_layout_processor(GeoLayoutProcessor(seg_table, warnings)),
+    seg_table(seg_table),
+    warnings_(warnings) {
 }
 
 void LevelScriptVM::execute(SegmentedAddress entry) {
@@ -49,6 +50,16 @@ void LevelScriptVM::getNextCommand() {
         current_command.data = seg_table.data(pc, current_command.length);
     } catch (const std::out_of_range &) {
         // 读取越界（hack 的脚本可能读到段尾之外）：中止脚本而非抛异常。
+        warnings_.add(
+            "level_script",
+            "reading the next command ran past the end of segment " +
+                std::to_string(pc.seg) + " at offset 0x" + [&]() {
+                    char buf[16];
+                    std::snprintf(buf, sizeof(buf), "%06X", pc.offset);
+                    return std::string(buf);
+                }() +
+                "; the level script is truncated or its segment is smaller than "
+                "expected, so the script stopped early (script paused)");
         script_status = SCRIPT_PAUSED;
         return;
     }
@@ -121,6 +132,21 @@ void LevelScriptVM::ExecuteCommand() {
         default:
             printf("LevelScriptVM: unknown command 0x%02x at seg %02x offset %07x, aborting.\n",
                        current_command.opcode, current_command.addr.seg, current_command.addr.offset);
+            warnings_.add(
+                "level_script",
+                "encountered an unknown level script command 0x" + [&]() {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "%02X", current_command.opcode);
+                    return std::string(buf);
+                }() +
+                    " at segment " + std::to_string(current_command.addr.seg) + " offset 0x" +
+                    [&]() {
+                        char buf[16];
+                        std::snprintf(buf, sizeof(buf), "%06X", current_command.addr.offset);
+                        return std::string(buf);
+                    }() +
+                    "; the level script stopped there (possibly a hack command this "
+                    "extractor does not know)");
             script_status = SCRIPT_PAUSED;
     }
 }

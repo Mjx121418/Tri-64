@@ -145,6 +145,16 @@ Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state) {
             cmd = cmd_decoder_.decode(pc);
         } catch (const std::out_of_range &e) {
             printf("DLInterpreter: out_of_range at %02x:%06x (pc)\n", pc.seg, pc.offset);
+            warnings_.add(
+                "dl",
+                "the display list pointer 0x" + [&]() {
+                    char buf[16];
+                    std::snprintf(buf, sizeof(buf), "%08X", (pc.seg << 24) | pc.offset);
+                    return std::string(buf);
+                }() +
+                    " (segment " + std::to_string(pc.seg) + ") ran past the end of its "
+                    "segment while decoding the next command; the rest of this display "
+                    "list was skipped (" + std::string(e.what()) + ")");
             break;
         }
 
@@ -152,6 +162,16 @@ Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state) {
             execute(cmd, pc);
         } catch (const std::out_of_range &e) {
             printf("DLInterpreter: out_of_range at %02x:%06x\n", cmd.addr.seg, cmd.addr.offset);
+            warnings_.add(
+                "dl",
+                "while executing the display list command at segment " +
+                    std::to_string(cmd.addr.seg) + " offset 0x" + [&]() {
+                        char buf[16];
+                        std::snprintf(buf, sizeof(buf), "%06X", cmd.addr.offset);
+                        return std::string(buf);
+                    }() +
+                    " the decoder read past the end of its segment; the rest of this "
+                    "display list was skipped (" + std::string(e.what()) + ")");
             break;
         }
         // G_ENDDL / G_DL 已设置 pc（弹栈返回 / 跳转），其他命令按 8 字节顺序前进

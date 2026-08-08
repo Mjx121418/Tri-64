@@ -3,6 +3,7 @@
 #include "LevelScript/test_collision.h"
 #include "LevelScript/test_level_script.h"
 #include "LevelScript/test_object.h"
+#include "Log.h"
 #include "Memory/segment.h"
 #include "Scripts/geo_layout.h"
 #include "tree_printer.h"
@@ -18,7 +19,8 @@ int main() {
     seg_table.loadSegment(0x10, 0, sm64_geo_fixture::segment_10.size());
     SegmentedAddress entry {0x0E, 0};
 
-    GeoLayoutProcessor processor(seg_table);
+    WarningLog warnings;
+    GeoLayoutProcessor processor(seg_table, warnings);
     std::unique_ptr<GraphNode> root = processor.processGeoLayout(entry);
     printNodeTree(*root, 0);
 
@@ -34,5 +36,6 @@ int main() {
     testDisplayList();
     testMatrixSupport();
     testExportObj();
+    testHackRobustness();
     return 0;
 }

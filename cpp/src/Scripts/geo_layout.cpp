@@ -1,6 +1,7 @@
 #include "geo_layout.h"
 
-GeoLayoutProcessor::GeoLayoutProcessor(SegmentTable &seg_table) : seg_table(seg_table) {
+GeoLayoutProcessor::GeoLayoutProcessor(SegmentTable &seg_table, WarningLog &warnings) :
+    seg_table(seg_table), warnings_(warnings) {
     // The arrays are re-initialised by every processGeoLayout call.
 }
 
@@ -540,8 +541,46 @@ std::unique_ptr<GraphNode> GeoLayoutProcessor::processGeoLayout(SegmentedAddress
     geo_layout_command = seg_ptr;
 
     while (!geo_layout_command.isNull()) {
-        uint8_t command = seg_table.read(geo_layout_command);
-        command_data = seg_table.data(geo_layout_command);
+        uint8_t command;
+        try {
+            command = seg_table.read(geo_layout_command);
+            command_data = seg_table.data(geo_layout_command);
+        } catch (const std::out_of_range &e) {
+            // 越界的 geo 地址（hack 可能引用了主段之外/未加载的数据）：跳过该
+            // geo（返回空节点），而不是抛异常让整个提取崩溃。游戏同样会读垃圾，
+            // 只是没有越界检查。
+            const size_t seg_size = [&]() {
+                try {
+                    return seg_table.data({geo_layout_command.seg, 0}).size();
+                } catch (...) {
+                    return size_t(0);
+                }
+            }();
+            warnings_.add(
+                "geo",
+                "the geo layout address 0x" + [&]() {
+                    char buf[16];
+                    std::snprintf(buf, sizeof(buf), "%08X",
+                                  (geo_layout_command.seg << 24) | geo_layout_command.offset);
+                    return std::string(buf);
+                }() +
+                    " (segment " + std::to_string(geo_layout_command.seg) + ", offset 0x" +
+                    [&]() {
+                        char buf[16];
+                        std::snprintf(buf, sizeof(buf), "%06X", geo_layout_command.offset);
+                        return std::string(buf);
+                    }() +
+                    ") is past the end of its segment (" +
+                    (seg_size ? ("0x" + [&]() {
+                                    char buf[16];
+                                    std::snprintf(buf, sizeof(buf), "%zX", seg_size);
+                                    return std::string(buf);
+                                }() + " bytes")
+                              : "segment not loaded") +
+                    "); the referenced model/area geometry was skipped (" +
+                    std::string(e.what()) + ")");
+            return nullptr;
+        }
 
         switch (command) {
             case 0x00:

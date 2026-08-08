@@ -2,6 +2,7 @@
 #define LEVEL_SCRIPT_H
 
 #include "Level/area.h"
+#include "Log.h"
 #include "Memory/segment.h"
 #include "Scripts/geo_layout.h"
 #include <cstdint>
@@ -37,6 +38,7 @@ class LevelScriptVM {
     std::vector<int16_t> argument_stack;
     SegmentTable &seg_table;
     LevelCommand current_command;
+    WarningLog &warnings_;
 
     // Game state, mirrors the relevant decomp globals (gCurrSaveFileNum,
     // gCurrCourseNum, gCurrActNum, gCurrLevelNum, gCurrAreaIndex).
@@ -180,7 +182,7 @@ class LevelScriptVM {
     void cmdGetOrSetVar();
 
 public:
-    LevelScriptVM(SegmentTable &seg_table, Level &level);
+    LevelScriptVM(SegmentTable &seg_table, Level &level, WarningLog &warnings);
 
     // Runs the script at `entry` until it terminates. For a static export the
     // level is considered loaded as soon as the script would pause at

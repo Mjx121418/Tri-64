@@ -30,13 +30,13 @@ does not need to consume every extracted datum.
 
 The stages are loosely coupled:
 
-| Stage | Responsibility | Must not |
-|---|---|---|
-| Level Script | segment table, memory loading, object spawning, area management, geo entry points | render geometry, interpret display lists |
-| Geo Layout | graph node hierarchy, transformations, render layers, object models | decode Fast3D |
-| Fast3D Decoder | matrix stack, vertex cache, texture state, triangle emission | know about level scripts or graph nodes |
-| Godot Bridge | transform exported data to Godot-native data | know about the ROM |
-| Godot Renderer | render the level model, render options, camera control | know about the ROM |
+| Stage | Responsibility |
+|---|---|
+| Level Script | segment table, memory loading, object spawning, area management, geo entry points |
+| Geo Layout | graph node hierarchy, transformations, render layers, object models |
+| Fast3D Decoder | matrix stack, vertex cache, texture state, triangle emission |
+| Godot Bridge | transform exported data to Godot-native data |
+| Godot Renderer | render the level model, render options, camera control |
 
 ## Repository layout
 

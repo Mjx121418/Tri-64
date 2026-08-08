@@ -6,4 +6,8 @@
 // HMC（关卡 7，区域 1）带 ROOMS 数据。
 void testCollision();
 
+// 逐关卡提取 SMTW Dream Edition 宏（存在时），验证不会崩溃（越界的 geo /
+// 脚本地址应被跳过或转为错误，而不是抛异常终止）。每关卡 area 1。
+void testHackRobustness();
+
 #endif /* TEST_COLLISION_H */

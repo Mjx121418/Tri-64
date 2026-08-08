@@ -49,6 +49,10 @@ public:
     // { pos: Vector3, angle: Vector3(弧度), vertices, normals, classes,
     // indices }，顶点未做对象变换（与模型共用同一个 Godot 节点变换）。
     Array getObjectCollisions();
+    // 本次提取产生的警告/被守卫的异常（越界数据、跳过的模型/几何、解码失败
+    // 等），每个 { stage: String, message: String }。必须在 extractLevel 之后
+    // 调用；没有警告时返回空数组。
+    Array getWarnings();
     // 当前提取的关卡名称（从 ROM 段2的 seg2_course_name_table 提取）。
     // 必须在 extractLevel 之后调用，否则返回空字符串。
     String getLevelName();

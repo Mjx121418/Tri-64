@@ -312,7 +312,7 @@ void LevelExtractor::runLevelScript(int level_num) {
     //（menu 的 JUMP_IF(reg==0) 直接 EXIT），随后经 script_exec_level_table 按
     // 已设置的 level_num 自然分发到目标关卡脚本，关卡脚本以 CALL_LOOP 结束
     //（此时 VM 停止，即关卡已加载）。
-    LevelScriptVM vm(seg_table_, level_);
+    LevelScriptVM vm(seg_table_, level_, log_);
     vm.setLevelNum(level_num);
     vm.execute(SegmentedAddress { 0x15, 0 });
 
@@ -321,18 +321,31 @@ void LevelExtractor::runLevelScript(int level_num) {
 
 void LevelExtractor::run(int level_num, int area_index) {
     result_ = {};
-    runLevelScript(level_num);
+    log_.clear();
+    try {
+        runLevelScript(level_num);
+    } catch (const std::out_of_range &e) {
+        // 关卡脚本执行过程中的越界数据（hack 的坏地址等）：转成错误而非崩溃。
+        log_.add("extract", "level script out of range: " + std::string(e.what()));
+        result_ = {};
+        result_.error = "level script out of range: " + std::string(e.what());
+        result_.warnings = log_.entries();
+        return;
+    }
     if (!ok_) {
         result_.error = error_;
+        result_.warnings = log_.entries();
         return;
     }
 
     try {
         extractArea(level_num, area_index);
     } catch (const std::out_of_range &e) {
+        log_.add("extract", "extraction failed: " + std::string(e.what()));
         result_ = {};
         result_.error = "extraction failed: " + std::string(e.what());
     }
+    result_.warnings = log_.entries();
 }
 
 // 提取 area_index 区域的几何/对象/碰撞（run 的第二步；抛异常表示数据越界）。
@@ -355,6 +368,16 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
         Collision::CollisionDecoder collision_decoder(seg_table_);
         collision_decoder.run(area.terrain_addr, area.rooms_addr);
         result_.collision = collision_decoder.data();
+        if (!result_.collision.ok) {
+            log_.add("collision",
+                     "the level's terrain collision data at segment " +
+                         std::to_string(area.terrain_addr.seg) + " offset 0x" + [&]() {
+                             char buf[16];
+                             std::snprintf(buf, sizeof(buf), "%06X", area.terrain_addr.offset);
+                             return std::string(buf);
+                         }() +
+                         " could not be decoded: " + result_.collision.error);
+        }
     }
 
     // 收集该区域的所有 DL（按渲染层），合并进一个 GBI::Mesh（去重键与 OBJ 导出
@@ -384,7 +407,7 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     }
 
     GBI::Mesh &merged = result_.mesh;
-    GBI::DLInterpreter interp(seg_table_);
+    GBI::DLInterpreter interp(seg_table_, log_);
     for (size_t i = 0; i < dls.size(); i++) {
         // 首个 DL 复位 RDP/RSP 状态，其余继承上一个 DL 留下的渲染寄存器。
         GBI::Mesh &mesh = interp.run(dls[i].dl, /*reset_state=*/i == 0);
@@ -399,6 +422,16 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
             if (tex_decoder.run(merged.materials[m], segAddress(merged.material_images[m]),
                                 merged.material_tlut[m])) {
                 result_.textures[m] = tex_decoder.texture();
+            } else {
+                log_.add("texture",
+                         "material " + std::to_string(m) + " (image 0x" + [&]() {
+                             char buf[16];
+                             std::snprintf(buf, sizeof(buf), "%08X",
+                                           merged.material_images[m]);
+                             return std::string(buf);
+                         }() +
+                             ") could not be decoded to RGBA8; it renders as a flat color: " +
+                             tex_decoder.error());
             }
         }
     }
@@ -506,9 +539,12 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
             const int16_t anim_index = (obj.animate_index >= 0) ? obj.animate_index : 0;
             frame0.emplace(seg_table_, obj.addr(ObjectExtract::F::Animations), anim_index);
         }
-        ObjectExtract::ObjectModelDecoder model_decoder(seg_table_);
-        model_decoder.runModel(level_.loaded_graph_node[obj.model_id].get(),
-                               frame0 ? &*frame0 : nullptr);
+        ObjectExtract::ObjectModelDecoder model_decoder(seg_table_, log_);
+        const GraphNode *node = level_.loaded_graph_node[obj.model_id].get();
+        if (node == nullptr) {
+            continue; // geo 未加载（越界/无效地址被跳过）
+        }
+        model_decoder.runModel(node, frame0 ? &*frame0 : nullptr);
         ObjectExtract::ObjectModel model = model_decoder.model();
         if (model.mesh.indices.empty()) {
             continue;
@@ -530,6 +566,22 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
         }
         collision_decoder.runObject(obj.collision_data);
         result_.object_collisions[i] = collision_decoder.data();
+        if (!result_.object_collisions[i].ok) {
+            log_.add("collision",
+                     "the collision model of object " + std::to_string(i) +
+                         " (behavior 0x" + [&]() {
+                             char buf[16];
+                             std::snprintf(buf, sizeof(buf), "%08X",
+                                           (uint32_t(obj.behavior.seg) << 24) |
+                                               (obj.behavior.offset & 0xFFFFFF));
+                             return std::string(buf);
+                         }() + ", collision data at segment " +
+                         std::to_string(obj.collision_data.seg) + " offset 0x" + [&]() {
+                             char buf[16];
+                             std::snprintf(buf, sizeof(buf), "%06X", obj.collision_data.offset);
+                             return std::string(buf);
+                         }() + ") could not be decoded: " + result_.object_collisions[i].error);
+        }
     }
     result_.mario_start_pos = { static_cast<float>(level_.mario_start_pos.x),
                                 static_cast<float>(level_.mario_start_pos.y),

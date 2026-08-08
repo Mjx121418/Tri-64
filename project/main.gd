@@ -17,6 +17,8 @@ extends Node3D
 @onready var room_panel: PanelContainer = %RoomPanel
 @onready var room_list: VBoxContainer = %RoomList
 @onready var all_rooms_checkbox: CheckButton = %AllRooms
+@onready var warning_dialog: AcceptDialog = %WarningDialog
+@onready var warning_list: RichTextLabel = %WarningList
 
 # 碰撞房间开关状态（碰撞模式下按房间显示/隐藏静态碰撞表面）。
 var _collision_vertices: PackedVector3Array = PackedVector3Array()
@@ -187,9 +189,27 @@ func _extract_and_render() -> void:
 		return
 	if not rom_manager.extractLevel(selected_level, selected_area):
 		status_label.text = "Extraction failed for level %d." % selected_level
+		_show_warnings()
 		return
 	_render_current()
 	_place_camera()
+	_show_warnings()
+
+## 提取结束后，把本次提取记录到的警告/被守卫的异常（越界数据、跳过的模型/几何、
+## 解码失败等）显示在一个弹窗里；没有警告时不弹。
+func _show_warnings() -> void:
+	var warnings: Array = rom_manager.getWarnings()
+	if warnings.is_empty():
+		return
+	const MAX_SHOWN := 20
+	var lines := PackedStringArray()
+	for i in min(warnings.size(), MAX_SHOWN):
+		var w: Dictionary = warnings[i]
+		lines.append("[b]%s[/b]: %s" % [w.stage, w.message])
+	if warnings.size() > MAX_SHOWN:
+		lines.append("... and %d more warning(s)." % (warnings.size() - MAX_SHOWN))
+	warning_list.text = "\n".join(lines)
+	warning_dialog.popup_centered()
 
 func _render_current() -> void:
 	_clear_model()

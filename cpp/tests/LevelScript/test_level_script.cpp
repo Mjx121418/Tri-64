@@ -151,7 +151,7 @@ LevelScriptSetup setupLevelScript(const std::filesystem::path &rom_path) {
     loadCommonSegments(setup.seg_table, setup.rom.data, scripts_start);
     LevelExtract::loadMainSegment(setup.seg_table, setup.rom.data);
 
-    LevelScriptVM vm(setup.seg_table, setup.level);
+    LevelScriptVM vm(setup.seg_table, setup.level, setup.warnings);
     vm.setLevelNum(LEVEL_BOB);
     vm.execute(SegmentedAddress { 0x15, 0 });
 
@@ -357,7 +357,7 @@ void testDisplayList() {
             std::vector<GBI::Material> merged_materials;
             std::vector<uint32_t> merged_images; // 与 merged_materials 并行：纹理源图像
             for (const auto &dl : dls) {
-                GBI::DLInterpreter interp(setup.seg_table);
+                GBI::DLInterpreter interp(setup.seg_table, setup.warnings);
                 GBI::Mesh &mesh = interp.run(dl, /*reset_state=*/true);
                 const size_t triangles = mesh.indices.size() / 3;
                 printf("  DL %02x:%06x -> %zu triangles, %zu vertices, %zu materials\n",
@@ -453,7 +453,8 @@ void testMatrixSupport() {
     seg_table.rom_span = std::span(seg);
     seg_table.loadSegment(0x1E, 0, static_cast<uint32_t>(seg.size()));
 
-    GBI::DLInterpreter interp(seg_table);
+    WarningLog warnings;
+    GBI::DLInterpreter interp(seg_table, warnings);
     GBI::Mesh &mesh = interp.run(SegmentedAddress { 0x1E, 0x70 }, /*reset_state=*/true);
     printf("test_matrix: triangles=%zu, vertices=%zu\n", mesh.indices.size() / 3,
            mesh.vertices.size());
@@ -567,7 +568,8 @@ void exportDlsToObj(const SegmentTable &seg_table, const std::vector<SegmentedAd
     std::vector<uint32_t> tri_materials; // 每三角形 → 统一材质表索引
 
     for (const auto &dl : dls) {
-        GBI::DLInterpreter interp(seg_table);
+        WarningLog warnings;
+        GBI::DLInterpreter interp(seg_table, warnings);
         GBI::Mesh &mesh = interp.run(dl, /*reset_state=*/true);
 
         const uint32_t base = static_cast<uint32_t>(merged.vertices.size());
@@ -812,7 +814,8 @@ void testDlRspData() {
     seg_table.rom_span = std::span(seg);
     seg_table.loadSegment(0x0E, 0, static_cast<uint32_t>(seg.size()));
 
-    GBI::DLInterpreter interp(seg_table);
+    WarningLog warnings;
+    GBI::DLInterpreter interp(seg_table, warnings);
     GBI::Mesh &mesh = interp.run(SegmentedAddress { 0x0E, 0 }, /*reset_state=*/true);
 
     if (mesh.indices.size() != 3) {

@@ -2,6 +2,7 @@
 #define TEST_LEVEL_SCRIPT_H
 
 #include "Level/area.h"
+#include "Log.h"
 #include "Memory/segment.h"
 #include "ROM.h"
 #include <filesystem>
@@ -60,6 +61,7 @@ struct LevelScriptSetup {
     ROM rom; // 必须声明在 seg_table 之前：seg_table 的 span 指向 rom.data
     SegmentTable seg_table;
     Level level;
+    WarningLog warnings;
     bool ok {false};
 };
 

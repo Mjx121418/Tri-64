@@ -402,7 +402,7 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
         if (dlt.dl.seg < 0 || dlt.dl.seg > 31 || (dlt.dl.seg == 0 && dlt.dl.offset == 0)) {
             continue;
         }
-        GBI::DLInterpreter interp(seg_table_);
+        GBI::DLInterpreter interp(seg_table_, warnings_);
         // 对象模型暂按逐 DL 全新状态解释（不做跨 DL 状态继承，见 Engine.md §5）。
         GBI::Mesh &decoded = interp.run(dlt.dl, /*reset_state=*/true);
         ObjectExtract::applyTransform(decoded, dlt.transform);

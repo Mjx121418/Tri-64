@@ -189,6 +189,7 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("getObjectModels"), &GodotBridge::getObjectModels);
     ClassDB::bind_method(D_METHOD("getCollisionTriangles"), &GodotBridge::getCollisionTriangles);
     ClassDB::bind_method(D_METHOD("getObjectCollisions"), &GodotBridge::getObjectCollisions);
+    ClassDB::bind_method(D_METHOD("getWarnings"), &GodotBridge::getWarnings);
     ClassDB::bind_method(D_METHOD("getLevelName"), &GodotBridge::getLevelName);
     ClassDB::bind_method(D_METHOD("getLevelNameFor", "level_num"),
                          &GodotBridge::getLevelNameFor);
@@ -382,6 +383,18 @@ Array GodotBridge::getObjectCollisions() {
 
 String GodotBridge::getLevelName() {
     return String(result_.level_name.c_str());
+}
+
+// 本次提取的警告/被守卫的异常：{ stage, message } 数组（供 UI 弹窗展示）。
+Array GodotBridge::getWarnings() {
+    Array out;
+    for (const auto &w : result_.warnings) {
+        Dictionary d;
+        d["stage"] = String(w.stage.c_str());
+        d["message"] = String(w.message.c_str());
+        out.push_back(d);
+    }
+    return out;
 }
 
 String GodotBridge::getLevelNameFor(int level_num) {

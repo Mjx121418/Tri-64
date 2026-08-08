@@ -184,4 +184,20 @@ oversampling_override = 1.0
 title = "Open ROM"
 ok_button_text = "Open"
 
+[node name="WarningDialog" type="AcceptDialog" parent="UI" unique_id=2000000100]
+unique_name_in_owner = true
+title = "Extraction warnings"
+size = Vector2i(560, 320)
+ok_button_text = "OK"
+
+[node name="WarningList" type="RichTextLabel" parent="UI/WarningDialog" unique_id=2000000101]
+unique_name_in_owner = true
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+scroll_active = true
+scroll_following = true
+
 [connection signal="item_selected" from="UI/LeftPanel/VBox/ObjectList" to="." method="_on_object_list_item_selected"]

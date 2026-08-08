@@ -4,6 +4,7 @@
 #include "Level/area.h"
 #include "Level/dl_interpreter.h"
 #include "Level/texture.h"
+#include "Log.h"
 #include "Memory/segment.h"
 #include "Scripts/Collision.h"
 #include "Scripts/preset_tables.h"
@@ -165,10 +166,12 @@ private:
 // runModel(node[, frame0]) 重置并解码一个对象模型，结果经 model() 取得。
 class ObjectModelDecoder {
     const SegmentTable &seg_table_;
+    WarningLog &warnings_;
     ObjectModel model_;
 
 public:
-    explicit ObjectModelDecoder(const SegmentTable &seg_table) : seg_table_(seg_table) {}
+    explicit ObjectModelDecoder(const SegmentTable &seg_table, WarningLog &warnings) :
+        seg_table_(seg_table), warnings_(warnings) {}
 
     // 把 src 追加进 merged：顶点/索引加 base 偏移，材质按内容 + 纹理源图像去重。
     static void mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src);

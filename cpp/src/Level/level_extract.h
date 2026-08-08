@@ -4,6 +4,7 @@
 #include "Level/Object.h"
 #include "Level/dl_interpreter.h"
 #include "Level/texture.h"
+#include "Log.h"
 #include "Memory/segment.h"
 #include "ROM.h"
 #include "Scripts/Collision.h"
@@ -35,6 +36,8 @@ struct Result {
                                                     // LOAD_COLLISION_DATA 的碰撞（本地空间）
     Movtex::Data movtex;          // 移动纹理四边形（水/熔岩表面，Y 由水盒补充）
     Collision::Data collision;          // 解码后的碰撞数据（表面/顶点/水盒/房间/特殊对象）
+    std::vector<Warning> warnings;      // 提取过程中的警告/被守卫的异常（越界数据、
+                                        // 跳过的模型/几何、解码失败等），供 UI 弹窗展示
     std::vector<int> areas;              // 该关卡所有有效区域索引（有 root_node）
     std::string level_name;             // 从 ROM 段2提取的关卡名称（可为空）
     Vec3<float> mario_start_pos {};     // Mario 的初始位置（关卡脚本 cmdSetMarioStartPos）
@@ -67,6 +70,7 @@ class LevelExtractor {
     Result result_;
     bool ok_ {false};
     std::string error_;
+    WarningLog log_; // 本次提取的警告/被守卫的异常（run 时清空，结束后拷入 result_）
 
     // 定位脚本段、加载公共段、运行目标关卡的关卡脚本，构建段表与场景图。
     void runLevelScript(int level_num);
