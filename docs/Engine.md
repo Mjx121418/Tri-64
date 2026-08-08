@@ -180,19 +180,23 @@ microcode, so all GBI encodings here are the F3D layouts.
 - **Matrix stack**: we keep a float model-view stack (the RSP is fixed-point). Projection
   matrices are recorded but not applied (Godot projects). No near-plane clipping.
 - **Vertices**: transformed by the model-view matrix; texture scale from `G_TEXTURE`
-  applied. The 4th word is kept as the normal/color.
-- **Lights (Phase 2)**: `gsSPLight` (`G_MOVEMEM G_MV_L0-7`) is parsed into `RSPState`
-  (`Light` = col/dir), and `G_MOVEWORD G_MW_NUMLIGHT`/`G_MW_LIGHTCOL`/`G_MW_FOG` are
-  parsed. **Per-vertex shade** is computed in the DL interpreter:
-  `Σ max(0, n̂·l̂)·color` for the directional lights (slots 0..num_lights-1) plus the
-  ambient (slot num_lights, contributed in full). `num_lights` defaults to 1 (the
-  game's persistent NUMLIGHTS_1; terrain DLs don't set G_MW_NUMLIGHT). The shade is
-  stored as the vertex color; the bridge exports it for lit materials and Godot renders
-  `texel × shade` (textured) or `shade` (flat). Note: the ambient `Ambient_t` is only 8
-  bytes (no dir), so `gsSPLight(&light.a, 2)` over-reads into the next light — the
-  ambient's "dir" bytes are the directional's color, so it is identified by slot, not
-  `dir==0`. Lit geometry with no loaded lights falls back to white (no modulation).
-  Pre-Phase-2 `G_MOVEMEM`/`G_MOVEWORD` were ignored entirely.
+  applied. The **normal is also transformed by the model-view matrix's 3×3** (before,
+  only the position was); the 4th word is kept as the normal/color.
+- **Lights (Phase 2 + world space)**: `gsSPLight` (`G_MOVEMEM G_MV_L0-7`) is parsed into
+  `RSPState` (`Light` = col/dir), and `G_MOVEWORD G_MW_NUMLIGHT`/`G_MW_LIGHTCOL`/
+  `G_MW_FOG` are parsed. The ambient is at slot `num_lights` (the game's convention;
+  `Ambient_t` is only 8 bytes, so `gsSPLight(&light.a, 2)` over-reads into the next
+  light — identified by slot, not `dir==0`). `num_lights` defaults to 1 (the game's
+  persistent NUMLIGHTS_1; terrain DLs don't set G_MW_NUMLIGHT).
+  **Rendering uses a Godot shader** (`sm64_lighting.gdshader`) that recomputes the
+  world-space shade per fragment: `shade = ambient + Σ max(0, n̂·l̂)·color`, with the
+  world normal computed in the **vertex stage** via `MODEL_MATRIX` (so Godot's node/
+  instance rotation is included → per-instance correct) and dotted with the material's
+  exported world-space lights. The bridge exports each material's
+  `num_lights`/`ambient`/`light_dirs`/`light_cols` from the captured `Lights`. The
+  per-vertex shade is still baked in C++ (`ambient + Σ …` against the local normal)
+  for the OBJ export and the castle-lighting test; lit materials without captured
+  lights fall back to white (no modulation).
 - **`G_TEXTURE`**: F3D on-bit = `w0 bit 0`; tile/lod (bits 8-13) recorded. We always
   sample render tile 0 (SM64's convention); multi-tile/mipmap DLs are not emulated.
 - **`G_TEXTURE_GEN`** (environment mapping): not emulated (the star's reflection-mapped

@@ -402,6 +402,10 @@ void DLInterpreter::snapshotMaterial() {
     material_.tex_line = state_.tex_line;
     material_.lut_type = state_.lut_type;
     material_.lit = (state_.geometry_mode & G_LIGHTING) != 0;
+    // 灯光：快照当前 RSP 灯光槽（含环境光所在的槽 num_lights）。
+    material_.lights.light = state_.lights;
+    material_.lights.num_lights = state_.num_lights;
+    material_.lights.loaded = state_.lights_loaded;
     // RDP 采样纹理由 G_SETCOMBINE 决定（用 TEXEL0/1 才取纹理）。G_TEXTURE_ENABLE
     // 由父 DL 设置、子 DL 常不再 G_ON，跨顶层 DL 持久后这里仍以 combine 为准。
     material_.combine_uses_texel = combineUsesTexel(state_.combine_w0, state_.combine_w1);
@@ -591,10 +595,18 @@ void DLInterpreter::appendVertex(const Vtx &v) {
     mv.position[0] = m[0][0] * x + m[1][0] * y + m[2][0] * z + m[3][0];
     mv.position[1] = m[0][1] * x + m[1][1] * y + m[2][1] * z + m[3][1];
     mv.position[2] = m[0][2] * x + m[1][2] * y + m[2][2] * z + m[3][2];
-    // coordinate_or_normal 为有符号法线（-128..127）
-    mv.normal[0] = static_cast<int8_t>(v.coordinate_or_normal[0]) / 127.0f;
-    mv.normal[1] = static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f;
-    mv.normal[2] = static_cast<int8_t>(v.coordinate_or_normal[2]) / 127.0f;
+    // coordinate_or_normal 为有符号法线（-128..127）。用模型视图矩阵的 3x3
+    // 线性部分变换法线（同 applyTransform；Godot 实例旋转再叠加），得到世界/
+    // 模型空间法线供渲染端光照。
+    {
+        const Vec3<float> ln {static_cast<int8_t>(v.coordinate_or_normal[0]) / 127.0f,
+                              static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f,
+                              static_cast<int8_t>(v.coordinate_or_normal[2]) / 127.0f};
+        const Vec3<float> wn = transformNormal(m, ln);
+        mv.normal[0] = wn.x;
+        mv.normal[1] = wn.y;
+        mv.normal[2] = wn.z;
+    }
     // 纹理坐标：原始 16 位 → 纹素（16-bit 纹理每纹素 32 个原始单位，8-bit 为 16；
     // 见 movtex_make_quad_vertex：scale=1（平铺 1 次）四边形 = 992 原始单位 =
     // 31 纹素），再乘 G_TEXTURE 的 S/T 缩放（RSP 在 dma_VTX 里执行
@@ -630,7 +642,7 @@ void DLInterpreter::appendVertex(const Vtx &v) {
             b = 0.0f;
             const int n = std::min<int>(state_.num_lights, 7);
             for (int i = 0; i < n; i++) { // 方向光
-                const RSPState::Light &L = state_.lights[i];
+                const Light &L = state_.lights[i];
                 if (L.col[0] == 0 && L.col[1] == 0 && L.col[2] == 0) {
                     continue;
                 }
@@ -651,7 +663,7 @@ void DLInterpreter::appendVertex(const Vtx &v) {
                 }
             }
             // 环境光：槽 num_lights（贡献全量 col）
-            const RSPState::Light &A = state_.lights[state_.num_lights];
+            const Light &A = state_.lights[state_.num_lights];
             r += A.col[0];
             g += A.col[1];
             b += A.col[2];

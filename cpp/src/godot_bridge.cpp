@@ -126,9 +126,37 @@ Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &text
                 break;
         }
         d["alpha"] = static_cast<int64_t>(alpha);
+        // 灯光（world 空间，供光照 shader 用）：方向光槽 0..num_lights-1 +
+        // 环境光（槽 num_lights）。loaded=false 或 num_lights=0 → 无灯光，
+        // 渲染端按不调光处理（shade = 白）。
+        d["num_lights"] = static_cast<int64_t>(state.lights.loaded ? state.lights.num_lights : 0);
+        if (state.lights.loaded) {
+            PackedVector3Array light_dirs;
+            PackedColorArray light_cols;
+            const int n = std::min<int>(state.lights.num_lights, 8);
+            for (int i = 0; i < n; i++) {
+                const auto &L = state.lights.light[i];
+                light_dirs.push_back(Vector3(L.dir[0] / 127.0f, L.dir[1] / 127.0f,
+                                             L.dir[2] / 127.0f));
+                light_cols.push_back(Color(L.col[0] / 255.0f, L.col[1] / 255.0f,
+                                           L.col[2] / 255.0f));
+            }
+            d["light_dirs"] = light_dirs;
+            d["light_cols"] = light_cols;
+            const auto &A = state.lights.light[state.lights.num_lights];
+            d["ambient"] = Color(A.col[0] / 255.0f, A.col[1] / 255.0f, A.col[2] / 255.0f);
+        }
         // G_SETTILE 的 S/T clamp 模式 → Godot texture_repeat（true=重复/平铺）。
         d["repeat_s"] = !state.tex_clamp_s;
         d["repeat_t"] = !state.tex_clamp_t;
+        // 两轴都 CLAMP 时，shader 用 UV 夹取到图块内容区域（sl..sh, tl..th 归一化）。
+        if (state.tex_clamp_s && state.tex_clamp_t && state.tex_width() > 0 &&
+            state.tex_height() > 0) {
+            const float w = static_cast<float>(state.tex_width());
+            const float h = static_cast<float>(state.tex_height());
+            d["uv_clamp"] = Vector4(state.tex_sl / (4.0f * w), state.tex_tl / (4.0f * h),
+                                    state.tex_sh / (4.0f * w), state.tex_th / (4.0f * h));
+        }
         if (has_tex) {
             const GBI::Texture &tex = textures[m];
             d["tex_width"] = static_cast<int64_t>(tex.width);

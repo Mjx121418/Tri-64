@@ -20,6 +20,10 @@ extends Node3D
 @onready var wireframe_option: CheckButton = %WireframeOption
 @onready var render_mode_option: OptionButton = %RenderModeOption
 
+# SM64 世界空间光照 shader（受光材质用；Godot 的 NORMAL 含节点旋转 → 对象实例
+# 旋转后光照正确）。
+const _sm64_lighting_shader := preload("res://sm64_lighting.gdshader")
+
 # 关卡编号 = decomp include/level_table.h 的 LevelNum（BOB = 9）。
 # 名称先从 ROM 段2提取；提取失败时回退到这些硬编码名称。
 const LEVELS := [
@@ -438,7 +442,7 @@ func _clear_model() -> void:
 ## 共享这份资源。
 func _build_object_mesh(md: Dictionary) -> Dictionary:
 	var am := ArrayMesh.new()
-	var surface_materials: Array[StandardMaterial3D] = []
+	var surface_materials: Array[Material] = []
 	var material_cache := {}
 	for me in md.meshes:
 		var arrays := []
@@ -456,26 +460,35 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 		surface_materials.append(material_cache[mi])
 	return {"mesh": am, "surface_materials": surface_materials}
 
-## 根据材质字典构建 StandardMaterial3D。
-func _build_material(md: Dictionary) -> StandardMaterial3D:
+## 根据材质字典构建材质。受光且不透明的材质用世界空间光照 shader（对象实例
+## 旋转后光照正确）；其余走 StandardMaterial3D（未纹理 SHADE/PRIM/ENV 或纹理）。
+func _build_material(md: Dictionary) -> Material:
+	var color_source: int = md.color_source
+	var alpha: int = md.alpha
+	# 纹理图像（两个路径都用：shader 设 albedo，StandardMaterial3D 设纹理+alpha）。
+	var tex_img: Image = null
+	if md.textured:
+		tex_img = Image.create_from_data(md.tex_width, md.tex_height, false,
+				Image.FORMAT_RGBA8, md.tex_pixels)
+	# 受光 + 有灯光 + 不透明（纹理无 alpha、材质 alpha 满）→ 光照 shader。
+	if md.lit and md.num_lights > 0 and alpha >= 255 \
+			and (md.textured and not _has_alpha(tex_img) or not md.textured):
+		var light_tex: ImageTexture = null
+		if md.textured:
+			light_tex = ImageTexture.create_from_image(tex_img)
+		return _build_lighting_material(md, light_tex)
+
 	var mat := StandardMaterial3D.new()
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	# SM64 是无光照渲染（fast3d 的 G_LIGHTING 仅用于物体），导出模型用 Unshaded
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	# combine 颜色源（C++ 端 GBI::CombineSource）：Combined=0, Texel0=1, Texel1=2,
-	# Primitive=3, Shade=4, Env=5。未纹理时 SHADE 用顶点色作底色，PRIMITIVE/ENV
-	# 用 prim/env 颜色。
-	var color_source: int = md.color_source
-	var alpha: int = md.alpha
 	if md.textured:
-		var img := Image.create_from_data(md.tex_width, md.tex_height, false,
-				Image.FORMAT_RGBA8, md.tex_pixels)
-		mat.albedo_texture = ImageTexture.create_from_image(img)
+		mat.albedo_texture = ImageTexture.create_from_image(tex_img)
 		# G_SETTILE 的 S/T clamp 模式：任一轴 WRAP 才开启重复，否则关闭
 		# （Godot 的重复标志是两轴共用的；SM64 图块两轴模式基本一致）。
 		mat.set_flag(BaseMaterial3D.FLAG_USE_TEXTURE_REPEAT,
 				md.repeat_s or md.repeat_t)
-		if _has_alpha(img):
+		if _has_alpha(tex_img):
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		# combine 采样 SHADE：texel × 顶点色（shade 由 C++ 端按灯光烘焙）。
 		if md.use_vertex:
@@ -496,6 +509,27 @@ func _build_material(md: Dictionary) -> StandardMaterial3D:
 		if alpha < 255:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	return mat
+
+## 受光材质的世界空间光照 shader：shade = ambient + Σ max(0, n̂·l̂)·color，
+## 用 Godot 的 NORMAL（含实例旋转）点乘世界空间灯光；texel × shade 或 shade。
+func _build_lighting_material(md: Dictionary, tex: ImageTexture) -> ShaderMaterial:
+	var sm := ShaderMaterial.new()
+	sm.shader = _sm64_lighting_shader
+	if tex != null:
+		sm.set_shader_parameter("albedo_tex", tex)
+		sm.set_shader_parameter("use_texel", true)
+		# 两轴都 CLAMP 才关重复（shader 里用 UV clamp；与 StandardMaterial3D 的
+		# FLAG_USE_TEXTURE_REPEAT 近似一致）。
+		sm.set_shader_parameter("clamp_uv", not (md.repeat_s or md.repeat_t))
+		if md.has("uv_clamp"):
+			sm.set_shader_parameter("uv_clamp", md.uv_clamp)
+	else:
+		sm.set_shader_parameter("use_texel", false)
+	sm.set_shader_parameter("num_lights", md.num_lights)
+	sm.set_shader_parameter("ambient", md.ambient)
+	sm.set_shader_parameter("light_dirs", md.light_dirs)
+	sm.set_shader_parameter("light_cols", md.light_cols)
+	return sm
 
 ## SM64 的 IA16 圆形/遮罩纹理把形状放在 alpha 里（RGB 可能全黑），
 ## 有半透明纹素时必须启用 alpha 混合，否则会显示为黑块。

@@ -154,6 +154,49 @@ void testObject() {
             } else {
                 printf("test_object: wooden-post children=%zu\n", wooden_posts);
             }
+
+            // 世界空间光照：对象模型材质应携带自己的灯光（goomba 用 Lights1：
+            // 1 个方向光 + 环境光），供渲染端 shader 用。
+            bool goomba_lights = false;
+            size_t goomba_light_mats = 0;
+            for (const auto &[mid, model] : r.object_models) {
+                if (mid != 0xC0) { // MODEL_GOOMBA
+                    continue;
+                }
+                for (const auto &m : model.mesh.materials) {
+                    if (m.lit && m.lights.loaded && m.lights.num_lights >= 1) {
+                        goomba_lights = true;
+                        goomba_light_mats++;
+                    }
+                }
+            }
+            printf("test_object: goomba lit materials with lights=%zu\n", goomba_light_mats);
+            if (is_vanilla && !goomba_lights) {
+                printf("test_object: FAIL goomba materials lack captured lights\n");
+            }
+        }
+
+        // BITS（关卡 21）：八边形平台（0x39）顶面局部法线 (0,127,0)，网格导出的
+        // 法线应仍朝上（世界空间光照 shader 依赖它）。
+        {
+            LevelExtract::Result bits = LevelExtract::extract(rom, 21, 1);
+            if (bits.ok) {
+                const auto it = bits.object_models.find(0x39);
+                if (it != bits.object_models.end()) {
+                    float up_count = 0, total = 0;
+                    for (const auto &v : it->second.mesh.vertices) {
+                        total++;
+                        if (v.normal[1] > 0.9f) {
+                            up_count++;
+                        }
+                    }
+                    printf("test_object: BITS octa platform up-normals=%.0f/%.0f\n", up_count,
+                           total);
+                    if (is_vanilla && up_count < 8) { // 顶面朝上（不应反转）
+                        printf("test_object: FAIL BITS octa platform normals not up\n");
+                    }
+                }
+            }
         }
 
         // WF（关卡 24）：LAYER_TRANSPARENT_DECAL 的黄色三角形（顶点色

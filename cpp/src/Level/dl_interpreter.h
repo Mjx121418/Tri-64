@@ -3,6 +3,7 @@
 
 #include "Level/dl_command.h"
 #include "Memory/segment.h"
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -38,6 +39,26 @@ struct MeshVertex {
     uint8_t color[4];
 };
 
+// fast3d 的 Light_t（16 字节 = col[3],pad,colc[3],pad,dir[3],pad）。渲染端用它
+// 计算逐顶点 shade（ambient + Σ max(0, n̂·l̂)·color）。
+struct Light {
+    uint8_t col[3];
+    int8_t dir[3];
+
+    bool operator==(const Light &o) const {
+        return col[0] == o.col[0] && col[1] == o.col[1] && col[2] == o.col[2] &&
+               dir[0] == o.dir[0] && dir[1] == o.dir[1] && dir[2] == o.dir[2];
+    }
+};
+
+// 一组灯光：方向光槽 0..num_lights-1，环境光在槽 num_lights（游戏约定：最高编号
+// 的灯是环境光）。loaded = 本 DL 是否 gsSPLight 过。
+struct Lights {
+    std::array<Light, 8> light {};
+    uint8_t num_lights {0};
+    bool loaded {false};
+};
+
 // 材质：RDP 命令累积的渲染状态，三角形按内容归组（材质表去重）
 struct Material {
     // G_SETCOMBINE 的两个 mux 字：选择颜色/alpha 混合的 A/B/C/D 输入
@@ -67,6 +88,9 @@ struct Material {
     uint8_t tex_palette {0};         // G_SETTILE 的 palette（CI4 调色板索引）
     uint16_t tex_line {0};           // G_SETTILE 的 line（TMEM 行跨度 64 位字）
     uint8_t lut_type {0};            // OTHERMODE 的 TEXTLUT 位域（G_TT_*：CI 调色板格式）
+    // 本材质绘制时的灯光（drawTriangle 从 RSP 状态快照；两个灯光不同的三角形是
+    // 不同的材质）。渲染端据此做世界空间逐顶点光照。
+    Lights lights {};
 
     bool operator==(const Material &o) const {
         return combine_w0 == o.combine_w0 && combine_w1 == o.combine_w1
@@ -85,7 +109,11 @@ struct Material {
             && lit == o.lit
             && tex_clamp_s == o.tex_clamp_s && tex_clamp_t == o.tex_clamp_t
             && tex_palette == o.tex_palette && tex_line == o.tex_line
-            && lut_type == o.lut_type;
+            && lut_type == o.lut_type
+            && lights.loaded == o.lights.loaded && lights.num_lights == o.lights.num_lights
+            && std::equal(lights.light.begin(),
+                          lights.light.begin() + lights.num_lights + 1,
+                          o.lights.light.begin());
     }
 
     uint16_t tex_width() const {
@@ -147,12 +175,8 @@ struct RSPState {
     // SM64 传 1，所以恒为 0；纹理解码改用 G_LOADBLOCK 的 DXT 反推行宽。
     // 保留它仅为忠实记录原始命令状态（潜在 G_LOADTILE 支持）。
     uint16_t tex_image_width {0};
-    // fast3d 的 Light_t（16 字节 = col[3],pad,colc[3],pad,dir[3],pad）。
-    struct Light {
-        uint8_t col[3];
-        int8_t dir[3];
-    };
-    // 灯光槽（gsSPLight / G_MOVEMEM G_MV_L0-7）与活动灯数（G_MW_NUMLIGHT）。
+    // fast3d 的 Light_t 灯光槽（gsSPLight / G_MOVEMEM G_MV_L0-7）与活动灯数
+    // （G_MW_NUMLIGHT）。槽 num_lights 是环境光（游戏约定）。
     std::array<Light, 8> lights {};
     uint8_t num_lights {0};
     // 本 DL 是否加载过灯光（gsSPLight）。逐顶层 DL 解释会重置状态，依赖父 DL
