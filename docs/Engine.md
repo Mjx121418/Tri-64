@@ -177,13 +177,29 @@ emits a runtime DL (movtex water, envfx, paintings), billboards face the camera,
 - **Perspective command length**: `GEO_CAMERA_FRUSTUM_WITH_FUNC` is 12 bytes (opcode +
   fov/near/far + func ptr). `geo_layout.c` advances only 0x08; we advance by the actual
   command length (12 when the func flag is set) or the stream mis-aligns. (Decomp quirk.)
-- **Animated parts / billboards**: `GEO_ANIMATED_PART` frame-0 animation is baked by
-  `ObjectExtract::Frame0Animator`; each part's rotation uses `mtxfRotationXYZ`
-  (= decomp `mtxf_rotate_xyz_and_translate`, the matrix `geo_process_animated_part`
-  uses). `GEO_ROTATION`/`GEO_TRANSLATE_ROTATE` use `mtxfRotationZXY` instead (matching
-  `mtxf_rotate_zxy_and_translate`). The two conventions differ for non-yaw rotations —
-  using ZXY for animated parts laid animated objects flat (e.g. castle toads). Billboards
-  are recorded but not made camera-facing (they use the geo translation). See `Quirks.md`.
+- **Animated parts / billboards**: `GEO_ANIMATED_PART` animation is baked by
+  `ObjectExtract::Frame0Animator` at the game's first rendered frame — mirroring
+  `geo_obj_init_animation` (`animFrame = startFrame - 1`) plus the first
+  `geo_update_animation_frame`: normally advances to `startFrame`, but `ANIM_FLAG_2`
+  (0x04) does not advance (`startFrame-1` forward / `startFrame+1` backward), and a
+  `startFrame` outside the loop range wraps (`>= loopEnd` → `loopStart`, or `loopEnd-1`
+  with `ANIM_FLAG_NOLOOP`; backward `< loopStart` → `loopEnd-1`, or `loopStart` with
+  NOLOOP). The first part's translation type comes from `ANIM_FLAG_HOR_TRANS` (0x08,
+  only Y) / `ANIM_FLAG_VERT_TRANS` (0x10, only X/Z) / `ANIM_FLAG_6` (0x40, none) — using
+  frame 0 or wrong flag bits laid objects with `startFrame != 0` too low, e.g. castle
+  toads sunk 9.4 units. Each part's rotation uses `mtxfRotationXYZ` (= decomp
+  `mtxf_rotate_xyz_and_translate`, the matrix `geo_process_animated_part` uses), composed
+  as `R × T` (rotation first, then the part translation in the *unrotated* parent frame,
+  matching the decomp's direct matrix build). `GEO_ROTATION`/`GEO_TRANSLATE_ROTATE` use
+  `mtxfRotationZXY` instead (matching `mtxf_rotate_zxy_and_translate`, also `R × T`).
+  The two conventions differ for non-yaw rotations — using ZXY for animated parts laid
+  animated objects flat (e.g. castle toads), and `T × R` rotated part pivots into wrong
+  positions (Whomp feet/hands, King Bob-omb's two feet collapsing onto each other).
+  Every
+  `GEO_ANIMATED_PART` (with or without a display list) consumes a frame value and applies
+  its transform; the no-DL nodes' `{0,0}` addresses are skipped at decode. Billboards are
+  recorded but not made camera-facing
+  (they use the geo translation). See `Quirks.md`.
 - **Root / master list / shadow / object-parent / held-object**: recorded structurally;
   the master list is empty (runtime), shadow geometry is not generated, held-object
   records `playerIndex`/`func` (Phase 2).

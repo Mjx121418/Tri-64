@@ -137,10 +137,12 @@ struct Frame0Part {
     Vec3<int16_t> rotation {0, 0, 0};
 };
 
-// 逐 AP 计算动画 frame-0 值，镜像 rendering_graph_node.c 的 geo_process_animated_part
-// 属性游标：第一个 AP 按动画 flags 读取平移，之后只读旋转；平移乘
-// gCurrAnimTranslationMultiplier（animYTransDivisor == 0 时为 1.0）。next() 按
-// geo 遍历顺序返回下一个 AP 的增量；动画缺失/越界返回 nullopt。
+// 逐 AP 计算动画出生帧（游戏首次渲染的帧，通常是动画的 startFrame，但
+// ANIM_FLAG_2 时不推进、startFrame 越出循环范围时会回绕）的值，镜像
+// rendering_graph_node.c 的 geo_process_animated_part 属性游标：第一个 AP 按动画
+// flags 读取平移，之后只读旋转；平移乘 gCurrAnimTranslationMultiplier
+//（animYTransDivisor == 0 时为 1.0）。next() 按 geo 遍历顺序返回下一个 AP 的
+// 增量；动画缺失/越界返回 nullopt。
 class Frame0Animator {
 public:
     // animations: LOAD_ANIMATIONS 的目标（Animation* 数组，段地址）；
@@ -157,8 +159,9 @@ private:
     float multiplier_ {1.0f};
     SegmentedAddress index_addr_ {};   // animindex（u16 对 (start,count)）
     SegmentedAddress values_addr_ {};  // animvalue（s16）
+    int16_t frame_ {0};                // 出生帧（游戏首次渲染的帧，见构造注释）
     uint32_t attr_offset_ {0};         // 当前属性在 animindex 内的字节偏移
-    float readValue();                 // values[retrieve_animation_index(0)]
+    float readValue();                 // values[retrieve_animation_index(frame_, 0)]
     void skipAttribute();
 };
 

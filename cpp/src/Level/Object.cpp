@@ -161,16 +161,44 @@ ObjectExtract::Frame0Animator::Frame0Animator(const SegmentTable &seg_table, Seg
 
     const int16_t flags = readS16At(seg_table_, anim, 0x00);
     const int16_t divisor = readS16At(seg_table_, anim, 0x02);
+    const int16_t start_frame = readS16At(seg_table_, anim, 0x04);
+    const int16_t loop_start = readS16At(seg_table_, anim, 0x06);
+    const int16_t loop_end = readS16At(seg_table_, anim, 0x08);
     index_addr_ = segAddress(readU32At(seg_table_, anim, 0x10));
     values_addr_ = segAddress(readU32At(seg_table_, anim, 0x0C));
     if (index_addr_.isNull() || values_addr_.isNull()) {
         return;
     }
 
-    // geo_set_animation_globals：flags → 平移类型
-    constexpr int16_t kAnimFlagHorTrans = 0x1;  // 只有 Y
-    constexpr int16_t kAnimFlagVertTrans = 0x2; // 只有 X/Z
-    constexpr int16_t kAnimFlag6 = 0x20;        // 无平移
+    // 游戏出生帧（镜像 graph_node.c 的 geo_obj_init_animation +
+    // geo_update_animation_frame 首次渲染）：geo_obj_init_animation 把 animFrame
+    // 置为 startFrame + (BACKWARD ? 1 : -1)；首次 geo_update_animation_frame 在
+    // ANIM_FLAG_2（0x04）时不推进，否则向前推 1（向后减 1），越界时回绕。
+    // retrieve_animation_index 用这个帧取 animvalue。
+    constexpr int16_t kAnimFlagNOLoop = 0x01;
+    constexpr int16_t kAnimFlagBackward = 0x02;
+    constexpr int16_t kAnimFlag2 = 0x04;
+    int16_t first_frame = start_frame;
+    if (flags & kAnimFlagBackward) {
+        if (flags & kAnimFlag2) {
+            first_frame = start_frame + 1; // 不推进，停在 startFrame+1
+        } else if (first_frame < loop_start) {
+            first_frame = (flags & kAnimFlagNOLoop) ? loop_start : loop_end - 1;
+        }
+    } else {
+        if (flags & kAnimFlag2) {
+            first_frame = start_frame - 1; // 不推进，停在 startFrame-1
+        } else if (first_frame >= loop_end) {
+            first_frame = (flags & kAnimFlagNOLoop) ? loop_end - 1 : loop_start;
+        }
+    }
+    frame_ = first_frame;
+
+    // geo_set_animation_globals：flags → 平移类型（include/types.h 的 ANIM_FLAG_*）。
+    // HOR_TRANS(0x08) → 只有 Y；VERT_TRANS(0x10) → 只有 X/Z；ANIM_FLAG_6(0x40) → 无。
+    constexpr int16_t kAnimFlagHorTrans = 0x08;  // 只有 Y
+    constexpr int16_t kAnimFlagVertTrans = 0x10; // 只有 X/Z
+    constexpr int16_t kAnimFlag6 = 0x40;         // 无平移
     if (flags & kAnimFlagHorTrans) {
         translate_type_ = kTranslateY;
     } else if (flags & kAnimFlagVertTrans) {
@@ -190,13 +218,12 @@ ObjectExtract::Frame0Animator::Frame0Animator(const SegmentTable &seg_table, Seg
 }
 
 float ObjectExtract::Frame0Animator::readValue() {
-    // retrieve_animation_index(0, &attr)：0 < start ? count + 0 : count + start - 1
-    const uint16_t start = static_cast<uint16_t>(readS16At(seg_table_, index_addr_, attr_offset_));
-    const uint16_t count = static_cast<uint16_t>(readS16At(seg_table_, index_addr_, attr_offset_ + 2));
+    // retrieve_animation_index(frame_, &attr)：
+    // frame_ < limit ? start + frame_ : start + limit - 1
+    const int16_t limit = readS16At(seg_table_, index_addr_, attr_offset_);
+    const int16_t start = readS16At(seg_table_, index_addr_, attr_offset_ + 2);
     attr_offset_ += 4;
-    const int32_t idx = (0 < static_cast<int32_t>(start))
-                            ? static_cast<int32_t>(count)
-                            : static_cast<int32_t>(count) + static_cast<int32_t>(start) - 1;
+    const int32_t idx = (frame_ < limit) ? start + frame_ : start + limit - 1;
     return static_cast<float>(readS16At(seg_table_, values_addr_, static_cast<uint32_t>(idx) * 2));
 }
 
@@ -289,10 +316,11 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
             current = mtxfMul(mtxfRotationZXY(d.rotation), current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeTranslationRotation>) {
-            // mtxf_rotate_zxy_and_translate = 先旋转后平移（T × R），再预乘
+            // mtxf_rotate_zxy_and_translate：旋转后平移。行向量约定下等价于
+            // R × T（平移不被自身旋转带偏），再预乘父矩阵。
             const Mtxf tr = mtxfMul(
-                mtxfTranslation(d.translation.x, d.translation.y, d.translation.z),
-                mtxfRotationZXY(d.rotation));
+                mtxfRotationZXY(d.rotation),
+                mtxfTranslation(d.translation.x, d.translation.y, d.translation.z));
             current = mtxfMul(tr, current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeBillboard>) {
@@ -302,7 +330,8 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
         } else if constexpr (std::is_same_v<T, GraphNodeAnimatedPart>) {
             // animated part：geo 平移 + 动画 frame-0 增量。旋转用与游戏
             // geo_process_animated_part 相同的 mtxf_rotate_xyz_and_translate
-            //（XYZ 顺序），再预乘（T × R × parent）。
+            //（XYZ 顺序）。平移不参与自身旋转：行向量约定 R × T（等价于 decomp
+            // 直接写入的"旋转 + 未旋转平移"矩阵），再预乘父矩阵。
             Vec3<float> t { static_cast<float>(d.translation.x),
                             static_cast<float>(d.translation.y),
                             static_cast<float>(d.translation.z) };
@@ -315,7 +344,7 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
                     r = p->rotation;
                 }
             }
-            const Mtxf tr = mtxfMul(mtxfTranslation(t.x, t.y, t.z), mtxfRotationXYZ(r));
+            const Mtxf tr = mtxfMul(mtxfRotationXYZ(r), mtxfTranslation(t.x, t.y, t.z));
             current = mtxfMul(tr, current);
             node_dl = d.display_list;
         }

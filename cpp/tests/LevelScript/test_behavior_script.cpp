@@ -253,10 +253,13 @@ void testGoombaFrame0(LevelScriptSetup &setup) {
     }
     printf("  goomba model 0xC0: %zu verts, y in [%.1f, %.1f]\n",
            it->second.mesh.vertices.size(), miny, maxy);
-    if (miny < 0.0f) {
+    // 出生的 DROP_TO_FLOOR 让模型原点落在脚底地面：正确姿态的最低点 ≈ 0
+    //（解析正确后是 -0.3，不能按旧 T×R 的 +9.9 校准）。容差 -1 仍能抓住
+    // 未应用 frame-0 时深陷地面（约 -14）的回归。
+    if (miny < -1.0f) {
         printf("  [FAIL] goomba sinks below origin (frame-0 lift not applied)\n");
     } else {
-        printf("  goomba lifted above origin (frame-0 applied)\n");
+        printf("  goomba feet on the ground (frame-0 applied)\n");
     }
 }
 
