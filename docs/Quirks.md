@@ -114,7 +114,10 @@ level script.
 
 The game runs a behavior every frame against the object's state; we walk it once,
 statically (`BehaviorScriptVM`) — see `Engine.md` §8 for the deviations (CALL_NATIVE
-opaque, DELAY/loop termination, field-write capture, no runtime state).
+opaque, DELAY/loop termination, field-write capture, no runtime state). Random
+commands (0x13-0x17) are skipped today, but the game's PRNG is deterministic:
+`gRandomSeed16` (behavior_script.c) is a static that starts at 0 and is never seeded,
+so mirroring `random_u16` would reproduce the exact values (planned — see WORKLOG).
 
 Because behaviors are packed contiguously with no end marker, the caller must hand
 the walker the exact address of a behavior's BEGIN command (e.g. an OBJECT command's

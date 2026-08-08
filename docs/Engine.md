@@ -284,7 +284,7 @@ commands) **directly against the object** (`ObjectExtract::Object`, like the gam
 `gCurrentObject`), so `SET/ADD/OR/SUM` field arithmetic applies in command order:
 
 - **`CALL_NATIVE` is opaque** (we can't run C), skipped; random commands (0x13-0x17)
-  can't be reproduced, skipped.
+  are skipped too (see the note below).
 - **Frame break at the first `BHV_PROC_BREAK`**: `DELAY`/`DELAY_VAR`/`END_REPEAT`
   (0x06)/`END_LOOP`/`BREAK`/`DEACTIVATE` end the spawn-path walk; `END_REPEAT_CONTINUE`
   (0x07) unrolls the loop in the same frame like the game.
@@ -300,6 +300,29 @@ commands) **directly against the object** (`ObjectExtract::Object`, like the gam
   per-frame runtime children (e.g. goomba trios) are still not spawned.
 - **`cur_obj_scale` (runtime scale) is not applied** — only `GEO_SCALE` (geo data) and
   the behavior `SCALE` command. See `Quirks.md`.
+
+Not implemented (opcodes we skip, plus spawn-path side effects we don't mirror):
+
+- **Random commands (0x13-0x17)** (`SET_RANDOM_INT/FLOAT`, `SET_INT_RAND_RSHIFT`,
+  `ADD_RANDOM_FLOAT`, `ADD_INT_RAND_RSHIFT`): skipped. They only touch water/particle
+  fields in vanilla, so no render impact. Note the game's PRNG **is deterministic**
+  (`gRandomSeed16` is static, never seeded, starts at 0) — mirroring `random_u16` would
+  reproduce the exact values (see WORKLOG Next).
+- **`PARENT_BIT_CLEAR` (0x33)**: operates on the parent object's field (Mario's
+  particles), skipped.
+- **`ANIMATE_TEXTURE` (0x34)**: a per-frame `oAnimState` counter; at frame 0 the game
+  increments it once (`gGlobalTimer == 0`), which we omit. No render impact today.
+- **`SPAWN_WATER_DROPLET` (0x37)**: spawns runtime water particles; skipped.
+- **`BEGIN` special cases** (bhv_cmd_begin): `bhvMessagePanel` gets
+  `oCollisionDistance = 150`, `bhvHauntedChair`/`bhvMadPiano` init a room. We only
+  record the object list.
+- **`create_object` spawn-time effects** (object_list_processor.c): the
+  `OBJ_LIST_UNIMPORTANT` → `ACTIVE_FLAG_UNIMPORTANT` flag and the
+  GENACTOR/PUSHABLE/POLELIKE `snap_object_to_floor` call (a no-op bug — it snaps to the
+  floor beneath the origin before the caller sets the position) are not mirrored.
+- **Captured but not applied to rendering**: `oGraphYOffset` (30+ behaviors set ±values;
+  the game renders at `oPosY + oGraphYOffset`, we place at `oPosY`), `oAnimState`,
+  `oDrawingDistance`, `oCollisionDistance`.
 
 ---
 
@@ -322,7 +345,8 @@ per frame.
   billboard and the renderer skips hidden objects and applies scale + opacity.
   `DROP_TO_FLOOR` snaps spawn-path objects (signposts etc.) to the terrain.
   Billboard-facing (coins) and runtime `cur_obj_scale`/per-frame children remain
-  non-goals.
+  non-goals. `oGraphYOffset` is captured but **not applied** (the game renders at
+  `oPosY + oGraphYOffset`; we place at `oPosY`) — see §8.
 - **Frame-0 animation baked** into the model cache (`Frame0Animator`, mirrors
   `geo_process_animated_part`). See `Quirks.md`.
 - **Spawn transform**: objects are placed at their spawn pos + yaw (macro objects:
