@@ -15,27 +15,27 @@ uniform vec3 ambient = vec3(0.0);    // 环境光（槽 num_lights）
 uniform vec3 light_dirs[8];          // 方向光方向（世界空间）
 uniform vec3 light_cols[8];          // 方向光颜色
 
-varying vec3 world_normal;
+varying vec3 vertex_shade;
 
 void vertex() {
-	// MODEL_MATRIX 含节点旋转/缩放（实例朝向）→ 每实例正确的世界法线。
-	world_normal = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
-}
-
-void fragment() {
-	vec3 n = normalize(world_normal);
+	// Fast3D computes lighting when each vertex is loaded, then the RDP
+	// interpolates that shade across the triangle. Per-fragment normal lighting
+	// makes large triangles differ from SM64.
+	vec3 n = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	vec3 shade = ambient;
 	for (int i = 0; i < 8; i++) {
 		if (i < num_lights) {
 			shade += max(dot(n, normalize(light_dirs[i])), 0.0) * light_cols[i];
 		}
 	}
-	// 与 C++ 端烘焙 shade 的 min(255) 一致：clamp 到 [0,1]，否则高光 >1 被拉伸/洗白。
-	shade = clamp(shade, 0.0, 1.0);
+	vertex_shade = clamp(shade, 0.0, 1.0);
+}
+
+void fragment() {
 	vec2 uv = UV;
 	if (clamp_uv) {
 		uv = clamp(UV, uv_clamp.xy, uv_clamp.zw);
 	}
 	vec3 base = use_texel ? texture(albedo_tex, uv).rgb : vec3(1.0);
-	ALBEDO = base * shade;
+	ALBEDO = base * vertex_shade;
 }
