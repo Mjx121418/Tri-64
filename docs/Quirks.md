@@ -7,8 +7,11 @@ cross-link to it.
 
 ## level script command 0x17
 
-Currently, tri-64 only supports the vanilla rom and rom hacks made with SM64 editor.
-SM64 editor redefined the level script command 0x17.
+Tri-64 supports vanilla ROMs, SM64 Editor hacks, and the Rom Manager one-bank
+seg-`0x0E` layout documented below. Rom Manager-specific area metadata and scrolling
+textures are still deferred.
+
+SM64 Editor redefined the level script command 0x17.
 
 ## segment 2
 
@@ -18,6 +21,32 @@ In sm64 editor rom hacks, segment 2 starts at 0x800000 and ends at 0x81BB64.
 It is a faked MIO0 segment, since it has a MIO0 head.
 But the data is actually uncompressed.
 The uncompressed data starts at 0x803156.
+
+## Rom Manager one-bank segment 0x0E
+
+Rom Manager levels can reuse segment `0x0E` for two different purposes. The initial
+seg-`0x0E` load contains the level's object, warp, and scrolling-texture script data.
+After the level script has built the area records, the game remaps the same segment to
+the active area's Fast3D/model bank before loading terrain and rendering the area. The
+area bank is not a second simultaneous segment mapping.
+
+The format is identified by marker `0x4BC9189A` at seg `0x19:0x5FFC`. Each area entry
+starts at `0x19:0x5F00 + area * 0x10`; its first two u32 values are absolute ROM start
+and exclusive end offsets for the seg-`0x0E` bank. These are ROM offsets, not offsets
+relative to the seg-`0x19` level-script bank. The remaining entry bytes include the
+Rom Manager 2D-camera flag.
+
+The normal course script usually stops at `CALL_LOOP` before issuing the level-script
+`LOAD_AREA` opcode. Runtime startup instead calls `load_mario_area()` from
+`level_update.c`, which calls `load_area()` after the level script has populated the
+area records. Area changes repeat the operation after unloading the previous area.
+
+Tri-64 mirrors this boundary in `LevelExtractor`: it runs the level script with the
+initial seg-`0x0E` mapping, then, for the selected area, validates the marker and ROM
+range and calls `SegmentTable::loadSegment(0x0E, start, end)` before collision, display
+list, texture, and object-model decoding. If the marker is absent, the existing segment
+mapping is left unchanged for vanilla and other hacks. The remaining Rom Manager area
+tables and fake scrolling-texture objects are not decoded yet; see `WORKLOG.md`.
 
 ## level names
 
