@@ -2,6 +2,7 @@
 #define BEHAVIOR_SCRIPT_H
 
 #include "Level/Object.h"
+#include "Log.h"
 #include "Memory/segment.h"
 #include "Scripts/Collision.h"
 #include <array>
@@ -26,6 +27,7 @@ namespace BehaviorScript {
 
 class BehaviorScriptVM {
     const SegmentTable &seg_table_;
+    WarningLog &warnings_;
     ObjectExtract::Object *obj_ {nullptr};
     const Collision::Data *floor_ {nullptr}; // DROP_TO_FLOOR 用的地形碰撞（可空）
 
@@ -142,7 +144,8 @@ class BehaviorScriptVM {
     void cmdAdvance(uint32_t length);
 
 public:
-    explicit BehaviorScriptVM(const SegmentTable &seg_table) : seg_table_(seg_table) {}
+    BehaviorScriptVM(const SegmentTable &seg_table, WarningLog &warnings) :
+        seg_table_(seg_table), warnings_(warnings) {}
 
     // 走查 entry 处的行为脚本并作用于 obj（对象已由变换函数初始化）。floor 为
     // 当前区域的地形碰撞数据（DROP_TO_FLOOR 用；空则 DROP 无效）。对象按命令

@@ -559,7 +559,7 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     // 对每个对象执行行为脚本（作用于 Object，像游戏里作用于 gCurrentObject）：
     // 位置/角度增量、DROP_TO_FLOOR（用当前区域地形碰撞）、隐藏/缩放/模型覆盖、
     // 动画与碰撞数据地址、出生子对象列表。然后在出生帧结束时展开子对象。
-    BehaviorScript::BehaviorScriptVM behavior_vm(seg_table_);
+    BehaviorScript::BehaviorScriptVM behavior_vm(seg_table_, log_);
     for (auto &obj : objects) {
         if (obj.behavior.isNull()) {
             continue;

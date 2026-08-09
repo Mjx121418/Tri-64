@@ -20,12 +20,13 @@ namespace {
 // 正常走查到底。
 struct AnalyzedBehavior {
     ObjectExtract::Object obj;
+    WarningLog warnings;
     bool ok {false};
 };
 
 AnalyzedBehavior analyzeBehavior(const SegmentTable &seg_table, SegmentedAddress entry) {
     AnalyzedBehavior out;
-    BehaviorScript::BehaviorScriptVM vm(seg_table);
+    BehaviorScript::BehaviorScriptVM vm(seg_table, out.warnings);
     vm.run(out.obj, entry);
     out.ok = vm.ok();
     return out;
@@ -147,6 +148,10 @@ void testRobustness(const LevelScriptSetup &setup) {
         analyzeBehavior(setup.seg_table, SegmentedAddress { 0x13, 0xFFFFFF });
     if (bad.ok) {
         printf("  [FAIL] out-of-bounds behavior address returned ok\n");
+        failed++;
+    }
+    if (bad.warnings.empty()) {
+        printf("  [FAIL] out-of-bounds behavior address was not logged\n");
         failed++;
     }
     if (failed != 0) {

@@ -29,6 +29,7 @@ if int(debug_mode):
 
 sources = [
     Glob("src/*.cpp"),
+    Glob("src/ASM/*.cpp"),
     Glob("src/Memory/*.cpp"),
     Glob("src/Scripts/*.cpp"),
     Glob("src/Level/*.cpp"),

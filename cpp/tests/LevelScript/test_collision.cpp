@@ -302,7 +302,8 @@ void testHackRobustness() {
         return;
     }
     // 各关卡 area 1：越界 geo/脚本地址不应导致崩溃（提取应成功或返回错误，
-    // 而不是抛未捕获异常终止进程），且被跳过的数据应记录进 Result::warnings。
+    // 而不是抛未捕获异常终止进程）。MOP1-3 的固定地址模型在脚本 CALL 中
+    // 现在会被加载，因此这组 ROM 可能不再产生旧的 geo 越界警告。
     int ok = 0, failed = 0;
     size_t total_warnings = 0;
     for (int lv : {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
@@ -315,27 +316,10 @@ void testHackRobustness() {
             ok++;
         }
         total_warnings += r.warnings.size();
-        // SMTW 的 script_func_global_16 引用了两个主段之外的 geo 地址，应被跳过
-        // 并记录为 geo 警告（而不是崩溃）。
-        if (lv == 4) {
-            bool geo_warn = false;
-            for (const auto &w : r.warnings) {
-                if (w.stage == "geo") {
-                    geo_warn = true;
-                }
-            }
-            if (!geo_warn) {
-                printf("test_hack_robustness: FAIL level 4: no geo warnings recorded\n");
-            }
-        }
     }
     printf("test_hack_robustness: ok=%d failed=%d total_warnings=%zu\n", ok, failed,
            total_warnings);
     if (ok == 0) {
         printf("test_hack_robustness: FAIL no level extracted cleanly\n");
-    }
-    if (total_warnings == 0) {
-        printf("test_hack_robustness: FAIL no warnings recorded (bad data was skipped "
-               "but not logged)\n");
     }
 }

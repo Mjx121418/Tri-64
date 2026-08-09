@@ -21,6 +21,12 @@ void testRunLevelScript();
 // the selected area's Fast3D ROM range when seg 0x19 contains the RM marker.
 void testRomManagerAreaBank();
 
+// Verifies that LOAD_TO_FIXED_ADDRESS ranges are addressable through seg 0.
+void testFixedAddressMemory();
+
+// Verifies MOP1-3 native-loader ASM recognition and the Transcending fixture.
+void testMopLoader();
+
 // Runs the display list interpreter over every GraphNodeDisplayList in the
 // areas produced by the level script and prints triangle statistics.
 void testDisplayList();

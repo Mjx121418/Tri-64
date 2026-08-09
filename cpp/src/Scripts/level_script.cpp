@@ -1,4 +1,5 @@
 #include "level_script.h"
+#include "ASM/mop_loader.h"
 #include <bit>
 #include <cstdio>
 
@@ -354,9 +355,21 @@ void LevelScriptVM::cmdSkippableNOP() {
 }
 
 void LevelScriptVM::cmdCall() {
-    // The decomp calls a MIPS function here to compute a new value for `reg`.
-    // We cannot execute MIPS code, and for a static export the result is
-    // irrelevant (it is only used by the conditionals above), so skip the call.
+    const uint32_t function_address = current_command.cmdGet<uint32_t>(4);
+    if (const auto load = ASM::detectMOP123Loader(seg_table, function_address)) {
+        // Native return values are intentionally not emulated here. The MOP
+        // loader's relevant effect is the fixed-memory mapping, and changing
+        // reg would alter the static level-script walk.
+        if (!ASM::applyMOP123Load(seg_table, *load)) {
+            warnings_.add(
+                "level_script",
+                "recognized the MOP1-3 loader at native function 0x" + [&]() {
+                    char buf[16];
+                    std::snprintf(buf, sizeof(buf), "%08X", function_address);
+                    return std::string(buf);
+                }() + ", but its fixed ROM range could not be mapped");
+        }
+    }
     getNextCommand();
 }
 
@@ -383,8 +396,22 @@ void LevelScriptVM::cmdPopPoolState() {
 }
 
 void LevelScriptVM::cmdLoadToFixedAddress() {
-    // Requires accurate emulation of memory allocation; unused by vanilla
-    // course scripts (only the menu/goddard screens use it).
+    const uint32_t dest_addr = current_command.cmdGet<uint32_t>(4);
+    const uint32_t rom_start = current_command.cmdGet<uint32_t>(8);
+    const uint32_t rom_end = current_command.cmdGet<uint32_t>(12);
+    if (!seg_table.loadFixedAddress(dest_addr, rom_start, rom_end)) {
+        warnings_.add(
+            "level_script",
+            "LOAD_TO_FIXED_ADDRESS could not map destination 0x" + [&]() {
+                char buf[16];
+                std::snprintf(buf, sizeof(buf), "%08X", dest_addr);
+                return std::string(buf);
+            }() + " from ROM range 0x" + [&]() {
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "%08X..%08X", rom_start, rom_end);
+                return std::string(buf);
+            }());
+    }
     getNextCommand();
 }
 

@@ -1,13 +1,14 @@
 #ifndef LOG_H
 #define LOG_H
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
 // 提取过程中的警告/被守卫的异常记录。每个条目 = 一个子系统（stage）在提取时
 // 遇到越界数据 / 跳过的几何 / 解码失败等事件，供 Godot 端以弹窗展示。
 struct Warning {
-    std::string stage;   // level_script / geo / dl / texture / collision / extract
+    std::string stage;   // level_script / geo / dl / texture / collision / behavior / extract
     std::string message; // 详细描述（含地址、段大小等上下文）
 };
 
@@ -20,6 +21,15 @@ class WarningLog {
 public:
     void add(const std::string &stage, const std::string &message) {
         entries_.push_back({stage, message});
+    }
+    void addUnique(const std::string &stage, const std::string &message) {
+        const auto found = std::find_if(entries_.begin(), entries_.end(),
+                                        [&](const Warning &entry) {
+                                            return entry.stage == stage && entry.message == message;
+                                        });
+        if (found == entries_.end()) {
+            add(stage, message);
+        }
     }
     void clear() { entries_.clear(); }
     bool empty() const { return entries_.empty(); }

@@ -1,7 +1,7 @@
 #include "Scripts/behavior_script.h"
 
-#include <cstdio>
 #include <cmath>
+#include <cstdio>
 
 namespace BehaviorScript {
 
@@ -11,6 +11,18 @@ namespace {
 // END_LOOP never terminate). A static walk must not, so any script running past
 // this many commands is aborted.
 constexpr int64_t MAX_INSTRUCTIONS = 100'000;
+
+std::string formatAddress(int16_t seg, uint32_t offset) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%#04x:%#06x", static_cast<int>(seg), offset);
+    return buf;
+}
+
+std::string formatOpcode(uint8_t opcode) {
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%#04x", opcode);
+    return buf;
+}
 
 } // namespace
 
@@ -37,24 +49,35 @@ void BehaviorScriptVM::run(ObjectExtract::Object &obj, SegmentedAddress entry,
 
     while (!finished_) {
         if (++executed_ > MAX_INSTRUCTIONS) {
-            fprintf(stderr, "BehaviorScript: script at seg %#04x off %#06x did not "
-                            "terminate after %lld commands, aborting.\n",
-                    entry.seg, entry.offset, (long long)executed_);
+            warnings_.addUnique(
+                "behavior",
+                "script at " + formatAddress(entry.seg, entry.offset) +
+                    " did not terminate after " + std::to_string(executed_) +
+                    " commands; script walk aborted");
             return;
         }
 
         const auto word_opt = readWord(pc_);
         if (!word_opt) {
-            fprintf(stderr, "BehaviorScript: out of bounds at seg %#04x off %#06x\n",
-                    entry.seg, pc_);
+            warnings_.addUnique(
+                "behavior",
+                "script at " + formatAddress(entry.seg, pc_) +
+                    " is outside the loaded segment (size 0x" +
+                    [&]() {
+                        char buf[32];
+                        std::snprintf(buf, sizeof(buf), "%zX", seg_.size());
+                        return std::string(buf);
+                    }() + "); script walk aborted");
             return;
         }
         const uint32_t word = *word_opt;
         const uint8_t op = static_cast<uint8_t>(word >> 24);
         const uint32_t length = (op < kCommandLengths.size()) ? kCommandLengths[op] : 0;
         if (length == 0) {
-            fprintf(stderr, "BehaviorScript: unknown opcode %#04x at seg %#04x off %#06x\n",
-                    op, entry.seg, pc_);
+            warnings_.addUnique(
+                "behavior",
+                "unknown opcode " + formatOpcode(op) + " at " +
+                    formatAddress(entry.seg, pc_) + "; script walk aborted");
             return;
         }
 

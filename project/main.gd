@@ -6,7 +6,7 @@ extends Node3D
 @onready var rom_name_label: Label = %RomNameLabel
 @onready var file_dialog: FileDialog = %RomFileDialog
 @onready var status_label: Label = %StatusLabel
-@onready var object_list: ItemList = %ObjectList
+@onready var object_list: Tree = %ObjectList
 @onready var level_option: OptionButton = %LevelOption
 @onready var area_option: OptionButton = %AreaOption
 @onready var camera: Camera3D = %Camera3D
@@ -234,12 +234,7 @@ func _render_geometry() -> void:
 	var meshes: Array = rom_manager.getMeshes()
 	var objects: Array = rom_manager.getObjects()
 
-	object_list.clear()
-	for obj in objects:
-		var label := "obj 0x%02X @ (%.0f, %.0f, %.0f)" % [
-				obj.model, obj.pos.x, obj.pos.y, obj.pos.z]
-		object_list.add_item(label)
-		object_list.set_item_metadata(object_list.item_count - 1, obj.pos)
+	_populate_object_list(objects)
 
 	var total_triangles := 0
 	for i in meshes.size():
@@ -302,6 +297,33 @@ func _render_geometry() -> void:
 	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects (%d rendered)." % [
 			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
 			objects.size(), rendered_objects]
+
+## 按 model id 分组对象；每组是一个可展开的树节点，组按 id 数值升序排列。
+func _populate_object_list(objects: Array) -> void:
+	object_list.clear()
+	var groups := {}
+	for object_index in objects.size():
+		var obj: Dictionary = objects[object_index]
+		var model_id := int(obj.model)
+		if not groups.has(model_id):
+			groups[model_id] = []
+		groups[model_id].append({"index": object_index, "object": obj})
+
+	var root := object_list.create_item()
+	var model_ids: Array = groups.keys()
+	model_ids.sort()
+	for model_id in model_ids:
+		var group_item := object_list.create_item(root)
+		var group_objects: Array = groups[model_id]
+		group_item.set_text(0, "Model 0x%02X (%d objects)" % [model_id, group_objects.size()])
+		group_item.set_selectable(0, false)
+		group_item.collapsed = true
+		for entry in group_objects:
+			var obj: Dictionary = entry.object
+			var child := object_list.create_item(group_item)
+			child.set_text(0, "Object %d @ (%.0f, %.0f, %.0f)" % [
+					entry.index, obj.pos.x, obj.pos.y, obj.pos.z])
+			child.set_metadata(0, obj.pos)
 
 ## 渲染碰撞三角形：受光照的网格 + 三角形边界（线框）。表面按房间开关过滤
 ##（RoomPanel 的每房间 CheckButton；默认全开）。
@@ -652,7 +674,11 @@ func _process(_delta: float) -> void:
 			roundi(pos.x), roundi(pos.y), roundi(pos.z),
 			roundi(target.x), roundi(target.y), roundi(target.z)]
 
-## 点击对象列表：把相机瞬移到该对象的精确位置（便于逐个核对）。
-func _on_object_list_item_selected(index: int) -> void:
-	var pos: Vector3 = object_list.get_item_metadata(index)
-	camera.global_position = pos
+## 点击对象列表中的对象：把相机瞬移到该对象的精确位置（便于逐个核对）。
+func _on_object_list_cell_selected() -> void:
+	var item := object_list.get_selected()
+	if item == null:
+		return
+	var pos: Variant = item.get_metadata(0)
+	if pos is Vector3:
+		camera.global_position = pos

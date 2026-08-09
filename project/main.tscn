@@ -101,11 +101,13 @@ theme_override_constants/separation = 6
 layout_mode = 2
 text = "Objects"
 
-[node name="ObjectList" type="ItemList" parent="UI/LeftPanel/VBox" unique_id=422687451]
+[node name="ObjectList" type="Tree" parent="UI/LeftPanel/VBox" unique_id=422687451]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 focus_mode = 0
+hide_root = true
+scroll_horizontal_enabled = false
 
 [node name="Sep" type="HSeparator" parent="UI/LeftPanel/VBox" unique_id=757419781]
 layout_mode = 2
@@ -200,4 +202,4 @@ grow_vertical = 2
 scroll_active = true
 scroll_following = true
 
-[connection signal="item_selected" from="UI/LeftPanel/VBox/ObjectList" to="." method="_on_object_list_item_selected"]
+[connection signal="cell_selected" from="UI/LeftPanel/VBox/ObjectList" to="." method="_on_object_list_cell_selected"]

@@ -26,6 +26,8 @@ int main() {
 
     testRunLevelScript();
     testRomManagerAreaBank();
+    testFixedAddressMemory();
+    testMopLoader();
     testLevelName();
     testObjectModels();
     testLevelScriptData();

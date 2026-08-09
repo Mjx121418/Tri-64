@@ -1,5 +1,6 @@
 #include "test_level_script.h"
 
+#include "ASM/mop_loader.h"
 #include "Level/area.h"
 #include "Level/dl_interpreter.h"
 #include "Level/level_extract.h"
@@ -157,6 +158,101 @@ void testRomManagerAreaBank() {
             printf("test_rm_area_bank: FAIL area %d did not decode through the RM area bank: %s\n",
                    area, result.error.c_str());
         }
+    }
+}
+
+void testFixedAddressMemory() {
+    std::array<uint8_t, 8> rom_data {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
+    SegmentTable seg_table;
+    seg_table.rom_span = std::span<uint8_t>(rom_data);
+
+    bool ok = seg_table.loadFixedAddress(0x80000100, 2, 6);
+    try {
+        const auto mapped = seg_table.data(segAddress(0x00000100), 4);
+        ok = ok && std::equal(mapped.begin(), mapped.end(), rom_data.begin() + 2);
+        ok = ok && seg_table.read(segAddress(0x00000100), 2) == 0x44;
+    } catch (const std::out_of_range &) {
+        ok = false;
+    }
+
+    ok = ok && !seg_table.loadFixedAddress(0x80FFFFF0, 0, 0x20);
+    if (!ok) {
+        printf("test_fixed_address: FAIL fixed ROM range mapping\n");
+    }
+}
+
+void testMopLoader() {
+    constexpr size_t function_offset = 0x100;
+    std::array<uint8_t, 0x140> code {};
+    const std::array<uint32_t, 11> instructions {
+        0x27BDFFE8, 0xAFBF0014, 0x3C04805F, 0x3C05007D,
+        0x0C09E141, 0x3C060080, 0x24020010, 0x00000000,
+        0x8FBF0014, 0x03E00008, 0x27BD0018,
+    };
+    for (size_t i = 0; i < instructions.size(); i++) {
+        const uint32_t instruction = instructions[i];
+        const size_t offset = function_offset + i * sizeof(uint32_t);
+        code[offset] = static_cast<uint8_t>(instruction >> 24);
+        code[offset + 1] = static_cast<uint8_t>(instruction >> 16);
+        code[offset + 2] = static_cast<uint8_t>(instruction >> 8);
+        code[offset + 3] = static_cast<uint8_t>(instruction);
+    }
+
+    SegmentTable synthetic;
+    synthetic.rom_span = std::span<uint8_t>(code);
+    synthetic.loadSegment(0, 0, static_cast<uint32_t>(code.size()));
+    const auto detected = ASM::detectMOP123Loader(synthetic, 0x80246000 + function_offset);
+    if (!detected || detected->destination != 0x805F0000
+        || detected->rom_start != 0x007D0000 || detected->rom_end != 0x00800000
+        || detected->return_value != 0x10) {
+        printf("test_mop_loader: FAIL synthetic ASM recognition\n");
+    }
+    if (ASM::detectMOP123Loader(synthetic, 0x80246000 + function_offset + 4)) {
+        printf("test_mop_loader: FAIL false-positive ASM recognition\n");
+    }
+
+    const std::filesystem::path path = "Transcending the Rainbow v1.0.6.z64";
+    if (!std::filesystem::exists(path)) {
+        printf("test_mop_loader: fixture not found, synthetic check only\n");
+        return;
+    }
+
+    ROM rom;
+    rom.load(path);
+    if (!rom.is_loaded) {
+        printf("test_mop_loader: FAIL fixture could not load\n");
+        return;
+    }
+
+    SegmentTable seg_table;
+    seg_table.rom_span = std::span<uint8_t>(rom.data);
+    if (!LevelExtract::loadMainSegment(seg_table, rom.data)) {
+        printf("test_mop_loader: FAIL main segment could not load\n");
+        return;
+    }
+
+    const auto fixture_load = ASM::detectMOP123Loader(seg_table, 0x8030C4B0);
+    if (!fixture_load || !ASM::applyMOP123Load(seg_table, *fixture_load)) {
+        printf("test_mop_loader: FAIL fixture loader detection/application\n");
+        return;
+    }
+    try {
+        const auto mapped = seg_table.data(segAddress(0x005F9FE0), 4);
+        const auto expected = std::span<const uint8_t>(rom.data).subspan(0x007D9FE0, 4);
+        if (!std::equal(mapped.begin(), mapped.end(), expected.begin())) {
+            printf("test_mop_loader: FAIL fixed model data mapping\n");
+        }
+    } catch (const std::out_of_range &) {
+        printf("test_mop_loader: FAIL fixed model data was not addressable\n");
+    }
+
+    const LevelExtract::Result result = LevelExtract::extract(rom, 4, 1);
+    bool geo_warning = false;
+    for (const auto &warning : result.warnings) {
+        geo_warning |= warning.stage == "geo";
+    }
+    if (!result.ok || geo_warning) {
+        printf("test_mop_loader: FAIL level-script integration\n");
     }
 }
 
