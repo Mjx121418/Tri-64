@@ -3,7 +3,6 @@
 
 #include "Math/math.h"
 #include "Memory/segment.h"
-#include <cstdint>
 
 // 场景图节点持有的显示列表引用（GraphNodeMasterList 的 display_lists 使用）。
 // SM64 每帧渲染时给每个可渲染节点附一个变换矩阵 + 显示列表并依次执行；
