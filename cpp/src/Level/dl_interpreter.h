@@ -202,9 +202,9 @@ struct RSPState {
     // 为 0（全 COMBINED）；未设置 combine 的 DL 继承前一个 DL 留下的值。
     uint32_t combine_w0 {0};
     uint32_t combine_w1 {0};
-    uint8_t prim_color[4] {0, 0, 0, 0}; // G_SETPRIMCOLOR
-    uint8_t env_color[4] {0, 0, 0, 0};  // G_SETENVCOLOR
-    uint8_t fog_color[4] {0, 0, 0, 0};  // G_SETFOGCOLOR
+    uint8_t prim_color[4] {0, 0, 0, 255}; // G_SETPRIMCOLOR
+    uint8_t env_color[4] {0, 0, 0, 255};  // G_SETENVCOLOR
+    uint8_t fog_color[4] {0, 0, 0, 255};  // G_SETFOGCOLOR
     // G_SETTILE / G_SETTILESIZE / G_LOADBLOCK 的渲染 tile 配置。
     uint8_t tile_fmt {0};            // 纹理格式（0=RGBA 2=CI 3=IA 4=I）
     uint8_t tile_siz {0};            // 位深（0=4b 1=8b 2=16b 3=32b）
