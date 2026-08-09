@@ -74,6 +74,8 @@ class LevelExtractor {
 
     // 定位脚本段、加载公共段、运行目标关卡的关卡脚本，构建段表与场景图。
     void runLevelScript(int level_num);
+    // Mirrors the runtime load_area() bank side effect for the selected area.
+    void loadRomManagerAreaSegment(int area_index);
     // 提取 area_index 区域的几何/对象/碰撞（run 的第二步；越界数据抛异常时
     // run 转成 result_.error）。
     void extractArea(int level_num, int area_index);

@@ -159,6 +159,32 @@ LevelScriptSetup setupLevelScript(const std::filesystem::path &rom_path) {
     return setup;
 }
 
+void testRomManagerAreaBank() {
+    const std::filesystem::path path = "Transcending the Rainbow v1.0.6.z64";
+    if (!std::filesystem::exists(path)) {
+        printf("test_rm_area_bank: fixture not found, skipped\n");
+        return;
+    }
+
+    ROM rom;
+    rom.load(path);
+    if (!rom.is_loaded) {
+        printf("test_rm_area_bank: ROM load failed\n");
+        return;
+    }
+
+    for (const int area : {1, 2}) {
+        const LevelExtract::Result result = LevelExtract::extract(rom, 9, area);
+        const size_t triangles = result.mesh.indices.size() / 3;
+        printf("test_rm_area_bank: area %d ok=%d collision=%d triangles=%zu surfaces=%zu\n",
+               area, result.ok, result.collision.ok, triangles, result.collision.surfaces.size());
+        if (!result.ok || !result.collision.ok || triangles == 0) {
+            printf("test_rm_area_bank: FAIL area %d did not decode through the RM area bank: %s\n",
+                   area, result.error.c_str());
+        }
+    }
+}
+
 void testRunLevelScript() {
     const auto roms = findRoms();
     if (roms.empty()) {

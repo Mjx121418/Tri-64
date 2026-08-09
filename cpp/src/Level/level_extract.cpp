@@ -319,6 +319,71 @@ void LevelExtractor::runLevelScript(int level_num) {
     ok_ = true;
 }
 
+void LevelExtractor::loadRomManagerAreaSegment(int area_index) {
+    // Rom Manager's one-bank-0xE format stores the active area's Fast3D ROM
+    // range in seg 0x19. Course scripts normally stop at CALL_LOOP before
+    // LOAD_AREA, so this mirrors the runtime load_area() side effect after
+    // the level script has materialized its object/warp data.
+    if (area_index <= 0 || area_index >= 8) {
+        return;
+    }
+
+    constexpr uint32_t kAreaTableOffset = 0x5F00;
+    constexpr uint32_t kMarkerOffset = 0x5FFC;
+    constexpr uint32_t kMarker = 0x4BC9189A;
+    constexpr uint32_t kAreaEntrySize = 0x10;
+    constexpr int16_t kLevelScriptSegment = 0x19;
+    constexpr int16_t kAreaDataSegment = 0x0E;
+
+    std::span<const uint8_t> marker_data;
+    try {
+        marker_data = seg_table_.data(
+            SegmentedAddress { kLevelScriptSegment, kMarkerOffset }, sizeof(uint32_t));
+    } catch (const std::out_of_range &) {
+        // Vanilla and non-Rom-Manager level-script segments do not have the
+        // extended area table.
+        return;
+    }
+
+    if (readInt<uint32_t>(marker_data, 0) != kMarker) {
+        return;
+    }
+
+    const uint32_t entry_offset = kAreaTableOffset +
+                                  static_cast<uint32_t>(area_index) * kAreaEntrySize;
+    std::span<const uint8_t> entry;
+    try {
+        entry = seg_table_.data(
+            SegmentedAddress { kLevelScriptSegment, entry_offset }, 2 * sizeof(uint32_t));
+    } catch (const std::out_of_range &) {
+        log_.add(
+            "level_script",
+            "Rom Manager area-table marker found, but area " + std::to_string(area_index) +
+                " entry at seg 0x19 offset 0x" + [&]() {
+                    char buf[16];
+                    std::snprintf(buf, sizeof(buf), "%06X", entry_offset);
+                    return std::string(buf);
+                }() + " is outside the loaded segment; segment 0x0E was not remapped");
+        return;
+    }
+
+    const uint32_t rom_start = readInt<uint32_t>(entry, 0);
+    const uint32_t rom_end = readInt<uint32_t>(entry, sizeof(uint32_t));
+    if (rom_start >= rom_end || rom_end > seg_table_.rom_span.size()) {
+        log_.add(
+            "level_script",
+            "Rom Manager area " + std::to_string(area_index) + " has invalid seg 0x0E ROM "
+                "range 0x" + [&]() {
+                    char buf[32];
+                    std::snprintf(buf, sizeof(buf), "%08X..%08X", rom_start, rom_end);
+                    return std::string(buf);
+                }() + "; segment 0x0E was not remapped");
+        return;
+    }
+
+    seg_table_.loadSegment(kAreaDataSegment, rom_start, rom_end);
+}
+
 void LevelExtractor::run(int level_num, int area_index) {
     result_ = {};
     log_.clear();
@@ -337,6 +402,8 @@ void LevelExtractor::run(int level_num, int area_index) {
         result_.warnings = log_.entries();
         return;
     }
+
+    loadRomManagerAreaSegment(area_index);
 
     try {
         extractArea(level_num, area_index);

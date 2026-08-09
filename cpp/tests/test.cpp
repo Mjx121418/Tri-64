@@ -25,6 +25,7 @@ int main() {
     printNodeTree(*root, 0);
 
     testRunLevelScript();
+    testRomManagerAreaBank();
     testLevelName();
     testObjectModels();
     testLevelScriptData();
