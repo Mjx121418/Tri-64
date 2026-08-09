@@ -130,8 +130,11 @@ run MIPS functions; `SLEEP`/`DELAY` pause across frames.
 **Original** — `process_geo_layout` builds the graph once; `geo_process_*` walks it
 every frame with per-object/per-frame context: switch-case selected by a function (anim
 state, room), LOD selected by camera distance, `GEO_ASM` nodes call a function that
-emits a runtime DL (movtex water, envfx, paintings), billboards face the camera,
-`GEO_CAMERA` builds the look-at matrix + viewport, shadow/culling use runtime state.
+emits a runtime DL (movtex water, envfx, paintings), billboard nodes are rendered
+**always facing the camera** (`geo_process_camera` pushes the camera look-at onto the
+modelview stack, so `mtxf_billboard`'s `R_z(camera roll)` — which keeps only the
+parent's position row — is axis-aligned in *camera space*), `GEO_CAMERA` builds the
+look-at matrix + viewport, shadow/culling use runtime state.
 
 **Ours** — `GeoLayoutProcessor` builds the graph once (frame-0 static). Differences:
 
@@ -197,9 +200,28 @@ emits a runtime DL (movtex water, envfx, paintings), billboards face the camera,
   positions (Whomp feet/hands, King Bob-omb's two feet collapsing onto each other).
   Every
   `GEO_ANIMATED_PART` (with or without a display list) consumes a frame value and applies
-  its transform; the no-DL nodes' `{0,0}` addresses are skipped at decode. Billboards are
-  recorded but not made camera-facing
-  (they use the geo translation). See `Quirks.md`.
+  its transform; the no-DL nodes' `{0,0}` addresses are skipped at decode.
+- **Billboards (GEO_BILLBOARD / 0x0D, object-level GRAPH_RENDER_BILLBOARD)**: the game's
+  `geo_process_billboard` builds `mtxf_billboard(parent, translation, camera_roll)`
+  (`math_util.c`): the result has the parent's *position only* (parent rotation AND
+  parent scale are discarded) and a pure `R_z(camera roll)` rotation. Because the
+  modelview stack under `geo_process_camera` is already in camera space, this is
+  axis-aligned **in camera space** — billboarded quads always face the camera (roll≈0 →
+  upright; `obj_behaviors.c` calls coins/trees "billboard" in this sense). The position
+  row uses the full parent chain (rotations/scales included) → the billboard pivot.
+  `geo_process_object` does the same for objects carrying `GRAPH_RENDER_BILLBOARD`
+  (behavior command 0x21, e.g. `bhvTree`, and `obj_set_billboard`): their face angle is
+  ignored entirely.
+  We bake each geo-level billboard as the pivot only (identity rotation, roll statically
+  0), split the subtree triangles per billboard node into `ObjectModel::billboard_parts`
+  (`{pivot, pivot-relative mesh}`), and the renderer places each part on a node at the
+  pivot with its `global_basis` set to the **camera's world basis** every frame (the
+  game's world orientation = view⁻¹·R_z(roll) = the camera basis). Object-level
+  billboard objects get the same per-frame basis on their body node (`getObjects`
+  exports `billboard`; `main.gd` registers it). In-game the object scale is applied to
+  billboard children *twice* (object root + `geo_process_billboard`); we apply it once
+  via the instance node — a documented deviation that only matters for scale ≠ 1.
+  See `Quirks.md`.
 - **Root / master list / shadow / object-parent / held-object**: recorded structurally;
   the master list is empty (runtime), shadow geometry is not generated, held-object
   records `playerIndex`/`func` (Phase 2).
@@ -225,15 +247,21 @@ microcode, so all GBI encodings here are the F3D layouts.
   `Ambient_t` is only 8 bytes, so `gsSPLight(&light.a, 2)` over-reads into the next
   light — identified by slot, not `dir==0`). `num_lights` defaults to 1 (the game's
   persistent NUMLIGHTS_1; terrain DLs don't set G_MW_NUMLIGHT).
-  **Rendering uses a Godot shader** (`sm64_lighting.gdshader`) that recomputes the
-  world-space shade per fragment: `shade = ambient + Σ max(0, n̂·l̂)·color`, with the
-  world normal computed in the **vertex stage** via `MODEL_MATRIX` (so Godot's node/
-  instance rotation is included → per-instance correct) and dotted with the material's
-  exported world-space lights. The bridge exports each material's
+  **Rendering uses a Godot shader** (`sm64_lighting.gdshader`) that computes the
+  world-space shade once per vertex and interpolates it across the triangle, matching
+  Fast3D's vertex lighting: `shade = ambient + Σ max(0, n̂·l̂)·color`. The world normal
+  is computed in the vertex stage via `MODEL_MATRIX` (so Godot's node/instance rotation
+  is included → per-instance correct) and dotted with the material's exported
+  world-space lights. The bridge exports each material's
   `num_lights`/`ambient`/`light_dirs`/`light_cols` from the captured `Lights`. The
-  per-vertex shade is still baked in C++ (`ambient + Σ …` against the local normal)
-  for the OBJ export and the castle-lighting test; lit materials without captured
-  lights fall back to white (no modulation).
+  per-vertex shade is also baked in C++ (`ambient + Σ …` against the local normal) for
+  the OBJ export and the castle-lighting test; lit materials without captured lights
+  fall back to white (no modulation).
+- **Light arithmetic**: the RSP uses signed 16-bit vector lanes, a 48-bit accumulator,
+  fixed-point matrix/light products, and the microcode's reciprocal-square-root path;
+  ours uses floating-point normalization/dot products and truncates the final color to
+  bytes. The formula is equivalent for the usual orthonormal matrices, but it is not
+  bit-exact.
 - **`G_TEXTURE`**: F3D on-bit = `w0 bit 0`; tile/lod (bits 8-13) recorded. We always
   sample render tile 0 (SM64's convention); multi-tile/mipmap DLs are not emulated.
 - **`G_TEXTURE_GEN`** (environment mapping): not emulated (the star's reflection-mapped
@@ -416,9 +444,14 @@ per frame.
   hidden/model are the frame-0 state; `getObjects` exports hidden/scale/opacity/
   billboard and the renderer skips hidden objects and applies scale + opacity.
   `DROP_TO_FLOOR` snaps spawn-path objects (signposts etc.) to the terrain.
-  Billboard-facing (coins) and runtime `cur_obj_scale`/per-frame children remain
-  non-goals. `oGraphYOffset` is applied: `getObjects` exports `pos.y + oGraphYOffset`
-  for the model placement; the object collision stays at `oPosY` (see §8).
+  Runtime `cur_obj_scale`/per-frame children remain non-goals. `oGraphYOffset` is
+  applied: `getObjects` exports `pos.y + oGraphYOffset` for the model placement; the
+  object collision stays at `oPosY` (see §8).
+- **Billboard parts**: `GEO_BILLBOARD` subtrees are split per node into
+  `ObjectModel::billboard_parts` (`{pivot, pivot-relative mesh}`) and rendered on a
+  second node at the pivot whose `global_basis` tracks the camera's world basis every
+  frame (always facing the camera — see §4). Object-level `BILLBOARD` (behavior 0x21)
+  registers the body node for the same per-frame basis.
 - **Frame-0 animation baked** into the model cache (`Frame0Animator`, mirrors
   `geo_process_animated_part`). See `Quirks.md`.
 - **Spawn transform**: objects are placed at their spawn pos + yaw (macro objects:

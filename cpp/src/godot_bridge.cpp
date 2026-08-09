@@ -274,6 +274,10 @@ Array GodotBridge::getObjects() {
 }
 
 // 对象模型按 model id 去重，每个模型一份（网格 + 材质），所有实例共享。
+// GEO_BILLBOARD 子树的三角形按 billboard 节点拆成 billboard_parts：每个
+// { pivot, meshes, materials } 一部分。游戏把 billboard 渲染成相机空间轴对齐
+//（始终面向相机，mtxf_billboard 的 R_z(roll)，roll≈0）；渲染端把部分节点放在
+// pivot 上并每帧把其朝向设为相机的逆基（见 Engine.md §4）。
 Array GodotBridge::getObjectModels() {
     Array out;
     for (const auto &[model_id, model] : result_.object_models) {
@@ -281,6 +285,15 @@ Array GodotBridge::getObjectModels() {
         d["model"] = static_cast<int64_t>(model_id);
         d["meshes"] = meshDicts(model.mesh);
         d["materials"] = materialDicts(model.mesh, model.textures);
+        Array parts;
+        for (const auto &part : model.billboard_parts) {
+            Dictionary p;
+            p["pivot"] = Vector3(part.pivot.x, part.pivot.y, part.pivot.z);
+            p["meshes"] = meshDicts(part.mesh);
+            p["materials"] = materialDicts(part.mesh, part.textures);
+            parts.push_back(p);
+        }
+        d["billboard_parts"] = parts;
         out.push_back(d);
     }
     return out;

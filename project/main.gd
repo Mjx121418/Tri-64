@@ -30,6 +30,11 @@ var _room_checkboxes := {}   # room id -> CheckButton
 var _collision_meshes: Array = []  # 静态碰撞 MeshInstance3D（填充 + 线框）
 var _visible_collision_triangles := 0
 
+# billboard 节点（对象级 BILLBOARD 标志的 body + 每个 GEO_BILLBOARD 部分）：
+# 每帧把 global_basis 设为相机的世界基（游戏把 billboard 渲染成相机空间轴对齐
+# ——mtxf_billboard 的 modelview = R_z(roll)，roll≈0 → 始终面向相机）。
+var _billboard_nodes: Array = []
+
 # SM64 世界空间光照 shader（受光材质用；Godot 的 NORMAL 含节点旋转 → 对象实例
 # 旋转后光照正确）。
 const _sm64_lighting_shader := preload("res://sm64_lighting.gdshader")
@@ -277,7 +282,10 @@ func _render_geometry() -> void:
 		var oi := MeshInstance3D.new()
 		oi.mesh = entry.mesh
 		oi.position = obj.pos
-		oi.rotation = obj.angle
+		# 对象级 BILLBOARD 标志（行为命令 0x21）：整个对象按 billboard 渲染，
+		# face angle 被忽略（geo_process_object 的 mtxf_billboard 分支），每帧
+		# 面向相机（见 _billboard_nodes 的更新）。
+		oi.rotation = Vector3.ZERO if obj.billboard else obj.angle
 		oi.scale = obj.scale
 		var surface_materials: Array = entry.surface_materials
 		var opacity: int = obj.opacity
@@ -292,6 +300,29 @@ func _render_geometry() -> void:
 			for s in surface_materials.size():
 				oi.set_surface_override_material(s, surface_materials[s])
 		model_root.add_child(oi)
+		# GEO_BILLBOARD 部分：游戏把 billboard 的 modelview 设为相机空间的
+		# R_z(roll)（mtxf_billboard，roll≈0），位置 = 父链应用到节点平移（pivot）。
+		# 每部分一个节点，放在模型空间的 pivot 上（继承实例变换），每帧把朝向
+		# 设为相机的世界基（见 _billboard_nodes 更新）。
+		if obj.billboard:
+			_billboard_nodes.append(oi)
+		if entry.has("billboard_parts") and not entry.billboard_parts.is_empty():
+			for part in entry.billboard_parts:
+				var bi := MeshInstance3D.new()
+				bi.mesh = part.mesh
+				bi.position = part.pivot
+				var part_materials: Array = part.surface_materials
+				if opacity < 255:
+					for s in part_materials.size():
+						var mat: StandardMaterial3D = part_materials[s].duplicate()
+						mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+						mat.albedo_color.a = opacity / 255.0
+						bi.set_surface_override_material(s, mat)
+				else:
+					for s in part_materials.size():
+						bi.set_surface_override_material(s, part_materials[s])
+				oi.add_child(bi)
+				_billboard_nodes.append(bi)
 		rendered_objects += 1
 
 	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects (%d rendered)." % [
@@ -559,12 +590,14 @@ func _build_collision_wireframe_material() -> StandardMaterial3D:
 	return mat
 
 func _clear_model() -> void:
+	_billboard_nodes.clear()
 	for child in model_root.get_children():
 		child.queue_free()
 
 ## 构建对象模型（getObjectModels 单个条目）：多个材质面合并为一个
-## ArrayMesh，返回 { mesh, surface_materials }。同一模型的所有对象实例
-## 共享这份资源。
+## ArrayMesh，返回 { mesh, surface_materials, billboard_parts }。同一模型的
+## 所有对象实例共享这份资源。billboard_parts 是 GEO_BILLBOARD 子树的
+## { pivot, mesh, surface_materials } 列表（每部分一个节点，面向相机）。
 func _build_object_mesh(md: Dictionary) -> Dictionary:
 	var am := ArrayMesh.new()
 	var surface_materials: Array[Material] = []
@@ -583,7 +616,34 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 		if not material_cache.has(mi):
 			material_cache[mi] = _build_material(md.materials[mi])
 		surface_materials.append(material_cache[mi])
-	return {"mesh": am, "surface_materials": surface_materials}
+	var entry := {"mesh": am, "surface_materials": surface_materials}
+	# billboard 部分（每 GEO_BILLBOARD 节点一个）：{ pivot, mesh,
+	# surface_materials }。材质表与 body 独立（C++ 端各自去重），索引互不相通，
+	# 每个 part 用单独的缓存（纹理图像可能重复，重复解码无害）。
+	if md.has("billboard_parts") and not md.billboard_parts.is_empty():
+		var parts: Array = []
+		for part in md.billboard_parts:
+			var bam := ArrayMesh.new()
+			var part_materials: Array[Material] = []
+			var part_cache := {}
+			for me in part.meshes:
+				var arrays := []
+				arrays.resize(Mesh.ARRAY_MAX)
+				arrays[Mesh.ARRAY_VERTEX] = me.vertices
+				arrays[Mesh.ARRAY_NORMAL] = me.normals
+				arrays[Mesh.ARRAY_TEX_UV] = me.uvs
+				if me.has("colors"):
+					arrays[Mesh.ARRAY_COLOR] = me.colors
+				arrays[Mesh.ARRAY_INDEX] = me.indices
+				bam.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+				var mi: int = me.material
+				if not part_cache.has(mi):
+					part_cache[mi] = _build_material(part.materials[mi])
+				part_materials.append(part_cache[mi])
+			parts.append({"pivot": part.pivot, "mesh": bam,
+					"surface_materials": part_materials})
+		entry.billboard_parts = parts
+	return entry
 
 ## 根据材质字典构建材质。受光且不透明的材质用世界空间光照 shader（对象实例
 ## 旋转后光照正确）；其余走 StandardMaterial3D（未纹理 SHADE/PRIM/ENV 或纹理）。
@@ -665,7 +725,11 @@ func _has_alpha(img: Image) -> bool:
 				return true
 	return false
 
-## 每帧更新相机位置读数（调试导航用），显示当前位置与朝向的目标点。
+## 每帧更新相机位置读数（调试导航用），显示当前位置与朝向的目标点；
+## billboard 节点朝向相机：游戏把 billboard 的 modelview 设为相机空间的
+## R_z(roll)（geo_process_billboard 的 mtxf_billboard，roll≈0 = 恒等），所以
+## 世界朝向 = 视图矩阵的逆 = 相机的世界基（camera.global_transform.basis）。
+## 节点的局部位置 = pivot，继承实例变换 → 位置跟随父链。
 func _process(_delta: float) -> void:
 	var pos := camera.global_position
 	var fwd := -camera.transform.basis.z
@@ -673,6 +737,10 @@ func _process(_delta: float) -> void:
 	camera_pos_label.text = "Cam (%d, %d, %d)  look->(%d, %d, %d)" % [
 			roundi(pos.x), roundi(pos.y), roundi(pos.z),
 			roundi(target.x), roundi(target.y), roundi(target.z)]
+	if not _billboard_nodes.is_empty():
+		var cam_basis := camera.global_transform.basis
+		for node in _billboard_nodes:
+			node.global_basis = cam_basis
 
 ## 点击对象列表中的对象：把相机瞬移到该对象的精确位置（便于逐个核对）。
 func _on_object_list_cell_selected() -> void:

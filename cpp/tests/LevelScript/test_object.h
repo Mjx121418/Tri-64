@@ -2,5 +2,6 @@
 #define TEST_OBJECT_H
 
 void testObject();
+void testBillboardSplit();
 
 #endif /* TEST_OBJECT_H */

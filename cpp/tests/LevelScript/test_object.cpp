@@ -1,9 +1,15 @@
 #include "test_object.h"
 
+#include "Level/graph_node.h"
 #include "Level/level_extract.h"
+#include "Log.h"
+#include "Memory/segment.h"
 #include "ROM.h"
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <memory>
+#include <span>
 #include <vector>
 
 namespace {
@@ -187,6 +193,40 @@ void testObject() {
             if (is_vanilla && !goomba_lights) {
                 printf("test_object: FAIL goomba materials lack captured lights\n");
             }
+
+            // GEO_BILLBOARD 子树按 billboard 节点拆成 billboard_parts（每个
+            // { pivot, 网格 }）；网格顶点相对 pivot 定位（pivot-relative，渲染端
+            // 在 pivot 上每帧面向相机）。每个三角形三顶点 z 相同（位置只取父矩阵
+            // 平移，几何本身不旋转/缩放；法线字节在带灯光 DL 里可能是无效数据，
+            // 只查位置平面性）。
+            size_t billboard_models = 0;
+            size_t billboard_bad_tris = 0;
+            for (const auto &[mid, model] : r.object_models) {
+                if (model.billboard_parts.empty()) {
+                    continue;
+                }
+                billboard_models++;
+                for (const auto &part : model.billboard_parts) {
+                    const auto &v = part.mesh.vertices;
+                    for (size_t t = 0; t < part.mesh.indices.size() / 3; t++) {
+                        const uint32_t i0 = part.mesh.indices[t * 3];
+                        const uint32_t i1 = part.mesh.indices[t * 3 + 1];
+                        const uint32_t i2 = part.mesh.indices[t * 3 + 2];
+                        if (std::abs(v[i0].position[2] - v[i1].position[2]) > 0.1f ||
+                            std::abs(v[i0].position[2] - v[i2].position[2]) > 0.1f) {
+                            billboard_bad_tris++;
+                        }
+                    }
+                }
+            }
+            printf("test_object: billboard models=%zu bad-billboard-tris=%zu\n",
+                   billboard_models, billboard_bad_tris);
+            if (is_vanilla && billboard_models == 0) {
+                printf("test_object: FAIL no BOB model has a billboard part (expect goomba)\n");
+            }
+            if (is_vanilla && billboard_bad_tris != 0) {
+                printf("test_object: FAIL billboard triangles not plane-aligned\n");
+            }
         }
 
         // 城堡内侧（关卡 6，区域 1）：area geo 用 GEO_SWITCH_CASE(17,
@@ -276,6 +316,123 @@ void testObject() {
             if (is_vanilla && (shade_material_alpha != 0x80 || !shade_material_uniform)) {
                 printf("test_object: FAIL WF yellow-decal alpha not uniform 0x80\n");
             }
+        }
+    }
+}
+
+// GEO_BILLBOARD 语义：billboard 子树按节点拆成 billboard_parts（每个
+// { pivot, 网格 }）；pivot = 父链（含旋转/缩放）应用到节点平移，网格顶点相对
+// pivot 定位，几何本身不旋转/缩放。镜像 geo_process_billboard 的 mtxf_billboard
+//（decomp math_util.c）：位置取父矩阵平移，朝向在相机空间轴对齐（渲染端在
+// pivot 上每帧面向相机）。合成场景：yaw 90° 旋转节点下挂
+// [billboard(t=(100,0,0), DL)] 和另一个三角形 DL。期望：
+// - billboard 部分：pivot = 父矩阵旋转后的平移（yaw 90° 把 (100,0,0) 转到 Z 轴：
+//   |pivot.z|≈100, pivot.x≈0）；网格 pivot-relative：顶点 == 作者几何
+//   （(-10,-10,0) 等，z==0），法线仍 (0,0,1)；
+// - 普通三角形被 yaw 90° 旋转（法线转到 X 轴）。
+void testBillboardSplit() {
+    std::vector<uint8_t> seg(0x100, 0);
+
+    auto putElem = [&](int k, int32_t fixed) {
+        seg[2 * k] = uint8_t((fixed >> 24) & 0xFF);
+        seg[2 * k + 1] = uint8_t((fixed >> 16) & 0xFF);
+        seg[32 + 2 * k] = uint8_t((fixed >> 8) & 0xFF);
+        seg[33 + 2 * k] = uint8_t(fixed & 0xFF);
+    };
+    putElem(0, 0x00010000); // 单位矩阵 @0x1E:0x00
+    putElem(5, 0x00010000);
+    putElem(10, 0x00010000);
+    putElem(15, 0x00010000);
+
+    auto putVtx = [&](int i, int16_t x, int16_t y) {
+        size_t o = 0x40 + size_t(i) * 16;
+        auto putS16 = [&](size_t off, int16_t v) {
+            seg[o + off] = uint8_t(v >> 8);
+            seg[o + off + 1] = uint8_t(v & 0xFF);
+        };
+        putS16(0, x);
+        putS16(2, y); // z = 0（XY 平面）
+        seg[o + 12] = 0;
+        seg[o + 13] = 0;
+        seg[o + 14] = 127; // 法线 (0,0,1)
+    };
+    putVtx(0, -10, -10);
+    putVtx(1, 10, -10);
+    putVtx(2, 0, 10);
+
+    auto putCmd = [&](size_t off, uint32_t w0, uint32_t w1) {
+        for (int i = 0; i < 4; i++) {
+            seg[off + i] = uint8_t(w0 >> (24 - 8 * i));
+            seg[off + 4 + i] = uint8_t(w1 >> (24 - 8 * i));
+        }
+    };
+    putCmd(0x70, 0x01020040, 0x1E000000); // G_MTX（单位矩阵 @0x1E:0x00）
+    putCmd(0x78, 0x04200030, 0x1E000040); // G_VTX（3 顶点 → 槽 3..5）
+    putCmd(0x80, 0xBF000000, 0x00000A14); // G_TRI1（v0=0, v1=1, v2=2）
+    putCmd(0x88, 0xB8000000, 0x00000000); // G_ENDDL
+    putCmd(0x90, 0xB8000000, 0x00000000); // G_ENDDL（空 DL，旋转节点的 DL）
+
+    SegmentTable seg_table;
+    seg_table.rom_span = std::span(seg);
+    seg_table.loadSegment(0x1E, 0, static_cast<uint32_t>(seg.size()));
+
+    // geo 树：root → rotation(yaw 90° = 0x4000) → [billboard(t=(100,0,0), DL), DL]
+    GraphNode root;
+    auto rot = std::make_unique<GraphNode>();
+    rot->data = GraphNodeRotation {SegmentedAddress {0x1E, 0x90}, {0, 0x4000, 0}};
+    auto bb = std::make_unique<GraphNode>();
+    bb->data = GraphNodeBillboard {SegmentedAddress {0x1E, 0x70}, {100, 0, 0}};
+    rot->addChild(std::move(bb));
+    auto body_dl = std::make_unique<GraphNode>();
+    body_dl->data = GraphNodeDisplayList {SegmentedAddress {0x1E, 0x70}};
+    rot->addChild(std::move(body_dl));
+    root.addChild(std::move(rot));
+
+    WarningLog warnings;
+    ObjectExtract::ObjectModelDecoder decoder(seg_table, warnings);
+    decoder.runModel(&root);
+    const ObjectExtract::ObjectModel &m = decoder.model();
+
+    printf("test_billboard_split: body tris=%zu billboard parts=%zu\n",
+           m.mesh.indices.size() / 3, m.billboard_parts.size());
+    if (m.mesh.indices.size() / 3 != 1 || m.billboard_parts.size() != 1) {
+        printf("test_billboard_split: FAIL expected 1/1 body tri / billboard part\n");
+    }
+
+    if (m.billboard_parts.size() == 1) {
+        const auto &part = m.billboard_parts[0];
+        // pivot = 父矩阵旋转后的平移：yaw 90° 把 (100,0,0) 转到 Z 轴。
+        if (std::abs(part.pivot.x) > 1.0f || std::abs(std::abs(part.pivot.z) - 100.0f) > 1.0f) {
+            printf("test_billboard_split: FAIL billboard pivot not parent-rotated "
+                   "(p=(%.1f,%.1f,%.1f))\n",
+                   part.pivot.x, part.pivot.y, part.pivot.z);
+        }
+        const auto &bb_verts = part.mesh.vertices;
+        if (bb_verts.size() != 3) {
+            printf("test_billboard_split: FAIL billboard vertices=%zu\n", bb_verts.size());
+        } else {
+            // pivot-relative：顶点 == 作者几何（z==0，无旋转/缩放），法线仍 (0,0,1)。
+            if (std::abs(bb_verts[0].position[0] + 10.0f) > 0.1f ||
+                std::abs(bb_verts[0].position[1] + 10.0f) > 0.1f ||
+                std::abs(bb_verts[0].position[2]) > 0.1f ||
+                std::abs(bb_verts[0].normal[2]) < 0.9f ||
+                std::abs(bb_verts[0].normal[0]) > 0.1f) {
+                printf("test_billboard_split: FAIL billboard mesh not pivot-relative "
+                       "(v=(%.1f,%.1f,%.1f) n=(%.2f,%.2f,%.2f))\n",
+                       bb_verts[0].position[0], bb_verts[0].position[1], bb_verts[0].position[2],
+                       bb_verts[0].normal[0], bb_verts[0].normal[1], bb_verts[0].normal[2]);
+            }
+        }
+    }
+
+    // 普通三角形：被 yaw 90° 旋转（法线 (0,0,1) → X 轴）。
+    const auto &body_verts = m.mesh.vertices;
+    if (body_verts.size() == 3) {
+        if (std::abs(body_verts[0].normal[0]) < 0.9f ||
+            std::abs(body_verts[0].normal[2]) > 0.1f) {
+            printf("test_billboard_split: FAIL body triangle not rotated by yaw 90 "
+                   "(n=(%.2f,%.2f,%.2f))\n",
+                   body_verts[0].normal[0], body_verts[0].normal[1], body_verts[0].normal[2]);
         }
     }
 }

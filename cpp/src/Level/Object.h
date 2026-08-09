@@ -126,9 +126,20 @@ public:
 
 // 单个对象模型：由 OBJECT 命令的 model id 对应的 geo 布局解码而来。
 // 每个唯一 model id 只解码一次，所有引用它的对象实例复用这份网格。
+// 每个 GEO_BILLBOARD 节点对应一个 BillboardPart：pivot 是父矩阵应用到节点
+// 平移后的锚点（模型空间），网格顶点相对 pivot 定位（pivot-relative）。
+// 游戏里 billboard 在相机空间轴对齐 —— 渲染端把部分节点放在 pivot 上并每帧
+// 把其朝向设为相机的逆基（始终面向相机，见 Engine.md §4）。
+struct BillboardPart {
+    Vec3<float> pivot {0, 0, 0};         // 模型空间的锚点（父链全变换应用到 t）
+    GBI::Mesh mesh;                      // pivot-relative 三角形（材质表+纹理源）
+    std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
+};
+
 struct ObjectModel {
     GBI::Mesh mesh;                      // 合并后的模型网格（含材质表与纹理源图像）
     std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
+    std::vector<BillboardPart> billboard_parts; // GEO_BILLBOARD 子树（每节点一份）
 };
 
 // 动画 frame-0：每个 animated part（GEO_ANIMATED_PART）在出生帧的平移/旋转增量。
@@ -179,6 +190,9 @@ public:
 
     // 把 src 追加进 merged：顶点/索引加 base 偏移，材质按内容 + 纹理源图像去重。
     static void mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src);
+
+    // 逐材质解码纹理（material_images/material_tlut 与 materials 并行）。
+    void decodeTextures(const GBI::Mesh &mesh, std::vector<GBI::Texture> &textures);
 
     // 从 geo 布局图节点解码对象模型：收集 (DL, 变换) 对，跳过无效 DL 地址
     // （0x00000000 / 段越界，见 docs/engine-notes.md），把图节点变换（缩放/

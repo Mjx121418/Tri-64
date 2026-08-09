@@ -286,16 +286,23 @@ void applyTransform(GBI::Mesh &mesh, const Mtxf &m) {
 struct DisplayListWithTransform {
     SegmentedAddress dl;
     Mtxf transform;
+    // 该 DL 位于某个 GEO_BILLBOARD 节点之下：游戏用 mtxf_billboard 把它渲染成
+    // 相机空间轴对齐（始终面向相机，只随 camera roll 旋转，静态导出取 roll=0），
+    // 位置 = 父矩阵（全链，含旋转/缩放）应用到节点平移。这些三角形单独导出，
+    // 渲染端放在 pivot 上并每帧面向相机。
+    bool is_billboard {false};
+    Vec3<float> billboard_pivot {0, 0, 0}; // 所属 billboard 节点的锚点（模型空间）
 };
 
 // 遍历对象模型的 geo 图节点，累积缩放/旋转/平移，收集 (DL, 变换) 对。
-// 相机朝向类节点（billboard / animated part）按静态导出一律只烘焙平移，
-// 不做朝向相机的处理（未来支持 billboard 渲染时再扩展）。frame0 非空时，
+// billboard 子树按 mtxf_billboard 语义只取父矩阵的平移（T(pivot)，旋转/缩放
+// 丢弃）——位置跟随父链，朝向由渲染端每帧面向相机补足。frame0 非空时，
 // 每个 animated part 再叠加动画 frame-0 的平移/旋转增量（按 geo 遍历顺序
 // 逐个调用 frame0->next()，与游戏的 gCurrAnimAttribute 游标一致）。
 void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
                                       std::vector<DisplayListWithTransform> &out,
-                                      Frame0Animator *frame0) {
+                                      Frame0Animator *frame0,
+                                      std::optional<Vec3<float>> billboard_pivot = std::nullopt) {
     Mtxf current = parent;
     std::optional<SegmentedAddress> node_dl;
 
@@ -325,8 +332,15 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
             current = mtxfMul(tr, current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeBillboard>) {
-            current = mtxfMul(
-                mtxfTranslation(d.translation.x, d.translation.y, d.translation.z), current);
+            // 镜像 geo_process_billboard 的 mtxf_billboard（roll=0）：只保留父
+            // 矩阵的平移（父旋转/缩放丢弃），旋转为恒等。pivot = 父链（含
+            // 旋转/缩放）应用到节点平移；该节点的 DL 与整个子树都归入这个
+            // pivot（渲染端在此锚点上每帧面向相机）。
+            const Vec3<float> p = transformPoint(
+                current, {static_cast<float>(d.translation.x), static_cast<float>(d.translation.y),
+                          static_cast<float>(d.translation.z)});
+            current = mtxfTranslation(p.x, p.y, p.z);
+            billboard_pivot = p;
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeAnimatedPart>) {
             // animated part：geo 平移 + 动画 frame-0 增量。旋转用与游戏
@@ -352,7 +366,12 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
     }, node.data);
 
     if (node_dl) {
-        out.push_back(DisplayListWithTransform {*node_dl, current});
+        DisplayListWithTransform dlt {*node_dl, current};
+        if (billboard_pivot) {
+            dlt.is_billboard = true;
+            dlt.billboard_pivot = *billboard_pivot;
+        }
+        out.push_back(std::move(dlt));
     }
 
     // 开关节点（GEO_SWITCH_CASE）：只取选中的 case。静态导出没有动画，
@@ -362,7 +381,8 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
         if (!node.children.empty()) {
             const int16_t idx = sw.selected_case >= 0 ? sw.selected_case : 0;
             collectDisplayListsWithTransform(
-                *node.children[std::min<size_t>(idx, node.children.size() - 1)], current, out, frame0);
+                *node.children[std::min<size_t>(idx, node.children.size() - 1)], current, out, frame0,
+                billboard_pivot);
         }
         return;
     }
@@ -372,14 +392,14 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
         const auto &lod = std::get<GraphNodeLevelOfDetail>(node.data);
         if (lod.min_distance <= 0 && 0 < lod.max_distance) {
             for (const auto &child : node.children) {
-                collectDisplayListsWithTransform(*child, current, out, frame0);
+                collectDisplayListsWithTransform(*child, current, out, frame0, billboard_pivot);
             }
         }
         return;
     }
 
     for (const auto &child : node.children) {
-        collectDisplayListsWithTransform(*child, current, out, frame0);
+        collectDisplayListsWithTransform(*child, current, out, frame0, billboard_pivot);
     }
 }
 
@@ -426,7 +446,14 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
         return;
     }
 
+    // billboard DL 按 pivot 分组：每个 GEO_BILLBOARD 节点一个 BillboardPart
+    //（该节点自身 DL + 其子树 DL；pivot 相同的子树合并为同一 part）。
+    struct PartAcc {
+        Vec3<float> pivot;
+        GBI::Mesh mesh;
+    };
     GBI::Mesh merged;
+    std::vector<PartAcc> parts;
     for (const auto &dlt : dls) {
         // Treasure World 等 hack 的对象模型 geo 里可能有空/无效 DL 地址
         // （0x00000000 / 0xFFFFFFFF），跳过而不是去解码（见 docs/engine-notes.md）。
@@ -437,21 +464,52 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
         // 对象模型暂按逐 DL 全新状态解释（不做跨 DL 状态继承，见 Engine.md §5）。
         GBI::Mesh &decoded = interp.run(dlt.dl, /*reset_state=*/true);
         ObjectExtract::applyTransform(decoded, dlt.transform);
-        mergeMesh(merged, std::move(decoded));
+        if (dlt.is_billboard) {
+            auto it = std::find_if(parts.begin(), parts.end(), [&](const PartAcc &p) {
+                return p.pivot.x == dlt.billboard_pivot.x && p.pivot.y == dlt.billboard_pivot.y
+                    && p.pivot.z == dlt.billboard_pivot.z;
+            });
+            if (it == parts.end()) {
+                parts.push_back(PartAcc {dlt.billboard_pivot, {}});
+                it = parts.end() - 1;
+            }
+            mergeMesh(it->mesh, std::move(decoded));
+        } else {
+            mergeMesh(merged, std::move(decoded));
+        }
     }
-    if (merged.indices.empty()) {
+    if (merged.indices.empty() && parts.empty()) {
         return;
     }
 
     model_.mesh = std::move(merged);
-    model_.textures.resize(model_.mesh.materials.size());
+    model_.billboard_parts.reserve(parts.size());
+    for (auto &part : parts) {
+        if (part.mesh.indices.empty()) {
+            continue;
+        }
+        // 顶点相对 pivot 定位（pivot-relative）：渲染端把部分节点放在 pivot 上，
+        // 每帧把朝向设为相机的逆基（面向相机的旋转以 pivot 为轴心）。
+        ObjectExtract::applyTransform(
+            part.mesh, mtxfTranslation(-part.pivot.x, -part.pivot.y, -part.pivot.z));
+        BillboardPart out_part;
+        out_part.pivot = part.pivot;
+        out_part.mesh = std::move(part.mesh);
+        decodeTextures(out_part.mesh, out_part.textures);
+        model_.billboard_parts.push_back(std::move(out_part));
+    }
+    decodeTextures(model_.mesh, model_.textures);
+}
+
+void ObjectModelDecoder::decodeTextures(const GBI::Mesh &mesh,
+                                        std::vector<GBI::Texture> &textures) {
+    textures.resize(mesh.materials.size());
     GBI::TextureDecoder tex_decoder(seg_table_);
-    for (size_t m = 0; m < model_.mesh.materials.size(); m++) {
-        if (model_.mesh.materials[m].textured && model_.mesh.material_images[m] != 0) {
-            if (tex_decoder.run(model_.mesh.materials[m],
-                                segAddress(model_.mesh.material_images[m]),
-                                model_.mesh.material_tlut[m])) {
-                model_.textures[m] = tex_decoder.takeTexture();
+    for (size_t m = 0; m < mesh.materials.size(); m++) {
+        if (mesh.materials[m].textured && mesh.material_images[m] != 0) {
+            if (tex_decoder.run(mesh.materials[m], segAddress(mesh.material_images[m]),
+                                mesh.material_tlut[m])) {
+                textures[m] = tex_decoder.takeTexture();
             }
         }
     }

@@ -127,6 +127,28 @@ Static export must therefore apply each animated part's frame-0 animation values
 non-zero animYTransDivisor and default animYTrans (0), the multiplier is 0, so the
 frame-0 translation contribution is nil — only the door class (divisor 0) shifts.
 
+## billboards always face the camera
+
+Despite what the function's math looks like at first glance, SM64's billboards
+(`GEO_BILLBOARD` geo nodes and the object-level `GRAPH_RENDER_BILLBOARD` flag) DO
+always face the camera. `geo_process_camera` (rendering_graph_node.c:322) pushes the
+camera look-at matrix onto the modelview stack, so all children render in camera
+space. `mtxf_billboard` (math_util.c:342) discards the parent matrix's rotation and
+scale and builds a pure `R_z(camera roll)` rotation with the parent's position row
+only — i.e. the part is axis-aligned *in camera space*, which is exactly "facing the
+camera" (rotated by the camera roll around the view axis; roll is ~0 in gameplay).
+`geo_process_billboard` (rendering_graph_node.c:440) then re-applies the object
+scale. The position row uses the full parent chain (rotations/scales included) — the
+billboard pivot. The object-level flag additionally makes `geo_process_object` ignore
+the object's face angle; `obj_behaviors.c` calls coins/trees "billboard" objects in
+this sense (bhvTree = BILLBOARD, data/behavior_data.c).
+
+Consequences we mirror (roll = 0) — see `Engine.md` §4/§9:
+- Billboard parts keep only the parent's position for their pivot; ancestor
+  rotation/scale do not affect the part's own geometry.
+- The object scale is applied to billboard children TWICE (object root +
+  `geo_process_billboard`); we apply it once via the instance node.
+
 ## behavior scripts (segment 0x13)
 
 Behavior scripts are fixed arrays of u32 words at segment address 0x13

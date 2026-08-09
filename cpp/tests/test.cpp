@@ -36,6 +36,7 @@ int main() {
     testCollision();
     testBehaviorScript();
     testObject();
+    testBillboardSplit();
     testDisplayList();
     testMatrixSupport();
     testExportObj();
