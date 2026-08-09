@@ -56,7 +56,7 @@ public:
     // 当前提取的关卡名称（从 ROM 段2的 seg2_course_name_table 提取）。
     // 必须在 extractLevel 之后调用，否则返回空字符串。
     String getLevelName();
-    // 查询指定关卡的名称（运行关卡脚本提取 cur_course_num，查 seg2）。
+    // 查询指定关卡的名称（直接查 seg2_course_name_table，不运行关卡脚本）。
     String getLevelNameFor(int level_num);
     // 一次性从 segment 2 加载所有已知关卡名称，返回 { level_num: name } 字典。
     Dictionary getAllLevelNames();

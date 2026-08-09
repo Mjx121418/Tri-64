@@ -230,7 +230,7 @@ bool GodotBridge::extractLevel(int level_num, int area_index) {
     }
     LevelExtract::LevelExtractor extractor(rom);
     extractor.run(level_num, area_index);
-    result_ = extractor.result();
+    result_ = extractor.takeResult();
     return result_.ok;
 }
 

@@ -13,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 // 在引擎内直接提取关卡几何（无需先导出 OBJ）。
@@ -72,8 +73,9 @@ class LevelExtractor {
     std::string error_;
     WarningLog log_; // 本次提取的警告/被守卫的异常（run 时清空，结束后拷入 result_）
 
-    // 定位脚本段、加载公共段、运行目标关卡的关卡脚本，构建段表与场景图。
-    void runLevelScript(int level_num);
+    // 定位脚本段、可选加载补充段、运行目标关卡的关卡脚本，构建段表与场景图。
+    void runLevelScript(int level_num, bool load_supplemental);
+    void runScriptInternal(int level_num, bool load_supplemental);
     // Mirrors the runtime load_area() bank side effect for the selected area.
     void loadRomManagerAreaSegment(int area_index);
     // 提取 area_index 区域的几何/对象/碰撞（run 的第二步；越界数据抛异常时
@@ -83,10 +85,16 @@ class LevelExtractor {
 public:
     explicit LevelExtractor(ROM &rom) : rom_(rom) {}
 
+    // 只运行关卡脚本并返回有效区域，不解码区域几何、纹理或对象模型。
+    void runScript(int level_num);
+
     // 提取 rom 中 level_num（LevelNum，如 BOB=9）的 area_index 号区域。
     void run(int level_num, int area_index);
 
     const Result &result() const { return result_; }
+    // Move the completed result out when the extractor will not be reused.
+    // This avoids copying meshes, textures, collision data, and object models.
+    Result takeResult() { return std::move(result_); }
 };
 
 // 便捷包装：一次完整提取（供 bridge/测试使用）。

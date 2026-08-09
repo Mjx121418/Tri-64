@@ -10,6 +10,7 @@
 #include <map>
 #include <optional>
 #include <span>
+#include <utility>
 
 namespace LevelExtract {
 
@@ -50,25 +51,6 @@ uint32_t readBE32(const uint8_t *p) {
     return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
 }
 
-void loadCommonSegments(SegmentTable &seg_table, const std::vector<uint8_t> &rom,
-                        size_t scripts_start) {
-    for (size_t off = 0; off < 5 * 0x0C; off += 0x0C) {
-        const uint8_t *cmd = rom.data() + scripts_start + off;
-        const uint16_t seg = (cmd[2] << 8) | cmd[3];
-        const uint32_t rom_start = readBE32(cmd + 4);
-        const uint32_t rom_end = readBE32(cmd + 8);
-
-        if (cmd[0] == 0x18) { // LOAD_MIO0
-            if (!seg_table.loadMIO0Segment(seg, rom_start, rom_end)) {
-                printf("loadCommonSegments: failed to load MIO0 segment %d from 0x%x-0x%x\n",
-                       seg, rom_start, rom_end);
-            }
-        } else if (cmd[0] == 0x17) { // LOAD_RAW
-            seg_table.loadSegment(seg, rom_start, rom_end);
-        }
-    }
-}
-
 // Load segment 2 (contains seg2_course_name_table) into the segment table
 // at seg 0x02.  Detects SM64 Editor hacks by the MIO0 header at 0x800000.
 void loadSegment2(SegmentTable &seg_table, const std::vector<uint8_t> &rom_data) {
@@ -82,6 +64,11 @@ void loadSegment2(SegmentTable &seg_table, const std::vector<uint8_t> &rom_data)
             printf("loadSegment2: failed to load vanilla segment 2 from 0x108A40-0x114750\n");
         }
     }
+}
+
+void loadCourseNameSegment(SegmentTable &seg_table, ROM &rom) {
+    seg_table.rom_span = std::span(rom.data);
+    loadSegment2(seg_table, rom.data);
 }
 
 // 一个待解码的显示列表 + 其渲染层（geo 节点把 drawing_layer 存进 flags 高 8 位）。
@@ -242,6 +229,16 @@ std::string readCourseName(SegmentTable &seg_table, int32_t level_num) {
     return raw.substr(start);
 }
 
+std::vector<int> validAreaIndices(const Level &level) {
+    std::vector<int> areas;
+    for (int i = 0; i < static_cast<int>(level.areas.size()); i++) {
+        if (level.areas[i].root_node) {
+            areas.push_back(i);
+        }
+    }
+    return areas;
+}
+
 } // namespace
 
 // 游戏主段（代码+数据，含宏/特殊对象 preset 表）由启动入口（asm/entry.s）
@@ -280,7 +277,7 @@ bool loadMainSegment(SegmentTable &seg_table, const std::vector<uint8_t> &rom) {
     return true;
 }
 
-void LevelExtractor::runLevelScript(int level_num) {
+void LevelExtractor::runLevelScript(int level_num, bool load_supplemental) {
     seg_table_ = SegmentTable {};
     level_ = Level {};
     ok_ = false;
@@ -292,8 +289,7 @@ void LevelExtractor::runLevelScript(int level_num) {
     }
 
     const size_t scripts_start = findScriptsStart(rom_.data);
-    const size_t table_pos = findPattern(rom_.data, kLevelTablePattern, scripts_start);
-    if (scripts_start == rom_.data.size() || table_pos == rom_.data.size()) {
+    if (scripts_start == rom_.data.size()) {
         error_ = "could not locate the level scripts segment";
         return;
     }
@@ -301,11 +297,12 @@ void LevelExtractor::runLevelScript(int level_num) {
     seg_table_.loadSegment(0x15, static_cast<uint32_t>(scripts_start),
                            static_cast<uint32_t>(
                                std::min(scripts_start + 0x8000, rom_.data.size())));
-    // 主入口自身会加载 4/3/0x17/0x16/0x13（loadCommonSegments 冗余但无害）；
-    // 段 2 与主段是我们的补充（课程名 / preset 表）。
-    loadCommonSegments(seg_table_, rom_.data, scripts_start);
-    loadSegment2(seg_table_, rom_.data);
-    loadMainSegment(seg_table_, rom_.data);
+    if (load_supplemental) {
+        // 主入口自身会加载公共段 4/3/0x17/0x16/0x13；段 2 与主段是我们的
+        // 补充（课程名 / preset 表）。
+        loadSegment2(seg_table_, rom_.data);
+        loadMainSegment(seg_table_, rom_.data);
+    }
 
     // 从 level_main_scripts_entry（脚本段首）开始运行整个主入口：它会加载公共
     // 模型（星星/金币/1UP 等只在这里 LOAD_MODEL_FROM_GEO）、跳过文件选择菜单
@@ -384,11 +381,11 @@ void LevelExtractor::loadRomManagerAreaSegment(int area_index) {
     seg_table_.loadSegment(kAreaDataSegment, rom_start, rom_end);
 }
 
-void LevelExtractor::run(int level_num, int area_index) {
+void LevelExtractor::runScriptInternal(int level_num, bool load_supplemental) {
     result_ = {};
     log_.clear();
     try {
-        runLevelScript(level_num);
+        runLevelScript(level_num, load_supplemental);
     } catch (const std::out_of_range &e) {
         // 关卡脚本执行过程中的越界数据（hack 的坏地址等）：转成错误而非崩溃。
         log_.add("extract", "level script out of range: " + std::string(e.what()));
@@ -402,6 +399,24 @@ void LevelExtractor::run(int level_num, int area_index) {
         result_.warnings = log_.entries();
         return;
     }
+
+    result_.areas = validAreaIndices(level_);
+    result_.ok = true;
+    result_.warnings = log_.entries();
+}
+
+void LevelExtractor::runScript(int level_num) {
+    runScriptInternal(level_num, false);
+}
+
+void LevelExtractor::run(int level_num, int area_index) {
+    runScriptInternal(level_num, true);
+    if (!result_.ok) {
+        return;
+    }
+    // The script-only result is successful, but the full extraction is not
+    // complete until extractArea() reaches its final assignment below.
+    result_.ok = false;
 
     loadRomManagerAreaSegment(area_index);
 
@@ -417,13 +432,6 @@ void LevelExtractor::run(int level_num, int area_index) {
 
 // 提取 area_index 区域的几何/对象/碰撞（run 的第二步；抛异常表示数据越界）。
 void LevelExtractor::extractArea(int level_num, int area_index) {
-    // 记录该关卡所有有效区域（供 UI 下拉列表使用）
-    for (int i = 0; i < 8; i++) {
-        if (level_.areas[i].root_node) {
-            result_.areas.push_back(i);
-        }
-    }
-
     if (area_index < 0 || area_index >= 8 || !level_.areas[area_index].root_node) {
         result_.error = "area " + std::to_string(area_index) + " not found";
         return;
@@ -434,7 +442,7 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     if (area.terrain_addr.seg >= 0 && area.terrain_addr.seg <= 31) {
         Collision::CollisionDecoder collision_decoder(seg_table_);
         collision_decoder.run(area.terrain_addr, area.rooms_addr);
-        result_.collision = collision_decoder.data();
+        result_.collision = collision_decoder.takeData();
         if (!result_.collision.ok) {
             log_.add("collision",
                      "the level's terrain collision data at segment " +
@@ -459,11 +467,11 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
 
     // 移动纹理（水/熔岩）：扫描该区域引用的段（geo/DL 所在段）里的
     // MovtexQuadCollection，提取四边形数据。
+    std::array<bool, 32> movtex_seen {};
     std::vector<int16_t> movtex_segments;
     for (const auto &dl : dls) {
-        if (dl.dl.seg >= 0 && dl.dl.seg <= 31
-            && std::find(movtex_segments.begin(), movtex_segments.end(), dl.dl.seg)
-                   == movtex_segments.end()) {
+        if (dl.dl.seg >= 0 && dl.dl.seg <= 31 && !movtex_seen[dl.dl.seg]) {
+            movtex_seen[dl.dl.seg] = true;
             movtex_segments.push_back(dl.dl.seg);
         }
     }
@@ -488,7 +496,7 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
         if (merged.materials[m].textured && merged.material_images[m] != 0) {
             if (tex_decoder.run(merged.materials[m], segAddress(merged.material_images[m]),
                                 merged.material_tlut[m])) {
-                result_.textures[m] = tex_decoder.texture();
+                result_.textures[m] = tex_decoder.takeTexture();
             } else {
                 log_.add("texture",
                          "material " + std::to_string(m) + " (image 0x" + [&]() {
@@ -612,7 +620,7 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
             continue; // geo 未加载（越界/无效地址被跳过）
         }
         model_decoder.runModel(node, frame0 ? &*frame0 : nullptr);
-        ObjectExtract::ObjectModel model = model_decoder.model();
+        ObjectExtract::ObjectModel model = model_decoder.takeModel();
         if (model.mesh.indices.empty()) {
             continue;
         }
@@ -632,7 +640,7 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
             continue;
         }
         collision_decoder.runObject(obj.collision_data);
-        result_.object_collisions[i] = collision_decoder.data();
+        result_.object_collisions[i] = collision_decoder.takeData();
         if (!result_.object_collisions[i].ok) {
             log_.add("collision",
                      "the collision model of object " + std::to_string(i) +
@@ -682,24 +690,27 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
 Result extract(ROM &rom, int level_num, int area_index) {
     LevelExtractor extractor(rom);
     extractor.run(level_num, area_index);
-    return extractor.result();
+    return extractor.takeResult();
 }
 
 std::vector<int> listAreas(ROM &rom, int level_num) {
-    std::vector<int> areas;
     LevelExtractor extractor(rom);
-    extractor.run(level_num, 0);
-    if (!extractor.result().ok) {
-        // 区域列表不依赖具体的 area_index；level_num 无效时 result().areas 为空。
-        return extractor.result().areas;
-    }
+    extractor.runScript(level_num);
     return extractor.result().areas;
 }
 
 std::string extractLevelName(ROM &rom, int level_num) {
-    LevelExtractor extractor(rom);
-    extractor.run(level_num, 0);
-    return extractor.result().level_name;
+    if (!rom.is_loaded) {
+        return {};
+    }
+
+    SegmentTable seg_table;
+    loadCourseNameSegment(seg_table, rom);
+    try {
+        return readCourseName(seg_table, level_num);
+    } catch (const std::out_of_range &) {
+        return {};
+    }
 }
 
 std::map<int, std::string> loadAllLevelNames(ROM &rom) {
@@ -707,8 +718,7 @@ std::map<int, std::string> loadAllLevelNames(ROM &rom) {
     if (!rom.is_loaded) return names;
 
     SegmentTable seg_table;
-    seg_table.rom_span = std::span(rom.data);
-    loadSegment2(seg_table, rom.data);
+    loadCourseNameSegment(seg_table, rom);
 
     constexpr int kLevels[] = {
         4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,

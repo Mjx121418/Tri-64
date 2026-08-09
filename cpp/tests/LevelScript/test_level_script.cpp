@@ -59,30 +59,6 @@ size_t findScriptsStart(const std::vector<uint8_t> &rom) {
     return rom.size();
 }
 
-uint32_t readBE32(const uint8_t *p) {
-    return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
-}
-
-// The game loads these five common segments at the top of
-// level_main_scripts_entry, before any course script runs. Our test starts at
-// the level jump table instead (skipping the menu), so we must perform the
-// same loads ourselves. The ROM ranges are read from the commands themselves
-// (they may point anywhere in the ROM, e.g. the high region of a 64MB hack).
-void loadCommonSegments(SegmentTable &seg_table, const std::vector<uint8_t> &rom, size_t scripts_start) {
-    for (size_t off = 0; off < 5 * 0x0C; off += 0x0C) {
-        const uint8_t *cmd = rom.data() + scripts_start + off;
-        const uint16_t seg = (cmd[2] << 8) | cmd[3];
-        const uint32_t rom_start = readBE32(cmd + 4);
-        const uint32_t rom_end = readBE32(cmd + 8);
-
-        if (cmd[0] == 0x18) { // LOAD_MIO0
-            seg_table.loadMIO0Segment(seg, rom_start, rom_end);
-        } else if (cmd[0] == 0x17) { // LOAD_RAW
-            seg_table.loadSegment(seg, rom_start, rom_end);
-        }
-    }
-}
-
 } // namespace
 
 std::vector<std::filesystem::path> findRoms() {
@@ -145,10 +121,9 @@ LevelScriptSetup setupLevelScript(const std::filesystem::path &rom_path) {
     setup.seg_table.loadSegment(0x15, static_cast<uint32_t>(scripts_start),
                                 static_cast<uint32_t>(std::min(scripts_start + 0x8000, setup.rom.data.size())));
 
-    // Same common-segment setup the game performs in level_main_scripts_entry.
-    // Enter at the main entry start: it loads the common models, skips the menu
-    // (JUMP_IF(reg==0) -> EXIT) and dispatches to BOB via the level table.
-    loadCommonSegments(setup.seg_table, setup.rom.data, scripts_start);
+    // Enter at the main entry start: it loads the common segments itself,
+    // skips the menu (JUMP_IF(reg==0) -> EXIT), and dispatches to BOB via the
+    // level table.
     LevelExtract::loadMainSegment(setup.seg_table, setup.rom.data);
 
     LevelScriptVM vm(setup.seg_table, setup.level, setup.warnings);

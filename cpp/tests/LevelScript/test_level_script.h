@@ -59,8 +59,8 @@ void testDlRspData();
 void testTextureFormats();
 
 // Shared setup for the level script tests: loads the ROM, locates the scripts
-// segment and the level jump table, loads the common segments and runs the
-// level script for BOB. Returns the populated segment table and level.
+// segment and the level jump table, loads the main segment, and runs the level
+// script for BOB. The VM loads the common segments from the real entry point.
 struct LevelScriptSetup {
     ROM rom; // 必须声明在 seg_table 之前：seg_table 的 span 指向 rom.data
     SegmentTable seg_table;

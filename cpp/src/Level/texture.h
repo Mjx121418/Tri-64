@@ -40,12 +40,14 @@ public:
 
     // 解码 material 引用的 tex_image 纹理（CI 纹理用 tlut_image 的调色板）。
     // 成功返回 true，texture() 可用；失败返回 false，error() 给出原因。
-    // 每次 run 重置内部结果。
+    // 每次 run 重置内部结果；texture() 可借用读取，takeTexture() 可移出结果。
     bool run(const Material &material, SegmentedAddress tex_image, uint32_t tlut_image = 0);
 
     bool ok() const { return error_.empty(); }
     const Texture &texture() const { return texture_; }
     const std::string &error() const { return error_; }
+    // Move the decoded texture out before the next run.
+    Texture takeTexture();
 };
 
 } // namespace GBI

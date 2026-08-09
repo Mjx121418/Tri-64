@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <span>
+#include <utility>
 
 namespace Collision {
 
@@ -328,6 +329,10 @@ void CollisionDecoder::runObject(SegmentedAddress addr) {
 
     finalizeSurfaces(data_);
     data_.ok = true;
+}
+
+Data CollisionDecoder::takeData() {
+    return std::move(data_);
 }
 
 TriangleMesh buildTriangleMesh(const Data &data) {

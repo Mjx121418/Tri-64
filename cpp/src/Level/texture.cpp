@@ -1,5 +1,6 @@
 #include "Level/texture.h"
 #include "Math/math.h"
+#include <utility>
 
 namespace GBI {
 
@@ -201,6 +202,10 @@ bool TextureDecoder::run(const Material &m, SegmentedAddress tex_image, uint32_t
         }
     }
     return true;
+}
+
+Texture TextureDecoder::takeTexture() {
+    return std::move(texture_);
 }
 
 } // namespace GBI

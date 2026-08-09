@@ -95,8 +95,8 @@ TriangleMesh buildTriangleMesh(const Data &data);
 std::optional<float> findFloorHeight(const Data &data, float x, float y, float z);
 
 // 碰撞（terrain）数据解码器（镜像 LevelScriptVM 的结构）：构造时绑定段表，
-// run(terrain[, rooms]) 重置并解码，结果经 data() 取得。解码失败时
-// data().ok = false、data().error 给出原因。
+// run(terrain[, rooms]) 重置并解码，结果经 data() 读取或 takeData() 移出。
+// 解码失败时 data().ok = false、data().error 给出原因。
 class CollisionDecoder {
     const SegmentTable &seg_table_;
     Data data_;
@@ -115,6 +115,8 @@ public:
     void runObject(SegmentedAddress addr);
 
     const Data &data() const { return data_; }
+    // Move the decoded data out before the next run.
+    Data takeData();
 };
 
 } // namespace Collision

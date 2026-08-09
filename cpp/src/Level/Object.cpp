@@ -4,6 +4,7 @@
 #include "Math/math.h"
 #include <algorithm>
 #include <optional>
+#include <utility>
 #include <variant>
 
 namespace ObjectExtract {
@@ -450,10 +451,14 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
             if (tex_decoder.run(model_.mesh.materials[m],
                                 segAddress(model_.mesh.material_images[m]),
                                 model_.mesh.material_tlut[m])) {
-                model_.textures[m] = tex_decoder.texture();
+                model_.textures[m] = tex_decoder.takeTexture();
             }
         }
     }
+}
+
+ObjectModel ObjectModelDecoder::takeModel() {
+    return std::move(model_);
 }
 
 } // namespace ObjectExtract

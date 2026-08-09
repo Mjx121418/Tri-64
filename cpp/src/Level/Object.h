@@ -166,7 +166,8 @@ private:
 };
 
 // 对象模型/对象出生数据解码器（镜像 LevelScriptVM 的结构）：构造时绑定段表，
-// runModel(node[, frame0]) 重置并解码一个对象模型，结果经 model() 取得。
+// runModel(node[, frame0]) 重置并解码一个对象模型，结果经 model() 读取或
+// takeModel() 移出。
 class ObjectModelDecoder {
     const SegmentTable &seg_table_;
     WarningLog &warnings_;
@@ -186,6 +187,8 @@ public:
     void runModel(const GraphNode *node, Frame0Animator *frame0 = nullptr);
 
     const ObjectModel &model() const { return model_; }
+    // Move the decoded model out when this decoder will not be reused.
+    ObjectModel takeModel();
 };
 
 } // namespace ObjectExtract

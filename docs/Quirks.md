@@ -136,9 +136,9 @@ into the low bytes and following words (see data/behavior_data.c macros). Comman
 are 1/2/3/5 words long; the lengths follow the command-number table in
 src/engine/behavior_script.c / BehaviorCmdTable.
 
-Segment 0x13 is one of the five common segments our loader already sets up
-(loadCommonSegments reads the first five boot-script commands: 0x04, 0x03, 0x17,
-0x16, 0x13), so behaviors are reachable with the same SegmentTable used for the
+Segment 0x13 is one of the five common segments loaded by the level-script VM when
+it starts at `level_main_scripts_entry` (the first commands load 0x04, 0x03, 0x17,
+0x16, and 0x13), so behaviors are reachable with the same SegmentTable used for the
 level script.
 
 The game runs a behavior every frame against the object's state; we walk it once,
