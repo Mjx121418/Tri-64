@@ -8,12 +8,14 @@
 #include "Memory/segment.h"
 #include "ROM.h"
 #include "Scripts/level_script.h"
+#include "test_parallel.h"
 #include "tree_printer.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <filesystem>
+#include <memory>
 #include <vector>
 
 namespace {
@@ -263,10 +265,11 @@ void testRunLevelScript() {
         return;
     }
 
-    for (const auto &rom : roms) {
+    TestParallel::parallelFor(roms.size(), [&](size_t rom_index) {
+        const auto &rom = roms[rom_index];
         LevelScriptSetup setup = setupLevelScript(rom);
         if (!setup.ok) {
-            continue;
+            return;
         }
 
         // Report what the script produced.
@@ -286,7 +289,7 @@ void testRunLevelScript() {
             }
         }
         printf("loaded graph nodes (models): %zu\n", loaded_models);
-    }
+    });
 }
 
 // 对象驱动的 Bowser 关卡（17 BITDW / 19 BITFS / 21 BITS）静态几何极少，
@@ -298,68 +301,82 @@ void testObjectModels() {
         return;
     }
 
+    struct ModelCase {
+        std::filesystem::path path;
+        ROM *rom;
+        int level;
+    };
+    std::vector<std::unique_ptr<ROM>> fixtures;
+    std::vector<ModelCase> cases;
     for (const auto &path : roms) {
-        ROM rom;
-        rom.load(path);
-        if (!rom.is_loaded) {
+        fixtures.push_back(std::make_unique<ROM>());
+        ROM *rom = fixtures.back().get();
+        rom->load(path);
+        if (!rom->is_loaded) {
             continue;
         }
-
         for (int level : {9, 17, 19, 21}) {
-            LevelExtract::Result r = LevelExtract::extract(rom, level, 1);
-            if (!r.ok) {
-                printf("test_object_models: level %d extract failed: %s\n", level,
-                       r.error.c_str());
-                continue;
-            }
-
-            size_t with_model = 0;
-            size_t goombas = 0;
-            size_t bobombs = 0;
-            size_t bubble_trees = 0;
-            for (const auto &obj : r.objects) {
-                if (obj.model_id != 0) {
-                    with_model++;
-                }
-                if (obj.model_id == 0xC0) { // MODEL_GOOMBA（经 MACRO_OBJECTS 展开）
-                    goombas++;
-                }
-                if (obj.model_id == 0xBC) { // MODEL_BLACK_BOBOMB
-                    bobombs++;
-                }
-                if (obj.model_id == 0x17) { // MODEL_BOB_BUBBLY_TREE（碰撞特殊对象）
-                    bubble_trees++;
-                }
-            }
-            printf("test_object_models: level %d: objects=%zu (model!=0: %zu), unique models=%zu"
-                   " (goombas=%zu, bobombs=%zu, bubble_trees=%zu)\n",
-                   level, r.objects.size(), with_model, r.object_models.size(), goombas, bobombs,
-                   bubble_trees);
-            for (const auto &[mid, model] : r.object_models) {
-                printf("  model 0x%02X: %zu verts, %zu tris, %zu materials\n", mid,
-                       model.mesh.vertices.size(), model.mesh.indices.size() / 3,
-                       model.mesh.materials.size());
-            }
-
-            // 同一模型只解码一次：去重后的模型数不能超过引用模型的对象数
-            if (r.object_models.size() > with_model) {
-                printf("test_object_models: FAIL: more models than objects referencing them\n");
-            }
-            // BOB 的 MACRO_OBJECTS 应展开出对象：原版有 goomba/黑炸弹，
-            // hack（如 Treasure World）可能移除 goomba，但至少应有炸弹。
-            const bool is_vanilla = path.filename().string().find("baserom") != std::string::npos;
-            if (level == 9 && bobombs == 0) {
-                printf("test_object_models: FAIL: BOB has no bobombs\n");
-            }
-            if (level == 9 && is_vanilla && goombas == 0) {
-                printf("test_object_models: FAIL: vanilla BOB has no goombas\n");
-            }
-            // 原版 BOB 的碰撞特殊对象（special_bubble_tree）应展开成模型 0x17
-            if (level == 9 && is_vanilla && bubble_trees == 0) {
-                printf("test_object_models: FAIL: vanilla BOB has no special-object trees\n");
-            }
+            cases.push_back(ModelCase {path, rom, level});
         }
     }
+
+    TestParallel::parallelFor(cases.size(), [&](size_t index) {
+        const ModelCase &test_case = cases[index];
+        const int level = test_case.level;
+        const std::filesystem::path &path = test_case.path;
+        LevelExtract::Result r = LevelExtract::extract(*test_case.rom, level, 1);
+        if (!r.ok) {
+            printf("test_object_models: level %d extract failed: %s\n", level,
+                   r.error.c_str());
+            return;
+        }
+
+        size_t with_model = 0;
+        size_t goombas = 0;
+        size_t bobombs = 0;
+        size_t bubble_trees = 0;
+        for (const auto &obj : r.objects) {
+            if (obj.model_id != 0) {
+                with_model++;
+            }
+            if (obj.model_id == 0xC0) { // MODEL_GOOMBA（经 MACRO_OBJECTS 展开）
+                goombas++;
+            }
+            if (obj.model_id == 0xBC) { // MODEL_BLACK_BOBOMB
+                bobombs++;
+            }
+            if (obj.model_id == 0x17) { // MODEL_BOB_BUBBLY_TREE（碰撞特殊对象）
+                bubble_trees++;
+            }
+        }
+        printf("test_object_models: level %d: objects=%zu (model!=0: %zu), unique models=%zu"
+               " (goombas=%zu, bobombs=%zu, bubble_trees=%zu)\n",
+               level, r.objects.size(), with_model, r.object_models.size(), goombas, bobombs,
+               bubble_trees);
+        for (const auto &[mid, model] : r.object_models) {
+            printf("  model 0x%02X: %zu verts, %zu tris, %zu materials\n", mid,
+                   model.mesh.vertices.size(), model.mesh.indices.size() / 3,
+                   model.mesh.materials.size());
+        }
+
+        // 同一模型只解码一次：去重后的模型数不能超过引用模型的对象数
+        if (r.object_models.size() > with_model) {
+            printf("test_object_models: FAIL: more models than objects referencing them\n");
+        }
+        // BOB 的 MACRO_OBJECTS 应展开出对象：原版有 goomba/黑炸弹，
+        // hack（如 Treasure World）可能移除 goomba，但至少应有炸弹。
+        const bool is_vanilla = path.filename().string().find("baserom") != std::string::npos;
+        if (level == 9 && bobombs == 0) {
+            printf("test_object_models: FAIL: BOB has no bobombs\n");
+        }
+        if (level == 9 && is_vanilla && goombas == 0) {
+            printf("test_object_models: FAIL: vanilla BOB has no goombas\n");
+        }
+        // 原版 BOB 的碰撞特殊对象（special_bubble_tree）应展开成模型 0x17
+        if (level == 9 && is_vanilla && bubble_trees == 0) {
+            printf("test_object_models: FAIL: vanilla BOB has no special-object trees\n");
+        }
+    });
 }
 
 void testLevelScriptData() {
@@ -368,63 +385,80 @@ void testLevelScriptData() {
         return;
     }
 
+    struct DataCase {
+        std::filesystem::path path;
+        ROM *rom;
+        int level;
+    };
+    std::vector<std::unique_ptr<ROM>> fixtures;
+    std::vector<DataCase> cases;
     for (const auto &path : roms) {
-        ROM rom;
-        rom.load(path);
-        if (!rom.is_loaded) {
+        fixtures.push_back(std::make_unique<ROM>());
+        ROM *rom = fixtures.back().get();
+        rom->load(path);
+        if (!rom->is_loaded) {
             continue;
         }
-        const bool is_vanilla = path.filename().string().find("baserom") != std::string::npos;
+        for (int level : {6, 9}) {
+            cases.push_back(DataCase {path, rom, level});
+        }
+    }
 
-        // 城堡内侧（6）：最多的传送/画框传送节点；原版有 12 个画框传送。
-        LevelExtract::Result r6 = LevelExtract::extract(rom, 6, 1);
-        if (r6.ok) {
+    TestParallel::parallelFor(cases.size(), [&](size_t index) {
+        const DataCase &test_case = cases[index];
+        const bool is_vanilla = test_case.path.filename().string().find("baserom")
+            != std::string::npos;
+        LevelExtract::Result result = LevelExtract::extract(*test_case.rom, test_case.level, 1);
+        if (!result.ok) {
+            return;
+        }
+
+        if (test_case.level == 6) {
+            // 城堡内侧（6）：最多的传送/画框传送节点；原版有 12 个画框传送。
             printf("test_level_script_data: castle inside: warps=%zu painting_warps=%zu "
                    "music=(%u,%u) mario=(model %d arg %u)\n",
-                   r6.warp_nodes.size(), r6.painting_warp_nodes.size(), r6.music_param,
-                   r6.music_param2, r6.mario_model_id, r6.mario_behavior_arg);
-            if (r6.warp_nodes.empty()) {
+                   result.warp_nodes.size(), result.painting_warp_nodes.size(), result.music_param,
+                   result.music_param2, result.mario_model_id, result.mario_behavior_arg);
+            if (result.warp_nodes.empty()) {
                 printf("test_level_script_data: FAIL: castle inside has no warp nodes\n");
             }
-            if (is_vanilla && r6.painting_warp_nodes.size() != 12) {
+            if (is_vanilla && result.painting_warp_nodes.size() != 12) {
                 printf("test_level_script_data: FAIL: vanilla castle inside painting warps "
                        "(expect 12, got %zu)\n",
-                       r6.painting_warp_nodes.size());
+                       result.painting_warp_nodes.size());
             }
+            return;
         }
 
         // BOB（9）：Mario 出生行为 + 背景音乐 seq + 若干传送节点。
-        LevelExtract::Result r9 = LevelExtract::extract(rom, 9, 1);
-        if (r9.ok) {
-            printf("test_level_script_data: BOB: warps=%zu whirls=%zu dialog=[%u,%u] "
-                   "music=(%u,%u) mario=(model %d arg %u) transition=(%u,%u,%u,%u,%u) "
-                   "camera=%s\n",
-                   r9.warp_nodes.size(), r9.whirlpools.size(), r9.dialog[0], r9.dialog[1],
-                   r9.music_param, r9.music_param2, r9.mario_model_id, r9.mario_behavior_arg,
-                   r9.transition.type, r9.transition.time, r9.transition.r, r9.transition.g,
-                   r9.transition.b, r9.camera.has_value() ? "set" : "null");
-            if (is_vanilla && r9.mario_model_id != 1) {
-                printf("test_level_script_data: FAIL: vanilla BOB Mario model id (expect 1, "
-                       "got %d)\n",
-                       r9.mario_model_id);
-            }
-            if (is_vanilla && r9.music_param2 != 3) {
-                printf("test_level_script_data: FAIL: vanilla BOB music seq (expect 3, got %u)\n",
-                       r9.music_param2);
-            }
-            if (is_vanilla && r9.warp_nodes.size() < 7) {
-                printf("test_level_script_data: FAIL: vanilla BOB has too few warps\n");
-            }
-            // 区域相机（geo views[0] 的 NODE_CAMERA）应已接线
-            if (is_vanilla && !r9.camera.has_value()) {
-                printf("test_level_script_data: FAIL: vanilla BOB area camera not wired\n");
-            }
-            if (is_vanilla && r9.camera.has_value()
-                && r9.camera->mode != 1) {
-                printf("test_level_script_data: FAIL: vanilla BOB camera mode (expect 1)\n");
-            }
+        printf("test_level_script_data: BOB: warps=%zu whirls=%zu dialog=[%u,%u] "
+               "music=(%u,%u) mario=(model %d arg %u) transition=(%u,%u,%u,%u,%u) "
+               "camera=%s\n",
+               result.warp_nodes.size(), result.whirlpools.size(), result.dialog[0],
+               result.dialog[1], result.music_param, result.music_param2, result.mario_model_id,
+               result.mario_behavior_arg, result.transition.type, result.transition.time,
+               result.transition.r, result.transition.g, result.transition.b,
+               result.camera.has_value() ? "set" : "null");
+        if (is_vanilla && result.mario_model_id != 1) {
+            printf("test_level_script_data: FAIL: vanilla BOB Mario model id (expect 1, "
+                   "got %d)\n",
+                   result.mario_model_id);
         }
-    }
+        if (is_vanilla && result.music_param2 != 3) {
+            printf("test_level_script_data: FAIL: vanilla BOB music seq (expect 3, got %u)\n",
+                   result.music_param2);
+        }
+        if (is_vanilla && result.warp_nodes.size() < 7) {
+            printf("test_level_script_data: FAIL: vanilla BOB has too few warps\n");
+        }
+        // 区域相机（geo views[0] 的 NODE_CAMERA）应已接线
+        if (is_vanilla && !result.camera.has_value()) {
+            printf("test_level_script_data: FAIL: vanilla BOB area camera not wired\n");
+        }
+        if (is_vanilla && result.camera.has_value() && result.camera->mode != 1) {
+            printf("test_level_script_data: FAIL: vanilla BOB camera mode (expect 1)\n");
+        }
+    });
 }
 
 void testDisplayList() {
@@ -433,10 +467,11 @@ void testDisplayList() {
         return;
     }
 
-    for (const auto &rom : roms) {
+    TestParallel::parallelFor(roms.size(), [&](size_t rom_index) {
+        const auto &rom = roms[rom_index];
         LevelScriptSetup setup = setupLevelScript(rom);
         if (!setup.ok) {
-            continue;
+            return;
         }
 
         for (int i = 0; i < 8; i++) {
@@ -497,7 +532,7 @@ void testDisplayList() {
             printf("  total: %zu triangles, %zu vertices, %zu distinct materials (%zu textured)\n",
                    total_triangles, total_vertices, merged_materials.size(), textured_materials);
         }
-    }
+    });
 }
 
 void testMatrixSupport() {

@@ -1,7 +1,16 @@
 import os
+import platform
 import shutil
+import subprocess
+import sys
 
 env = Environment(tools = ['default', 'compilation_db'])
+
+# SCons otherwise defaults to one compile job. Keep explicit -j values intact,
+# but use the available cores for the normal build and test invocations.
+if GetOption('num_jobs') == 1:
+    default_jobs = max(1, (os.cpu_count() or 2) - 1)
+    SetOption('num_jobs', int(ARGUMENTS.get('jobs', default_jobs)))
 
 # For reference:
 # - CCFLAGS are compilation flags shared between C and C++
@@ -13,6 +22,29 @@ env = Environment(tools = ['default', 'compilation_db'])
 
 godot_cpp_path = "godot-cpp"
 
+host_os = sys.platform
+
+if host_os == 'darwin':
+    host_platform = 'macos'
+    host_arch = 'universal'
+elif host_os == 'linux':
+    host_platform = 'linux'
+    host_arch = {'aarch64': 'arm64'}.get(platform.machine(), platform.machine())
+
+    # Use the installed LLVM/libc++ toolchain for the native Linux build.
+    native_cc = shutil.which('clang') or env['CC']
+    native_cxx = shutil.which('clang++') or env['CXX']
+    env.Replace(CC=native_cc, CXX=native_cxx, LINK=native_cxx, SHLINK=native_cxx)
+    env.Append(CXXFLAGS=['-stdlib=libc++'])
+    env.Append(LINKFLAGS=['-stdlib=libc++'])
+    env.Append(SHLINKFLAGS=['-stdlib=libc++'])
+elif host_os == 'win32':
+    host_platform = 'windows'
+    host_arch = {'AMD64': 'x86_64', 'aarch64': 'arm64'}.get(
+        platform.machine(), platform.machine())
+else:
+    raise SystemExit('unsupported host platform: ' + host_os)
+
 env.Append(CXXFLAGS=['-std=c++26'])
 
 # tweak this if you want to use different folders, or more folders, to store your source code in.
@@ -20,7 +52,6 @@ env.Append(CPPPATH=["src/", "tests/"])
 env.Append(CPPPATH=["src/chart"])
 env.Append(CPPPATH=[godot_cpp_path + "/include", godot_cpp_path + "/gen/include"])
 env.Append(LIBPATH=[godot_cpp_path + "/bin"])
-env.Append(LIBS=["libgodot-cpp.macos.template_debug.universal"])
 
 debug_mode = ARGUMENTS.get('debug', 0)
 
@@ -36,15 +67,65 @@ sources = [
     Glob("src/Math/*.cpp")
 ]
 
+
+def build_godot_cpp(platform_name, arch, use_llvm=False, tool_dir=None):
+    """Build godot-cpp with the toolchain selected for the requested target."""
+    def builder(target, source, env):
+        command = [
+            'scons',
+            '-C',
+            godot_cpp_path,
+            'platform=' + platform_name,
+            'arch=' + arch,
+            'target=template_debug',
+        ]
+        if use_llvm:
+            command.append('use_llvm=yes')
+
+        child_env = os.environ.copy()
+        if tool_dir:
+            child_env['PATH'] = tool_dir + os.pathsep + child_env.get('PATH', '')
+        return subprocess.call(command, env=child_env)
+    return builder
+
+
+godot_cpp_lib_name = 'libgodot-cpp.{}.template_debug.{}'.format(
+    host_platform, host_arch)
+godot_cpp_lib_path = '{}/bin/{}.a'.format(godot_cpp_path, godot_cpp_lib_name)
+env.Append(LIBS=[godot_cpp_lib_name])
+if host_os == 'linux':
+    # godot-cpp's Linux archive uses libstdc++; keep that runtime alongside
+    # the native libc++ used by tri64.
+    env.Append(LINKFLAGS=['-Wl,-lstdc++'])
+
+native_tool_dir = None
+if host_os == 'linux':
+    native_tool_dir = os.path.dirname(os.path.abspath(env['CXX']))
+
+host_godot_cpp = env.Command(
+    godot_cpp_lib_path,
+    [],
+    build_godot_cpp(host_platform, host_arch,
+                    use_llvm=(host_os == 'linux'),
+                    tool_dir=native_tool_dir),
+)
+
 lib_filename = "tri64"
 library = env.SharedLibrary(
     target="../project/bin/{}".format(lib_filename),
     source=sources,
 )
+env.Depends(library, host_godot_cpp)
 
 test_sources = [Glob("tests/*.cpp"), Glob("tests/LevelScript/*.cpp"), library]
 
-test = env.Program(
+test_env = env.Clone()
+if host_os == 'linux':
+    # Find the native extension relative to tests/bin, independent of cwd.
+    test_env.Append(CCFLAGS=['-pthread'])
+    test_env.Append(LINKFLAGS=['-pthread', "-Wl,-rpath,$$ORIGIN/../../project/bin"])
+
+test = test_env.Program(
     target="tests/bin/test",
     source=test_sources
 )
@@ -56,33 +137,50 @@ Default([library, compilation_database])
 env.Alias('test', [test, compilation_database])
 
 # ---------------------------------------------------------------------------
-# Windows (x86_64) 交叉编译目标：scons windows
-# 与 mac 构建相同的方式（环境 + 预编译的 godot-cpp 库），仅把编译器换成
-# mingw 交叉工具链（需先安装：brew install mingw-w64）。
-# 产出 ../project/bin/tri64.windows.x86_64.dll，配合 tri64.gdextension 的
-# windows.debug.x86_64 条目使用。首次构建较慢（godot-cpp 要为 Windows
-# 编译一次），之后增量。
+# Windows (x86_64) cross-compile target: scons windows.
+# Uses llvm-mingw when available, with the MinGW GCC toolchain as a fallback.
+# Produces ../project/bin/tri64.windows.x86_64.dll for the corresponding
+# tri64.gdextension entry. The godot-cpp archive is built incrementally.
 # ---------------------------------------------------------------------------
-mingw_cxx = shutil.which('x86_64-w64-mingw32-g++') or 'x86_64-w64-mingw32-g++'
-mingw_cc = shutil.which('x86_64-w64-mingw32-gcc') or 'x86_64-w64-mingw32-gcc'
+mingw_cxx = (shutil.which('x86_64-w64-mingw32-clang++') or
+             shutil.which('x86_64-w64-mingw32-g++'))
+mingw_cc = (shutil.which('x86_64-w64-mingw32-clang') or
+            shutil.which('x86_64-w64-mingw32-gcc'))
+mingw_ar = (shutil.which('x86_64-w64-mingw32-llvm-ar') or
+            shutil.which('x86_64-w64-mingw32-ar'))
+mingw_ranlib = shutil.which('x86_64-w64-mingw32-ranlib')
+mingw_uses_llvm = bool(mingw_cxx and 'clang++' in os.path.basename(mingw_cxx))
+mingw_cxx_command = mingw_cxx or 'x86_64-w64-mingw32-clang++'
+mingw_cc_command = mingw_cc or 'x86_64-w64-mingw32-clang'
 
 godot_cpp_win_lib = 'godot-cpp/bin/libgodot-cpp.windows.template_debug.x86_64.a'
 
 
-# 递归调用 godot-cpp 的 scons 构建 Windows 静态库（macOS 上自动走 MinGW 交叉编译）。
 def build_godot_cpp_windows(target, source, env):
-    if not os.path.exists(mingw_cxx):
-        print('mingw-w64 cross compiler not found; install it with: brew install mingw-w64')
+    if not mingw_cxx or not mingw_cc:
+        if host_os == 'darwin':
+            hint = 'brew install llvm-mingw'
+        else:
+            hint = 'install llvm-mingw and add its bin directory to PATH'
+        print('Windows cross compiler not found; ' + hint)
         return 1
-    return os.system('scons -C godot-cpp platform=windows arch=x86_64 target=template_debug')
+    return build_godot_cpp(
+        'windows',
+        'x86_64',
+        use_llvm=mingw_uses_llvm,
+        tool_dir=os.path.dirname(os.path.abspath(mingw_cxx)),
+    )(target, source, env)
 
 
-env.Command(godot_cpp_win_lib, [], build_godot_cpp_windows)
+windows_godot_cpp = env.Command(godot_cpp_win_lib, [], build_godot_cpp_windows)
 
 win_env = Environment(
-    CC=mingw_cc,
-    CXX=mingw_cxx,
-    SHLINK=mingw_cxx,
+    CC=mingw_cc_command,
+    CXX=mingw_cxx_command,
+    LINK=mingw_cxx_command,
+    SHLINK=mingw_cxx_command,
+    AR=mingw_ar or 'x86_64-w64-mingw32-ar',
+    RANLIB=mingw_ranlib or 'x86_64-w64-mingw32-ranlib',
     CXXFLAGS=['-std=c++26'],
     # -static：把 libwinpthread/libgcc/libstdc++ 全静态链进去，产物只依赖
     # 系统 DLL（KERNEL32 + UCRT），无需随游戏分发 mingw 运行库。
@@ -100,6 +198,6 @@ windows_dll = win_env.SharedLibrary(
     target="../project/bin/tri64.windows.x86_64.dll",
     source=sources,
 )
-win_env.Depends(windows_dll, godot_cpp_win_lib)
+win_env.Depends(windows_dll, windows_godot_cpp)
 
 env.Alias('windows', windows_dll)

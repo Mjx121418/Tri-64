@@ -5,6 +5,7 @@
 #include "Math/math.h"
 #include "Memory/segment.h"
 #include "Scripts/behavior_script.h"
+#include "test_parallel.h"
 #include "test_level_script.h"
 
 #include <algorithm>
@@ -329,18 +330,37 @@ void testBehaviorScript() {
         return;
     }
 
-    for (const auto &rom : roms) {
+    TestParallel::parallelFor(roms.size(), [&](size_t rom_index) {
+        const auto &rom = roms[rom_index];
         printf("== behavior script: %s ==\n", rom.filename().string().c_str());
         LevelScriptSetup setup = setupLevelScript(rom);
         if (!setup.ok) {
-            continue;
+            return;
         }
-        testDoorBehavior(setup);
-        testRobustness(setup);
-        testDoorFrame0(setup);
-        testTreeUV(setup);
-        testGoombaFrame0(setup);
-        testStarModel(setup);
-        testMaterialDetection(setup);
-    }
+        TestParallel::parallelFor(7, [&](size_t test_index) {
+            switch (test_index) {
+            case 0:
+                testDoorBehavior(setup);
+                break;
+            case 1:
+                testRobustness(setup);
+                break;
+            case 2:
+                testDoorFrame0(setup);
+                break;
+            case 3:
+                testTreeUV(setup);
+                break;
+            case 4:
+                testGoombaFrame0(setup);
+                break;
+            case 5:
+                testStarModel(setup);
+                break;
+            case 6:
+                testMaterialDetection(setup);
+                break;
+            }
+        });
+    });
 }

@@ -62,25 +62,38 @@ Prerequisites:
 
 - SCons (`pip install scons`)
 - Godot 4.x
+- Linux native builds: LLVM/Clang with libc++
+- Windows cross-builds: llvm-mingw (`x86_64-w64-mingw32-clang++` and companion
+  tools on `PATH`; MinGW GCC is supported as a fallback)
 - `godot-cpp` checked out into `cpp/godot-cpp/` (a branch/tag matching your Godot
   version; this directory is gitignored — clone separately or add as a submodule)
 - ROM dumps for testing: `baserom.us.z64` (vanilla) and/or a hack such as
   *Super Mario Treasure World*, placed in `cpp/`
 
-Build the macOS extension and run the tests:
+Build the native extension and run the tests:
 
 ```
 cd cpp
-scons            # builds ../project/bin/libtri64.dylib
-scons test       # builds the test binary
-./tests/bin/test # runs the suite (expect 0 FAIL)
+scons            # macOS: ../project/bin/libtri64.dylib
+                 # Linux: ../project/bin/libtri64.so
+scons test       # builds the native test binary
+./tests/bin/test # runs the parallel suite (expect 0 FAIL)
 ```
 
-Cross-compile the Windows extension (requires `brew install mingw-w64`):
+SCons selects the matching native `godot-cpp` library and builds it when it is
+missing. It uses available CPU cores for compilation by default; pass `-jN` or
+`jobs=N` to choose a different build concurrency.
+
+Cross-compile the Windows x86_64 extension with llvm-mingw:
 
 ```
 scons windows    # builds ../project/bin/tri64.windows.x86_64.dll
 ```
+
+The test executable uses one bounded worker pool. Top-level tests and independent
+ROM/level cases run concurrently, including object-model, collision, behavior,
+display-list, level-script, and hack-robustness cases. Test output can be
+interleaved because cases run concurrently.
 
 ## Running
 

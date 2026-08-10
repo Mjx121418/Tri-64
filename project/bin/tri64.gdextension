@@ -8,5 +8,9 @@ reloadable = true
 
 macos.debug = "./libtri64.dylib"
 macos.release = "./libtri64.dylib"
+linux.debug.x86_64 = "./libtri64.so"
+linux.release.x86_64 = "./libtri64.so"
+linux.debug.arm64 = "./libtri64.so"
+linux.release.arm64 = "./libtri64.so"
 windows.debug.x86_64 = "./tri64.windows.x86_64.dll"
 windows.release.x86_64 = "./tri64.windows.x86_64.dll"

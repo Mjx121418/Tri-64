@@ -6,7 +6,13 @@
 #include "Log.h"
 #include "Memory/segment.h"
 #include "Scripts/geo_layout.h"
+#include "test_parallel.h"
 #include "tree_printer.h"
+
+#include <algorithm>
+#include <functional>
+#include <thread>
+#include <vector>
 
 int main() {
     printf("Hi.\n");
@@ -24,22 +30,34 @@ int main() {
     std::unique_ptr<GraphNode> root = processor.processGeoLayout(entry);
     printNodeTree(*root, 0);
 
-    testRunLevelScript();
-    testRomManagerAreaBank();
-    testFixedAddressMemory();
-    testMopLoader();
-    testLevelName();
-    testObjectModels();
-    testLevelScriptData();
-    testDlRspData();
-    testTextureFormats();
-    testCollision();
-    testBehaviorScript();
-    testObject();
-    testBillboardSplit();
-    testDisplayList();
-    testMatrixSupport();
-    testExportObj();
-    testHackRobustness();
+    const std::vector<std::function<void()>> tests {
+        testRunLevelScript,
+        testRomManagerAreaBank,
+        testFixedAddressMemory,
+        testMopLoader,
+        testLevelName,
+        testObjectModels,
+        testLevelScriptData,
+        testDlRspData,
+        testTextureFormats,
+        testCollision,
+        testBehaviorScript,
+        testObject,
+        testBillboardSplit,
+        testDisplayList,
+        testMatrixSupport,
+        testExportObj,
+        testHackRobustness,
+    };
+
+    // Each test owns its ROM/state, so independent extraction tests can share
+    // the available cores. Output may be interleaved, but failures remain visible.
+    const unsigned hardware_threads = std::thread::hardware_concurrency();
+    const size_t worker_count = std::min(
+        tests.size(), static_cast<size_t>(hardware_threads == 0 ? 1 : hardware_threads));
+    TestParallel::Executor executor(worker_count);
+    TestParallel::setExecutor(&executor);
+    executor.run(tests);
+    TestParallel::setExecutor(nullptr);
     return 0;
 }

@@ -3,6 +3,8 @@
 #include "Level/level_extract.h"
 #include "ROM.h"
 #include "Scripts/Collision.h"
+#include "test_parallel.h"
+#include <array>
 #include <cstdio>
 #include <filesystem>
 #include <set>
@@ -42,11 +44,12 @@ void testCollision() {
         return;
     }
 
-    for (const auto &path : roms) {
+    TestParallel::parallelFor(roms.size(), [&](size_t rom_index) {
+        const auto &path = roms[rom_index];
         ROM rom;
         rom.load(path);
         if (!rom.is_loaded) {
-            continue;
+            return;
         }
         const bool is_vanilla = path.filename().string().find("baserom") != std::string::npos;
         printf("== %s ==\n", path.filename().string().c_str());
@@ -56,7 +59,7 @@ void testCollision() {
             LevelExtract::Result r = LevelExtract::extract(rom, 9, 1);
             if (!r.ok) {
                 printf("test_collision: BOB extract failed: %s\n", r.error.c_str());
-                continue;
+                return;
             }
             const Collision::Data &c = r.collision;
             size_t rooms = 0;
@@ -134,7 +137,7 @@ void testCollision() {
             LevelExtract::Result r = LevelExtract::extract(rom, 7, 1);
             if (!r.ok) {
                 printf("test_collision: HMC extract failed: %s\n", r.error.c_str());
-                continue;
+                return;
             }
             const Collision::Data &c = r.collision;
             size_t rooms = 0;
@@ -159,7 +162,7 @@ void testCollision() {
             LevelExtract::Result r = LevelExtract::extract(rom, 6, 1);
             if (!r.ok) {
                 printf("test_collision: castle_inside extract failed: %s\n", r.error.c_str());
-                continue;
+                return;
             }
             const Collision::Data &c = r.collision;
             size_t rooms = 0;
@@ -272,7 +275,7 @@ void testCollision() {
                 }
             }
         }
-    }
+    });
 }
 
 void testHackRobustness() {
@@ -304,18 +307,30 @@ void testHackRobustness() {
     // 各关卡 area 1：越界 geo/脚本地址不应导致崩溃（提取应成功或返回错误，
     // 而不是抛未捕获异常终止进程）。MOP1-3 的固定地址模型在脚本 CALL 中
     // 现在会被加载，因此这组 ROM 可能不再产生旧的 geo 越界警告。
-    int ok = 0, failed = 0;
-    size_t total_warnings = 0;
-    for (int lv : {4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-                   21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 33, 34, 36}) {
-        LevelExtract::Result r = LevelExtract::extract(rom, lv, 1);
-        if (!r.ok) {
-            failed++;
-            printf("test_hack_robustness: FAIL level %d: %s\n", lv, r.error.c_str());
-        } else {
-            ok++;
+    constexpr std::array levels {
+        4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+        21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 33, 34, 36,
+    };
+    std::vector<uint8_t> level_ok(levels.size(), 0);
+    std::vector<size_t> level_warnings(levels.size(), 0);
+    TestParallel::parallelFor(levels.size(), [&](size_t index) {
+        const int level = levels[index];
+        const LevelExtract::Result result = LevelExtract::extract(rom, level, 1);
+        level_ok[index] = result.ok ? 1 : 0;
+        level_warnings[index] = result.warnings.size();
+        if (!result.ok) {
+            printf("test_hack_robustness: FAIL level %d: %s\n", level,
+                   result.error.c_str());
         }
-        total_warnings += r.warnings.size();
+    });
+
+    int ok = 0;
+    int failed = 0;
+    size_t total_warnings = 0;
+    for (size_t index {0}; index < levels.size(); index++) {
+        ok += level_ok[index] ? 1 : 0;
+        failed += level_ok[index] ? 0 : 1;
+        total_warnings += level_warnings[index];
     }
     printf("test_hack_robustness: ok=%d failed=%d total_warnings=%zu\n", ok, failed,
            total_warnings);

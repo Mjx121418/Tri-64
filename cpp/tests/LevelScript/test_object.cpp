@@ -5,6 +5,7 @@
 #include "Log.h"
 #include "Memory/segment.h"
 #include "ROM.h"
+#include "test_parallel.h"
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -51,11 +52,12 @@ void testObject() {
         return;
     }
 
-    for (const auto &path : roms) {
+    TestParallel::parallelFor(roms.size(), [&](size_t rom_index) {
+        const auto &path = roms[rom_index];
         ROM rom;
         rom.load(path);
         if (!rom.is_loaded) {
-            continue;
+            return;
         }
         const bool is_vanilla = path.filename().string().find("baserom") != std::string::npos;
         printf("== %s ==\n", path.filename().string().c_str());
@@ -64,7 +66,7 @@ void testObject() {
         LevelExtract::Result r = LevelExtract::extract(rom, 9, 1);
         if (!r.ok) {
             printf("test_object: BOB extract failed: %s\n", r.error.c_str());
-            continue;
+            return;
         }
 
         size_t with_model = 0;
@@ -278,7 +280,7 @@ void testObject() {
             LevelExtract::Result castle = LevelExtract::extract(rom, 6, 1);
             if (!castle.ok) {
                 printf("test_object: castle extract failed: %s\n", castle.error.c_str());
-                continue;
+                return;
             }
             const size_t triangles = castle.mesh.indices.size() / 3;
             printf("test_object: castle_inside geometry triangles=%zu materials=%zu\n", triangles,
@@ -320,7 +322,7 @@ void testObject() {
             LevelExtract::Result wf = LevelExtract::extract(rom, 24, 1);
             if (!wf.ok) {
                 printf("test_object: WF extract failed: %s\n", wf.error.c_str());
-                continue;
+                return;
             }
             size_t yellow = 0;
             bool shade_material = false;
@@ -434,7 +436,7 @@ void testObject() {
                 }
             }
         }
-    }
+    });
 }
 
 // GEO_BILLBOARD 语义：billboard 子树按节点拆成 billboard_parts（每个
