@@ -359,6 +359,81 @@ void testObject() {
                 printf("test_object: FAIL WF yellow-decal alpha not uniform 0x80\n");
             }
         }
+
+        // 背景（geo 0x19 节点）：BOB = OCEAN_SKY(0) 天空盒，段 0x0A 解码出
+        // 10×8 图块贴图集（320×256 RGBA8，有天空内容）；城堡内侧 =
+        // GEO_BACKGROUND_COLOR(0x0001) 纯色填充（func = 0，无贴图集）。
+        {
+            if (is_vanilla) {
+                if (!r.background.is_skybox() || r.background.background != 0) {
+                    printf("test_object: FAIL BOB background not OCEAN_SKY skybox "
+                           "(id=%d func=%08x)\n",
+                           r.background.background, r.background.func);
+                }
+                if (r.skybox.pixels.size() != size_t(r.skybox.width) * r.skybox.height * 4
+                    || r.skybox.width != 320 || r.skybox.height != 256) {
+                    printf("test_object: FAIL BOB skybox size (%ux%u)\n", r.skybox.width,
+                           r.skybox.height);
+                    for (const auto &w : r.warnings) {
+                        if (w.stage == "skybox") {
+                            printf("test_object:   skybox warning: %s\n", w.message.c_str());
+                        }
+                    }
+                } else {
+                    size_t non_black = 0, blue = 0;
+                    for (size_t i = 0; i < r.skybox.pixels.size(); i += 4) {
+                        const uint8_t rr = r.skybox.pixels[i];
+                        const uint8_t gg = r.skybox.pixels[i + 1];
+                        const uint8_t bb = r.skybox.pixels[i + 2];
+                        if (rr || gg || bb) {
+                            non_black++;
+                        }
+                        if (bb > rr && bb > gg) {
+                            blue++;
+                        }
+                    }
+                    printf("test_object: BOB skybox non-black px=%zu blue px=%zu\n", non_black,
+                           blue);
+                    if (non_black == 0 || blue == 0) {
+                        printf("test_object: FAIL BOB skybox content empty\n");
+                    }
+                }
+            }
+        }
+
+        // 各关卡背景 id（vanilla）：CCM=4 SNOW_MOUNTAINS, SSL=5 DESERT,
+        // WDW=2 UNDERWATER_CITY, BBH=6 HAUNTED, JRB=12 ABOVE_CLOUDS。
+        if (is_vanilla) {
+            const std::pair<int, int16_t> expect_bg[] = {
+                {5, 4},   // CCM
+                {8, 5},   // SSL
+                {11, 2},  // WDW
+                {4, 6},   // BBH
+                {12, 8},  // JRB
+            };
+            for (const auto &[level, id] : expect_bg) {
+                LevelExtract::Result lr = LevelExtract::extract(rom, level, 1);
+                if (!lr.ok) {
+                    printf("test_object: FAIL background level %d extract\n", level);
+                    continue;
+                }
+                if (!lr.background.is_skybox() || lr.background.background != id) {
+                    printf("test_object: FAIL level %d background id=%d (expect %d)\n", level,
+                           lr.background.background, id);
+                }
+            }
+
+            // 城堡内侧 = 纯色填充（func 空，background = RGBA5551 0x0001）。
+            LevelExtract::Result castle = LevelExtract::extract(rom, 6, 1);
+            if (castle.ok) {
+                if (castle.background.is_skybox() || castle.background.background != 0x0001
+                    || !castle.skybox.pixels.empty()) {
+                    printf("test_object: FAIL castle-inside background not fill 0x0001 "
+                           "(id=%d func=%08x)\n",
+                           castle.background.background, castle.background.func);
+                }
+            }
+        }
     }
 }
 

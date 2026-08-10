@@ -62,6 +62,12 @@ public:
     Dictionary getAllLevelNames();
     // Mario 的初始位置与朝向，返回 { pos: Vector3, angle_y: float }。
     Dictionary getMarioStartPos();
+    // 当前区域的背景（geo 0x19 节点）：{ background: int（天空盒 id 或
+    // RGBA5551 填充色）, func: int, is_skybox: bool, fill_color: Color,
+    // skybox_width/height: int, skybox_pixels: PackedByteArray(RGBA8) }。
+    // is_skybox 时 skybox_* 是 10×8 图块的贴图集（320×256）；否则只有
+    // fill_color（geo_process_background 的纯色填充）。
+    Dictionary getBackground();
     GodotBridge();
 };
 

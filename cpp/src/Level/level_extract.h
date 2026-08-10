@@ -9,6 +9,7 @@
 #include "ROM.h"
 #include "Scripts/Collision.h"
 #include "Scripts/movtex.h"
+#include "Scripts/skybox.h"
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -43,6 +44,11 @@ struct Result {
     std::string level_name;             // 从 ROM 段2提取的关卡名称（可为空）
     Vec3<float> mario_start_pos {};     // Mario 的初始位置（关卡脚本 cmdSetMarioStartPos）
     float mario_start_angle_y {0};      // Mario 的初始朝向（Y 轴旋转角度，弧度）
+    // 区域背景（geo 0x19 节点）：天空盒 id + 生成函数，或纯色填充（见 Skybox）。
+    Skybox::Background background {};
+    // 天空盒贴图集（解码自段 0x0A；纯色背景时为空）。渲染端按 skybox.c 的
+    // yaw/pitch 贴图滚动逐帧绘制。
+    Skybox::SkyboxImage skybox {};
 
     // --- 关卡脚本记录的区域/关卡级数据（镜像 Level/Area，暂不渲染） ---
     std::vector<WarpNode> warp_nodes;          // 0x26 传送节点

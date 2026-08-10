@@ -205,6 +205,7 @@ void GodotBridge::_bind_methods() {
                          &GodotBridge::getLevelNameFor);
     ClassDB::bind_method(D_METHOD("getAllLevelNames"), &GodotBridge::getAllLevelNames);
     ClassDB::bind_method(D_METHOD("getMarioStartPos"), &GodotBridge::getMarioStartPos);
+    ClassDB::bind_method(D_METHOD("getBackground"), &GodotBridge::getBackground);
 }
 
 GodotBridge::GodotBridge() {
@@ -445,5 +446,27 @@ Dictionary GodotBridge::getMarioStartPos() {
     d["pos"] = Vector3(result_.mario_start_pos.x, result_.mario_start_pos.y,
                         result_.mario_start_pos.z);
     d["angle_y"] = static_cast<double>(result_.mario_start_angle_y);
+    return d;
+}
+
+Dictionary GodotBridge::getBackground() {
+    Dictionary d;
+    d["background"] = static_cast<int64_t>(result_.background.background);
+    d["func"] = static_cast<int64_t>(result_.background.func);
+    d["is_skybox"] = result_.background.is_skybox();
+    // func 为空时 background 是 RGBA5551 填充色（geo_process_background 的
+    // gDPSetFillColor）。
+    const uint16_t v = static_cast<uint16_t>(result_.background.background);
+    d["fill_color"] = Color(((v >> 11) & 0x1F) / 31.0f, ((v >> 6) & 0x1F) / 31.0f,
+                            ((v >> 1) & 0x1F) / 31.0f, (v & 1) ? 1.0f : 0.0f);
+    // 天空盒贴图集（10×8 图块，320×256 RGBA8；纯色背景为空）。
+    if (!result_.skybox.pixels.empty()) {
+        PackedByteArray px;
+        px.resize(static_cast<int>(result_.skybox.pixels.size()));
+        memcpy(px.ptrw(), result_.skybox.pixels.data(), result_.skybox.pixels.size());
+        d["skybox_width"] = static_cast<int64_t>(result_.skybox.width);
+        d["skybox_height"] = static_cast<int64_t>(result_.skybox.height);
+        d["skybox_pixels"] = px;
+    }
     return d;
 }

@@ -79,7 +79,15 @@ struct DisplayListRef {
     uint8_t layer {0};
 };
 
-void collectDisplayLists(const GraphNode &node, std::vector<DisplayListRef> &out) {
+void collectDisplayLists(const GraphNode &node, std::vector<DisplayListRef> &out,
+                         const GraphNodeBackGround **background_out = nullptr) {
+    // 区域背景节点（GEO_BACKGROUND 0x19，area geo 根下的 ortho 子树）：
+    // 与 DL 收集同一次遍历捕获，不再单独扫描。
+    if (background_out && *background_out == nullptr
+        && std::holds_alternative<GraphNodeBackGround>(node.data)) {
+        *background_out = &std::get<GraphNodeBackGround>(node.data);
+    }
+
     if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
         DisplayListRef ref;
         ref.dl = std::get<GraphNodeDisplayList>(node.data).display_list;
@@ -91,7 +99,7 @@ void collectDisplayLists(const GraphNode &node, std::vector<DisplayListRef> &out
     // 分支（房间）的 DL（不跨 case 去重——重复 DL 原样收集）。
     if (std::holds_alternative<GraphNodeSwitchCase>(node.data)) {
         for (const auto &child : node.children) {
-            collectDisplayLists(*child, out);
+            collectDisplayLists(*child, out, background_out);
         }
         return;
     }
@@ -101,14 +109,14 @@ void collectDisplayLists(const GraphNode &node, std::vector<DisplayListRef> &out
         const auto &lod = std::get<GraphNodeLevelOfDetail>(node.data);
         if (lod.min_distance <= 0 && 0 < lod.max_distance) {
             for (const auto &child : node.children) {
-                collectDisplayLists(*child, out);
+                collectDisplayLists(*child, out, background_out);
             }
         }
         return;
     }
 
     for (const auto &child : node.children) {
-        collectDisplayLists(*child, out);
+        collectDisplayLists(*child, out, background_out);
     }
 }
 
@@ -458,12 +466,35 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     // 收集该区域的所有 DL（按渲染层），合并进一个 GBI::Mesh（去重键与 OBJ 导出
     // 一致：材质内容 + 解析出的纹理源图像）。游戏按 layer 升序渲染且 RDP 状态跨
     // DL 继承，所以按 layer 排序后用同一个解释器连续运行（仅首个 DL 复位）。
+    // 背景节点与 DL 同一次遍历捕获：func 非空 = 天空盒（background 是 id 0-9，
+    // 贴图在段 0x0A，关卡脚本 LOAD_MIO0 已载入）；func 为空 = background 是
+    // RGBA5551 填充色（geo_process_background 画纯色）。
     std::vector<DisplayListRef> dls;
-    collectDisplayLists(*area.root_node, dls);
+    const GraphNodeBackGround *bg_node = nullptr;
+    collectDisplayLists(*area.root_node, dls, &bg_node);
     std::stable_sort(dls.begin(), dls.end(),
                      [](const DisplayListRef &a, const DisplayListRef &b) {
                          return a.layer < b.layer;
                      });
+
+    result_.background = {};
+    result_.skybox = {};
+    if (bg_node) {
+        result_.background.background = bg_node->background;
+        result_.background.func = bg_node->func;
+        if (result_.background.is_skybox()) {
+            Skybox::SkyboxDecoder skybox_decoder(seg_table_);
+            skybox_decoder.run();
+            if (skybox_decoder.ok()) {
+                result_.skybox = skybox_decoder.image();
+            } else {
+                log_.add("skybox",
+                         "skybox segment 0x0A decode failed (background id " +
+                             std::to_string(bg_node->background) + "): " +
+                             skybox_decoder.error());
+            }
+        }
+    }
 
     // 移动纹理（水/熔岩）：扫描该区域引用的段（geo/DL 所在段）里的
     // MovtexQuadCollection，提取四边形数据。

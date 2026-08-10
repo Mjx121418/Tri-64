@@ -19,6 +19,7 @@ extends Node3D
 @onready var all_rooms_checkbox: CheckButton = %AllRooms
 @onready var warning_dialog: AcceptDialog = %WarningDialog
 @onready var warning_list: RichTextLabel = %WarningList
+@onready var world_env: WorldEnvironment = %WorldEnvironment
 
 # 碰撞房间开关状态（碰撞模式下按房间显示/隐藏静态碰撞表面）。
 var _collision_vertices: PackedVector3Array = PackedVector3Array()
@@ -38,6 +39,13 @@ var _billboard_nodes: Array = []
 # SM64 世界空间光照 shader（受光材质用；Godot 的 NORMAL 含节点旋转 → 对象实例
 # 旋转后光照正确）。
 const _sm64_lighting_shader := preload("res://sm64_lighting.gdshader")
+# SM64 天空盒 shader（skybox.c 的 10×8 图块贴图集，按相机 yaw/pitch 滚动）。
+const _skybox_shader := preload("res://skybox.gdshader")
+
+# 天空盒渲染状态：_sky 挂到 WorldEnvironment 的 Sky（background_mode = SKY）；
+# 纯色背景改为 BG_COLOR。可见 pass 用屏幕坐标，cubemap pass 用 EYEDIR。
+var _sky := Sky.new()
+var _sky_material := ShaderMaterial.new()
 
 # 关卡编号 = decomp include/level_table.h 的 LevelNum（BOB = 9）。
 # 名称先从 ROM 段2提取；提取失败时回退到这些硬编码名称。
@@ -114,6 +122,12 @@ func _ready() -> void:
 		level_option.add_item("%d  %s" % [level[0], level[1]])
 		level_option.set_item_metadata(level_option.item_count - 1, level[0])
 	level_option.select(0) # 默认 BOB（9）
+
+	# 天空盒 shader 挂到 WorldEnvironment 的 Sky（background_mode 在
+	# _setup_background 里切换）。
+	_sky_material.shader = _skybox_shader
+	_sky.sky_material = _sky_material
+	world_env.environment.sky = _sky
 
 	status_label.text = "No ROM loaded. Click \"Open ROM\" to select a .z64 file."
 
@@ -198,7 +212,34 @@ func _extract_and_render() -> void:
 		return
 	_render_current()
 	_place_camera()
+	_setup_background()
 	_show_warnings()
+
+## 设置当前区域的背景：天空盒（skybox.c 的 10×8 图块贴图集，屏幕 pass 用
+## SCREEN_UV、cubemap pass 用 EYEDIR 采样）或纯色填充（geo_process_background
+## 的 RGBA5551 填充色）。
+func _setup_background() -> void:
+	var bg: Dictionary = rom_manager.getBackground()
+	var env: Environment = world_env.environment
+	if bg.is_skybox and bg.has("skybox_pixels") and bg.skybox_pixels.size() > 0:
+		var img := Image.create_from_data(int(bg.skybox_width), int(bg.skybox_height),
+				false, Image.FORMAT_RGBA8, bg.skybox_pixels)
+		_sky_material.set_shader_parameter("u_sky", ImageTexture.create_from_image(img))
+		# sSkyboxColors：只有 JRB 的 ABOVE_CLOUDS 背景在未取得首颗星时
+		# 使用深绿遮罩。查看器没有存档状态，因此采用游戏新存档的默认状态。
+		if selected_level == 23 and int(bg.background) == 8:
+			_sky_material.set_shader_parameter("u_mask",
+					Color(0x50 / 255.0, 0x64 / 255.0, 0x5A / 255.0, 1.0))
+		else:
+			_sky_material.set_shader_parameter("u_mask", Color.WHITE)
+		env.background_mode = Environment.BG_SKY
+	else:
+		env.background_mode = Environment.BG_COLOR
+		env.background_color = bg.fill_color
+
+static func _skybox_camera_angles(forward: Vector3) -> Vector2:
+	var horizontal := Vector2(forward.x, forward.z).length()
+	return Vector2(atan2(forward.x, forward.z), atan2(forward.y, horizontal))
 
 ## 提取结束后，把本次提取记录到的警告/被守卫的异常（越界数据、跳过的模型/几何、
 ## 解码失败等）显示在一个弹窗里；没有警告时不弹。
@@ -762,6 +803,12 @@ func _process(_delta: float) -> void:
 		var cam_basis := camera.global_transform.basis
 		for node in _billboard_nodes:
 			node.global_basis = cam_basis
+	# 天空盒：逐帧传 decomp skybox.c 的 yaw/pitch。SM64 的 atan2s(y, x)
+	# 角度约定等价于标准 atan2(x, y)，所以 yaw = atan2(x, z)，pitch =
+	# atan2(y, horizontal)。天空是世界固定的：右转 → 天空内容左移。
+	var sky_angles := _skybox_camera_angles(fwd)
+	_sky_material.set_shader_parameter("u_cam_yaw", sky_angles.x)
+	_sky_material.set_shader_parameter("u_cam_pitch", sky_angles.y)
 
 ## 点击对象列表中的对象：把相机瞬移到该对象的精确位置（便于逐个核对）。
 func _on_object_list_cell_selected() -> void:
