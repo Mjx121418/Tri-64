@@ -12,17 +12,12 @@ using namespace godot;
 
 namespace {
 
-// 每个材质一个网格字典（与 OBJ 导出的 usemtl 分组一致），方便每个
-// MeshInstance3D 单独挂材质。
+// 每个（材质, 绘制层）一个网格字典（材质表去重不变，层是每三角形的属性：
+// geo 节点 flags 高 8 位，0-7；游戏按层升序渲染并在每层设置 render mode）。
+// 渲染端按 d["layer"] 做分层材质（0-3 OPA / 4 TEX_EDGE / 5-7 XLU，见 Engine.md）。
 Array meshDicts(const GBI::Mesh &mesh) {
     Array out;
     for (size_t m = 0; m < mesh.materials.size(); m++) {
-        Dictionary d;
-        PackedVector3Array verts;
-        PackedVector3Array normals;
-        PackedVector2Array uvs;
-        PackedInt32Array indices;
-
         // 顶点色导出规则（按 combine 是否用到 SHADE）：
         // - combine 用到 SHADE（G_CC_MODULATERGB 的 C=SHADE、G_CC_SHADE 的
         //   D=SHADE 等）：受光时顶点第 4 字是法线、shade 已烘焙进顶点色；未受光
@@ -31,38 +26,53 @@ Array meshDicts(const GBI::Mesh &mesh) {
         //   prim/env 颜色（materialDicts 的 color），不导出顶点色。
         const bool use_vertex_colors =
             GBI::combineUsesShade(mesh.materials[m].combine_w0, mesh.materials[m].combine_w1);
-        PackedColorArray colors;
 
-        for (size_t t = 0; t < mesh.material_ids.size(); t++) {
-            if (mesh.material_ids[t] != m) {
+        for (uint8_t layer = 0; layer <= 7; layer++) {
+            Dictionary d;
+            PackedVector3Array verts;
+            PackedVector3Array normals;
+            PackedVector2Array uvs;
+            PackedInt32Array indices;
+            PackedColorArray colors;
+
+            for (size_t t = 0; t < mesh.material_ids.size(); t++) {
+                if (mesh.material_ids[t] != m) {
+                    continue;
+                }
+                // 手工构造的网格（movtex 等）没有 triangle_layers，按层 0 处理。
+                const uint8_t tri_layer =
+                    t < mesh.triangle_layers.size() ? mesh.triangle_layers[t] : 0;
+                if (tri_layer != layer) {
+                    continue;
+                }
+                const int32_t base = verts.size();
+                for (uint32_t k = 0; k < 3; k++) {
+                    const GBI::MeshVertex &v = mesh.vertices[mesh.indices[t * 3 + k]];
+                    verts.push_back(Vector3(v.position[0], v.position[1], v.position[2]));
+                    normals.push_back(Vector3(v.normal[0], v.normal[1], v.normal[2]));
+                    uvs.push_back(Vector2(v.uv[0], v.uv[1]));
+                    if (use_vertex_colors) {
+                        colors.push_back(Color(v.color[0] / 255.0f, v.color[1] / 255.0f,
+                                               v.color[2] / 255.0f, v.color[3] / 255.0f));
+                    }
+                    indices.push_back(base + static_cast<int32_t>(k));
+                }
+            }
+            if (indices.is_empty()) {
                 continue;
             }
-            const int32_t base = verts.size();
-            for (uint32_t k = 0; k < 3; k++) {
-                const GBI::MeshVertex &v = mesh.vertices[mesh.indices[t * 3 + k]];
-                verts.push_back(Vector3(v.position[0], v.position[1], v.position[2]));
-                normals.push_back(Vector3(v.normal[0], v.normal[1], v.normal[2]));
-                uvs.push_back(Vector2(v.uv[0], v.uv[1]));
-                if (use_vertex_colors) {
-                    colors.push_back(Color(v.color[0] / 255.0f, v.color[1] / 255.0f,
-                                           v.color[2] / 255.0f, v.color[3] / 255.0f));
-                }
-                indices.push_back(base + static_cast<int32_t>(k));
-            }
-        }
-        if (indices.is_empty()) {
-            continue;
-        }
 
-        d["vertices"] = verts;
-        d["normals"] = normals;
-        d["uvs"] = uvs;
-        if (use_vertex_colors) {
-            d["colors"] = colors;
+            d["vertices"] = verts;
+            d["normals"] = normals;
+            d["uvs"] = uvs;
+            if (use_vertex_colors) {
+                d["colors"] = colors;
+            }
+            d["indices"] = indices;
+            d["material"] = static_cast<int64_t>(m);
+            d["layer"] = static_cast<int64_t>(layer);
+            out.push_back(d);
         }
-        d["indices"] = indices;
-        d["material"] = static_cast<int64_t>(m);
-        out.push_back(d);
     }
     return out;
 }

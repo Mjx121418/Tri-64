@@ -112,11 +112,12 @@ CombineSource combineAlphaSource(uint32_t mux0, uint32_t mux1) {
     return decodeAlphaMux(a0);
 }
 
-Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state) {
+Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state, uint8_t layer) {
     dl_stack_.clear();
     mesh_ = {};
     finished = false;
     steps_ = 0;
+    current_layer_ = layer;
     if (reset_state) {
         // 场景第一个 DL：RDP/RSP 复位。combine/prim/env/fog/tile 清 0（RDP 复位
         // 默认）；几何模式 = 游戏启动默认（game_init.c:120，依赖默认光照的对象
@@ -603,6 +604,7 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
     mesh_.indices.push_back(base + 1);
     mesh_.indices.push_back(base + 2);
     mesh_.material_ids.push_back(materialId(tex_image, tlut));
+    mesh_.triangle_layers.push_back(current_layer_);
 }
 
 void DLInterpreter::appendVertex(const Vtx &v) {

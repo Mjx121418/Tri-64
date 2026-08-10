@@ -484,8 +484,9 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     GBI::Mesh &merged = result_.mesh;
     GBI::DLInterpreter interp(seg_table_, log_);
     for (size_t i = 0; i < dls.size(); i++) {
-        // 首个 DL 复位 RDP/RSP 状态，其余继承上一个 DL 留下的渲染寄存器。
-        GBI::Mesh &mesh = interp.run(dls[i].dl, /*reset_state=*/i == 0);
+        // 首个 DL 复位 RDP/RSP 状态，其余继承上一个 DL 留下的渲染寄存器；
+        // layer 记到每个三角形的 triangle_layers（渲染端分层材质用）。
+        GBI::Mesh &mesh = interp.run(dls[i].dl, /*reset_state=*/i == 0, dls[i].layer);
         ObjectExtract::ObjectModelDecoder::mergeMesh(merged, std::move(mesh));
     }
 

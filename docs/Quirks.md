@@ -149,6 +149,22 @@ Consequences we mirror (roll = 0) — see `Engine.md` §4/§9:
 - The object scale is applied to billboard children TWICE (object root +
   `geo_process_billboard`); we apply it once via the instance node.
 
+## drawing layers
+
+Each geo node's drawing layer (0-7, `flags >> 8`) selects the RDP render mode for the
+whole layer batch in `geo_process_master_list_sub` (rendering_graph_node.c:135):
+0-3 `G_RM_*_OPA_SURF` (no alpha blending), 4 `G_RM_AA_TEX_EDGE` (alpha-edge blend,
+z-write on), 5-7 `G_RM_AA_XLU_SURF` (blend, `Z_CMP` without `Z_UPD`). Within a layer,
+DLs run in graph-append order — there is no depth sorting on the N64.
+
+We record the layer per triangle and apply the render modes to Godot materials
+(Engine.md §5/§9). Two deviations:
+- OPA layers ignore texture/vertex alpha (no blend); Godot's depth-sorted transparent
+  pass only applies to layers 4+.
+- Within-layer order: the Godot renderer sorts transparent surfaces by depth instead
+  of the game's append order (visually equivalent for opaque; for overlapping
+  translucency the z-buffer keeps the result close).
+
 ## behavior scripts (segment 0x13)
 
 Behavior scripts are fixed arrays of u32 words at segment address 0x13

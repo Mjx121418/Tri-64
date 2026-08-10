@@ -131,6 +131,10 @@ struct Mesh {
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;      // 每三角形 3 个索引
     std::vector<uint32_t> material_ids; // 每三角形 → materials 表
+    // 每三角形 → 绘制层（geo 节点 flags 高 8 位，0-7；整条 DL 共享一层）。
+    // 游戏按层升序渲染并在每层设置 render mode（0-3 OPA / 4 TEX_EDGE / 5-7 XLU，
+    // 见 Engine.md §5）；渲染端据此做分层材质（透明度/深度写）。
+    std::vector<uint8_t> triangle_layers;
     std::vector<Material> materials;    // 材质表（按内容去重，不含图像地址）
     // 与 materials 并行的纹理源：每个材质的解析图像地址（段地址打包成 u32，
     // 0 = 未绑定）。图像属于材质去重键（同图块配置、不同图像的三角形不能合并），
@@ -238,6 +242,7 @@ class DLInterpreter {
 
     bool finished {false};
     Material material_;          // 当前材质快照（drawTriangle 时从 state_ 重建）
+    uint8_t current_layer_ {0};  // 本条 DL 的绘制层（run 的参数）
 
 public:
     DLInterpreter(const SegmentTable &seg_table, WarningLog &warnings) :
@@ -246,8 +251,9 @@ public:
     // 执行 dl。reset_state 为 true（场景第一个 DL）时把 RDP/RSP 复位（combine
     // 清 0、几何模式=游戏启动默认、num_lights=1、清空纹理绑定/灯光）；false 时
     // 保留上个 DL 的渲染寄存器（游戏里跨 DL 继承）。矩阵栈总是重置为单位阵。
-    // 每次 run 从空 mesh_ 开始，本 DL 的三角形经 mesh() 取得。
-    Mesh &run(SegmentedAddress dl, bool reset_state);
+    // layer 是本 DL 的绘制层（geo 节点 flags 高 8 位），记到每个三角形的
+    // triangle_layers。每次 run 从空 mesh_ 开始，本 DL 的三角形经 mesh() 取得。
+    Mesh &run(SegmentedAddress dl, bool reset_state, uint8_t layer = 0);
 
     // 本 DL 累积的网格（run 后读取）。
     Mesh &mesh() { return mesh_; }

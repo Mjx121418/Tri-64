@@ -268,8 +268,8 @@ microcode, so all GBI encodings here are the F3D layouts.
   UVs; the RSP generates them from the view). Documented in `WORKLOG.md` "Next".
 - **`G_SETOTHERMODE_H/L` (0xBA/0xB9) and `G_RDPSETOTHERMODE` (0xEF)**: parsed (F3D:
   `w0 = (op<<24)|(sft<<8)|(len)`), so the LUT type / cycle type / texture filter are
-  known. Render mode (alpha/zbuffer blend) is recorded but not applied to the Godot
-  material (transparency is derived from texture alpha instead).
+  known. `G_SETRENDERMODE` is not parsed — SM64 DLs don't set it; the per-layer render
+  modes are applied by layer (see "Drawing layers" below).
 - **`G_LOADTLUT` (0xF0)**: recorded as a tmem → palette-image binding; CI textures are
   decoded through it (Phase 2). TMEM itself is not emulated — textures are decoded
   directly from DRAM (linear layout equals "DRAM → TMEM" for our purposes).
@@ -286,7 +286,19 @@ microcode, so all GBI encodings here are the F3D layouts.
   the initial combine is the RDP reset value 0). `Material` is snapshotted from
   `RSPState` at each triangle (so a DL that sets no combine — e.g. WF's
   `LAYER_TRANSPARENT_DECAL` yellow decal — inherits the preceding DL's G_CC_SHADE).
-  Object models are still decoded with fresh per-DL state (not inherited).
+  Object models are decoded with fresh per-DL state (not inherited), but their DLs are
+  now sorted by layer the same way (stable sort keeps the geo append order inside a
+  layer).
+- **Drawing layers**: every triangle carries its layer (`Mesh::triangle_layers`,
+  from the geo node's `flags >> 8` — the game's `geo_append_display_list` buckets the
+  same way). `meshDicts` groups surfaces by (material, layer) and exports `layer`.
+  The per-layer render modes (`renderModeTable_1Cycle/2Cycle` + gbi.h) are now applied
+  to Godot materials: layers **0-3 OPA** (`G_RM_*_OPA_SURF`: no blending — alpha is
+  ignored, z-write on) → forced opaque even if the texture/vertex alpha is < 255;
+  layer **4** (`G_RM_AA_TEX_EDGE`: alpha-edge blend, z-write on) → alpha blend with
+  depth write; layers **5-7** (`G_RM_AA_XLU_SURF`: `Z_CMP` without `Z_UPD`) → alpha
+  blend with `DEPTH_DRAW_DISABLED`. Within a layer the game draws in append order; the
+  Godot renderer depth-sorts transparent geometry instead (see `Quirks.md`).
 - **Untextured color source**: `combineColorSource` decodes the combine mux to decide
   whether the color comes from SHADE (vertex color), PRIMITIVE, or ENVIRONMENT; the
   bridge exports `use_vertex` (= combine uses SHADE) and the prim/env colors, so the
@@ -452,6 +464,10 @@ per frame.
   second node at the pivot whose `global_basis` tracks the camera's world basis every
   frame (always facing the camera — see §4). Object-level `BILLBOARD` (behavior 0x21)
   registers the body node for the same per-frame basis.
+- **Object drawing layers**: object-model DLs carry their layer (`flags >> 8`) and are
+  decoded in layer order (stable); the merged body/part meshes export per-triangle
+  layers, so object surfaces get the same layer-driven materials as the area mesh
+  (OPA/TEX_EDGE/XLU — see §5).
 - **Frame-0 animation baked** into the model cache (`Frame0Animator`, mirrors
   `geo_process_animated_part`). See `Quirks.md`.
 - **Spawn transform**: objects are placed at their spawn pos + yaw (macro objects:

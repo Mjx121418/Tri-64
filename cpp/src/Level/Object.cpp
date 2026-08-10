@@ -292,6 +292,9 @@ struct DisplayListWithTransform {
     // 渲染端放在 pivot 上并每帧面向相机。
     bool is_billboard {false};
     Vec3<float> billboard_pivot {0, 0, 0}; // 所属 billboard 节点的锚点（模型空间）
+    // 绘制层（geo 节点 flags 高 8 位，0-7）：与游戏的 geo_append_display_list
+    // 一致，DL 按层升序渲染（render mode 每层设置一次，见 Engine.md §5）。
+    uint8_t layer {0};
 };
 
 // 遍历对象模型的 geo 图节点，累积缩放/旋转/平移，收集 (DL, 变换) 对。
@@ -371,6 +374,9 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
             dlt.is_billboard = true;
             dlt.billboard_pivot = *billboard_pivot;
         }
+        // 与游戏的 geo_append_display_list(node->displayList, node->flags >> 8)
+        // 一致：本节点的 flags 高 8 位就是绘制层。
+        dlt.layer = static_cast<uint8_t>(node.flags >> 8);
         out.push_back(std::move(dlt));
     }
 
@@ -413,6 +419,7 @@ void ObjectModelDecoder::mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src) {
 
     const size_t tri_count = src.indices.size() / 3;
     merged.material_ids.reserve(merged.material_ids.size() + tri_count);
+    merged.triangle_layers.reserve(merged.triangle_layers.size() + tri_count);
     for (size_t t = 0; t < tri_count; t++) {
         const uint32_t mi = src.material_ids[t];
         const GBI::Material &m = src.materials[mi];
@@ -431,6 +438,7 @@ void ObjectModelDecoder::mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src) {
             merged.material_tlut.push_back(tlut);
         }
         merged.material_ids.push_back(mid);
+        merged.triangle_layers.push_back(src.triangle_layers[t]);
     }
 }
 
@@ -445,6 +453,14 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
     if (dls.empty()) {
         return;
     }
+
+    // 与区域路径一致：按 layer 升序解码（游戏按层升序渲染且每层设置 render
+    // mode；stable_sort 保持同层内的 geo 遍历顺序）。对象模型目前逐 DL 全新
+    // 状态解释，排序主要保证输出顺序与未来的状态继承语义一致。
+    std::stable_sort(dls.begin(), dls.end(),
+                     [](const DisplayListWithTransform &a, const DisplayListWithTransform &b) {
+                         return a.layer < b.layer;
+                     });
 
     // billboard DL 按 pivot 分组：每个 GEO_BILLBOARD 节点一个 BillboardPart
     //（该节点自身 DL + 其子树 DL；pivot 相同的子树合并为同一 part）。
@@ -462,7 +478,7 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
         }
         GBI::DLInterpreter interp(seg_table_, warnings_);
         // 对象模型暂按逐 DL 全新状态解释（不做跨 DL 状态继承，见 Engine.md §5）。
-        GBI::Mesh &decoded = interp.run(dlt.dl, /*reset_state=*/true);
+        GBI::Mesh &decoded = interp.run(dlt.dl, /*reset_state=*/true, dlt.layer);
         ObjectExtract::applyTransform(decoded, dlt.transform);
         if (dlt.is_billboard) {
             auto it = std::find_if(parts.begin(), parts.end(), [&](const PartAcc &p) {

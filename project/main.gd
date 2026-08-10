@@ -257,7 +257,7 @@ func _render_geometry() -> void:
 
 		var mi := MeshInstance3D.new()
 		mi.mesh = am
-		mi.material_override = _build_material(materials[md.material])
+		mi.material_override = _build_material(materials[md.material], int(md.layer))
 		model_root.add_child(mi)
 		total_triangles += md.indices.size() / 3
 
@@ -613,9 +613,11 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 		arrays[Mesh.ARRAY_INDEX] = me.indices
 		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var mi: int = me.material
-		if not material_cache.has(mi):
-			material_cache[mi] = _build_material(md.materials[mi])
-		surface_materials.append(material_cache[mi])
+		# 材质缓存键含绘制层（同材质不同层的表面材质不同：透明度/深度写）。
+		var mkey := [mi, int(me.layer)]
+		if not material_cache.has(mkey):
+			material_cache[mkey] = _build_material(md.materials[mi], int(me.layer))
+		surface_materials.append(material_cache[mkey])
 	var entry := {"mesh": am, "surface_materials": surface_materials}
 	# billboard 部分（每 GEO_BILLBOARD 节点一个）：{ pivot, mesh,
 	# surface_materials }。材质表与 body 独立（C++ 端各自去重），索引互不相通，
@@ -637,27 +639,35 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 				arrays[Mesh.ARRAY_INDEX] = me.indices
 				bam.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 				var mi: int = me.material
-				if not part_cache.has(mi):
-					part_cache[mi] = _build_material(part.materials[mi])
-				part_materials.append(part_cache[mi])
-			parts.append({"pivot": part.pivot, "mesh": bam,
-					"surface_materials": part_materials})
+				var mkey := [mi, int(me.layer)]
+				if not part_cache.has(mkey):
+					part_cache[mkey] = _build_material(part.materials[mi], int(me.layer))
+				part_materials.append(part_cache[mkey])
+				parts.append({"pivot": part.pivot, "mesh": bam,
+						"surface_materials": part_materials})
 		entry.billboard_parts = parts
 	return entry
 
-## 根据材质字典构建材质。受光且不透明的材质用世界空间光照 shader（对象实例
-## 旋转后光照正确）；其余走 StandardMaterial3D（未纹理 SHADE/PRIM/ENV 或纹理）。
-func _build_material(md: Dictionary) -> Material:
+## 根据材质字典 + 绘制层构建材质。层语义（游戏 renderModeTable_1Cycle/2Cycle，
+## 见 Engine.md §5）：0-3 OPA（忽略 alpha，强制不透明，深度写开）、4 TEX_EDGE
+##（alpha 混合，深度写开）、5-7 XLU（alpha 混合，深度写关）。受光且不透明的
+## 材质用世界空间光照 shader（对象实例旋转后光照正确）；其余走 StandardMaterial3D。
+func _build_material(md: Dictionary, layer: int = 0) -> Material:
 	var color_source: int = md.color_source
 	var alpha: int = md.alpha
 	# 纹理图像（两个路径都用：shader 设 albedo，StandardMaterial3D 设纹理+alpha）。
 	var tex_img: Image = null
+	var tex_alpha := false
 	if md.textured:
 		tex_img = Image.create_from_data(md.tex_width, md.tex_height, false,
 				Image.FORMAT_RGBA8, md.tex_pixels)
-	# 受光 + 有灯光 + 不透明（纹理无 alpha、材质 alpha 满）→ 光照 shader。
+		tex_alpha = _has_alpha(tex_img)
+	# OPA 层（0-3）的混合被关闭：纹理/顶点/prim alpha 都不参与（G_RM_*_OPA_SURF）。
+	var alpha_matters := layer >= 4
+	# 受光 + 有灯光 + 不透明（OPA 层忽略纹理 alpha；其余层纹理无 alpha、材质
+	# alpha 满）→ 光照 shader。
 	if md.lit and md.num_lights > 0 and alpha >= 255 \
-			and (md.textured and not _has_alpha(tex_img) or not md.textured):
+			and (md.textured and (not alpha_matters or not tex_alpha) or not md.textured):
 		var light_tex: ImageTexture = null
 		if md.textured:
 			light_tex = ImageTexture.create_from_image(tex_img)
@@ -673,26 +683,30 @@ func _build_material(md: Dictionary) -> Material:
 		# （Godot 的重复标志是两轴共用的；SM64 图块两轴模式基本一致）。
 		mat.set_flag(BaseMaterial3D.FLAG_USE_TEXTURE_REPEAT,
 				md.repeat_s or md.repeat_t)
-		if _has_alpha(tex_img):
+		if alpha_matters and tex_alpha:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		# combine 采样 SHADE：texel × 顶点色（shade 由 C++ 端按灯光烘焙）。
 		if md.use_vertex:
 			mat.vertex_color_use_as_albedo = true
 	elif md.use_vertex:
 		# 未纹理 + G_CC_SHADE：顶点色（或光照 shade）就是底色（不再是 prim×顶点）。
-		mat.albedo_color = Color(1, 1, 1, alpha / 255.0)
+		mat.albedo_color = Color(1, 1, 1, alpha / 255.0 if alpha_matters else 1.0)
 		mat.vertex_color_use_as_albedo = true
-		if alpha < 255:
+		if alpha_matters and alpha < 255:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	else:
 		# 未纹理 + G_CC_PRIMITIVE / G_CC_ENVIRONMENT：底色取 prim/env 颜色。
 		if color_source == 5:
 			mat.albedo_color = Color(md.env_color.r, md.env_color.g, md.env_color.b,
-					alpha / 255.0)
+					alpha / 255.0 if alpha_matters else 1.0)
 		else:
-			mat.albedo_color = Color(md.color.r, md.color.g, md.color.b, alpha / 255.0)
-		if alpha < 255:
+			mat.albedo_color = Color(md.color.r, md.color.g, md.color.b,
+					alpha / 255.0 if alpha_matters else 1.0)
+		if alpha_matters and alpha < 255:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	# XLU 层（5-7）：G_RM_*_XLU_SURF 只读深度不写（Z_CMP 无 Z_UPD）。
+	if layer >= 5:
+		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	return mat
 
 ## 受光材质的世界空间光照 shader：shade = ambient + Σ max(0, n̂·l̂)·color，

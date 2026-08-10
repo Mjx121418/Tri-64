@@ -227,6 +227,48 @@ void testObject() {
             if (is_vanilla && billboard_bad_tris != 0) {
                 printf("test_object: FAIL billboard triangles not plane-aligned\n");
             }
+
+            // 绘制层（每三角形，geo 节点 flags 高 8 位）：区域网格与材质表平行且
+            // 取值 0-7；goomba body 全 LAYER_OPAQUE(1)、眼睛 billboard 部分全
+            // LAYER_ALPHA(4)（geo.inc.c 的 GEO_BILLBOARD → LAYER_ALPHA DL）。
+            bool area_layers_ok = r.mesh.triangle_layers.size() == r.mesh.material_ids.size();
+            for (uint8_t l : r.mesh.triangle_layers) {
+                if (l > 7) {
+                    area_layers_ok = false;
+                }
+            }
+            bool goomba_body_opaque = false;
+            bool goomba_eyes_alpha = false;
+            bool goomba_layers_parallel = false;
+            const auto goomba_it = r.object_models.find(0xC0);
+            if (goomba_it != r.object_models.end()) {
+                const auto &body = goomba_it->second.mesh;
+                goomba_layers_parallel =
+                    body.triangle_layers.size() == body.material_ids.size();
+                goomba_body_opaque = !body.triangle_layers.empty();
+                for (uint8_t l : body.triangle_layers) {
+                    if (l != 1) {
+                        goomba_body_opaque = false;
+                    }
+                }
+                goomba_eyes_alpha = false;
+                for (const auto &part : goomba_it->second.billboard_parts) {
+                    if (part.mesh.triangle_layers.size() != part.mesh.material_ids.size()) {
+                        goomba_layers_parallel = false;
+                    }
+                    for (uint8_t l : part.mesh.triangle_layers) {
+                        goomba_eyes_alpha = l == 4;
+                    }
+                }
+            }
+            printf("test_object: layers area_ok=%d goomba body=OPAQUE=%d eyes=ALPHA=%d "
+                   "parallel=%d\n",
+                   int(area_layers_ok), int(goomba_body_opaque), int(goomba_eyes_alpha),
+                   int(goomba_layers_parallel));
+            if (is_vanilla && (!area_layers_ok || !goomba_body_opaque || !goomba_eyes_alpha
+                               || !goomba_layers_parallel)) {
+                printf("test_object: FAIL triangle layers (area 0-7, goomba body 1, eyes 4)\n");
+            }
         }
 
         // 城堡内侧（关卡 6，区域 1）：area geo 用 GEO_SWITCH_CASE(17,
@@ -376,15 +418,19 @@ void testBillboardSplit() {
     seg_table.rom_span = std::span(seg);
     seg_table.loadSegment(0x1E, 0, static_cast<uint32_t>(seg.size()));
 
-    // geo 树：root → rotation(yaw 90° = 0x4000) → [billboard(t=(100,0,0), DL), DL]
+    // geo 树：root → rotation(yaw 90° = 0x4000, 层 2) → [billboard(t=(100,0,0), 层 4,
+    // DL), DL]。层的写入与游戏一致：DL 所在节点的 flags 高 8 位。
     GraphNode root;
     auto rot = std::make_unique<GraphNode>();
     rot->data = GraphNodeRotation {SegmentedAddress {0x1E, 0x90}, {0, 0x4000, 0}};
+    rot->flags = (2 << 8) | GraphNodeFlag::GRAPH_RENDER_ACTIVE;
     auto bb = std::make_unique<GraphNode>();
     bb->data = GraphNodeBillboard {SegmentedAddress {0x1E, 0x70}, {100, 0, 0}};
+    bb->flags = (4 << 8) | GraphNodeFlag::GRAPH_RENDER_ACTIVE;
     rot->addChild(std::move(bb));
     auto body_dl = std::make_unique<GraphNode>();
     body_dl->data = GraphNodeDisplayList {SegmentedAddress {0x1E, 0x70}};
+    body_dl->flags = (2 << 8) | GraphNodeFlag::GRAPH_RENDER_ACTIVE;
     rot->addChild(std::move(body_dl));
     root.addChild(std::move(rot));
 
@@ -397,6 +443,16 @@ void testBillboardSplit() {
            m.mesh.indices.size() / 3, m.billboard_parts.size());
     if (m.mesh.indices.size() / 3 != 1 || m.billboard_parts.size() != 1) {
         printf("test_billboard_split: FAIL expected 1/1 body tri / billboard part\n");
+    }
+
+    // 绘制层：body 三角形全在层 2，billboard 部分全在层 4（按 flags>>8 记录）。
+    bool body_layer_ok = m.mesh.triangle_layers.size() == m.mesh.material_ids.size()
+        && m.mesh.triangle_layers.size() == 1 && m.mesh.triangle_layers[0] == 2;
+    bool part_layer_ok = !m.billboard_parts.empty()
+        && m.billboard_parts[0].mesh.triangle_layers.size() == 1
+        && m.billboard_parts[0].mesh.triangle_layers[0] == 4;
+    if (!body_layer_ok || !part_layer_ok) {
+        printf("test_billboard_split: FAIL triangle layers (body=2 part=4)\n");
     }
 
     if (m.billboard_parts.size() == 1) {
