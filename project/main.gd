@@ -650,8 +650,9 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 
 ## 根据材质字典 + 绘制层构建材质。层语义（游戏 renderModeTable_1Cycle/2Cycle，
 ## 见 Engine.md §5）：0-3 OPA（忽略 alpha，强制不透明，深度写开）、4 TEX_EDGE
-##（alpha 混合，深度写开）、5-7 XLU（alpha 混合，深度写关）。受光且不透明的
-## 材质用世界空间光照 shader（对象实例旋转后光照正确）；其余走 StandardMaterial3D。
+##（alpha scissor——硬边裁剪，深度写开）、5-7 XLU（alpha 混合，深度写关）。
+## 受光且不透明的材质用世界空间光照 shader（对象实例旋转后光照正确）；
+## 其余走 StandardMaterial3D。
 func _build_material(md: Dictionary, layer: int = 0) -> Material:
 	var color_source: int = md.color_source
 	var alpha: int = md.alpha
@@ -664,6 +665,9 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 		tex_alpha = _has_alpha(tex_img)
 	# OPA 层（0-3）的混合被关闭：纹理/顶点/prim alpha 都不参与（G_RM_*_OPA_SURF）。
 	var alpha_matters := layer >= 4
+	# 透明模式：层 4 = alpha scissor（G_RM_AA_TEX_EDGE 的边缘 alpha → 硬边裁剪，
+	# 走不透明渲染管线，深度照常写）；层 5-7 = alpha 混合（G_RM_*_XLU_SURF）。
+	var alpha_blend := layer >= 5
 	# 受光 + 有灯光 + 不透明（OPA 层忽略纹理 alpha；其余层纹理无 alpha、材质
 	# alpha 满）→ 光照 shader。
 	if md.lit and md.num_lights > 0 and alpha >= 255 \
@@ -684,7 +688,8 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 		mat.set_flag(BaseMaterial3D.FLAG_USE_TEXTURE_REPEAT,
 				md.repeat_s or md.repeat_t)
 		if alpha_matters and tex_alpha:
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mat.transparency = (BaseMaterial3D.TRANSPARENCY_ALPHA if alpha_blend
+					else BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR)
 		# combine 采样 SHADE：texel × 顶点色（shade 由 C++ 端按灯光烘焙）。
 		if md.use_vertex:
 			mat.vertex_color_use_as_albedo = true
@@ -693,7 +698,8 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 		mat.albedo_color = Color(1, 1, 1, alpha / 255.0 if alpha_matters else 1.0)
 		mat.vertex_color_use_as_albedo = true
 		if alpha_matters and alpha < 255:
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mat.transparency = (BaseMaterial3D.TRANSPARENCY_ALPHA if alpha_blend
+					else BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR)
 	else:
 		# 未纹理 + G_CC_PRIMITIVE / G_CC_ENVIRONMENT：底色取 prim/env 颜色。
 		if color_source == 5:
@@ -703,7 +709,8 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 			mat.albedo_color = Color(md.color.r, md.color.g, md.color.b,
 					alpha / 255.0 if alpha_matters else 1.0)
 		if alpha_matters and alpha < 255:
-			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			mat.transparency = (BaseMaterial3D.TRANSPARENCY_ALPHA if alpha_blend
+					else BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR)
 	# XLU 层（5-7）：G_RM_*_XLU_SURF 只读深度不写（Z_CMP 无 Z_UPD）。
 	if layer >= 5:
 		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED

@@ -153,12 +153,13 @@ Consequences we mirror (roll = 0) — see `Engine.md` §4/§9:
 
 Each geo node's drawing layer (0-7, `flags >> 8`) selects the RDP render mode for the
 whole layer batch in `geo_process_master_list_sub` (rendering_graph_node.c:135):
-0-3 `G_RM_*_OPA_SURF` (no alpha blending), 4 `G_RM_AA_TEX_EDGE` (alpha-edge blend,
-z-write on), 5-7 `G_RM_AA_XLU_SURF` (blend, `Z_CMP` without `Z_UPD`). Within a layer,
-DLs run in graph-append order — there is no depth sorting on the N64.
+0-3 `G_RM_*_OPA_SURF` (no alpha blending), 4 `G_RM_AA_TEX_EDGE` (edge alpha →
+coverage, z-write on), 5-7 `G_RM_AA_XLU_SURF` (blend, `Z_CMP` without `Z_UPD`).
+Within a layer, DLs run in graph-append order — there is no depth sorting on the N64.
 
 We record the layer per triangle and apply the render modes to Godot materials
-(Engine.md §5/§9). Two deviations:
+(Engine.md §5/§9): 0-3 forced opaque, 4 `TRANSPARENCY_ALPHA_SCISSOR` (hard-edge
+alpha cutout), 5-7 alpha blend with depth write disabled. Two deviations:
 - OPA layers ignore texture/vertex alpha (no blend); Godot's depth-sorted transparent
   pass only applies to layers 4+.
 - Within-layer order: the Godot renderer sorts transparent surfaces by depth instead

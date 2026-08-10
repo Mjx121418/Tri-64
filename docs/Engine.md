@@ -295,9 +295,10 @@ microcode, so all GBI encodings here are the F3D layouts.
   The per-layer render modes (`renderModeTable_1Cycle/2Cycle` + gbi.h) are now applied
   to Godot materials: layers **0-3 OPA** (`G_RM_*_OPA_SURF`: no blending — alpha is
   ignored, z-write on) → forced opaque even if the texture/vertex alpha is < 255;
-  layer **4** (`G_RM_AA_TEX_EDGE`: alpha-edge blend, z-write on) → alpha blend with
-  depth write; layers **5-7** (`G_RM_AA_XLU_SURF`: `Z_CMP` without `Z_UPD`) → alpha
-  blend with `DEPTH_DRAW_DISABLED`. Within a layer the game draws in append order; the
+  layer **4** (`G_RM_AA_TEX_EDGE`: edge alpha → coverage) → `TRANSPARENCY_ALPHA_SCISSOR`
+  (hard-edge alpha cutout, opaque pass, z-write on); layers **5-7**
+  (`G_RM_AA_XLU_SURF`: `Z_CMP` without `Z_UPD`) → alpha blend with
+  `DEPTH_DRAW_DISABLED`. Within a layer the game draws in append order; the
   Godot renderer depth-sorts transparent geometry instead (see `Quirks.md`).
 - **Untextured color source**: `combineColorSource` decodes the combine mux to decide
   whether the color comes from SHADE (vertex color), PRIMITIVE, or ENVIRONMENT; the
