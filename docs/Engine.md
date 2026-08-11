@@ -240,8 +240,9 @@ microcode, so all GBI encodings here are the F3D layouts.
   processes position, normal, texture coordinates, lighting, and projection state at
   load time; later matrix or texture changes do not alter the cached vertex. Projection
   matrices are captured, and the exported perspective divide uses the ROM-compatible
-  `VRCP` path from `fast3d.s`; Godot still performs the live camera projection. No
-  near-plane clipping.
+  `VRCP` path from `fast3d.s`; the Godot projected shader uses the extracted
+  perspective matrix with the current free-flight model-view transform. No near-plane
+  clipping.
 - **Vertices**: the fixed path transforms them with the RSP-style 48-bit accumulator;
   the float position remains available for the normal renderer. Texture scale from
   `G_TEXTURE` is applied at `G_VTX`, and the 4th word is kept as the normal/color.

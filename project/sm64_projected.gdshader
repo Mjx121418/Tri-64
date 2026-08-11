@@ -14,6 +14,8 @@ uniform vec4 uv_clamp = vec4(0.0, 0.0, 1.0, 1.0);
 // Extraction-time NDC is only valid while the matching camera is fixed.
 uniform bool use_rsp_position = false;
 uniform bool use_dynamic_reprojection = true;
+uniform bool use_rsp_projection = false;
+uniform mat4 rsp_projection = mat4(1.0);
 // Static area and inline object materials use the same live Fast3D light-space path.
 // Their fixed SHADE is still exported for inspection, but should not darken them twice.
 uniform bool use_dynamic_lighting = false;
@@ -32,7 +34,8 @@ void vertex() {
 	} else if (use_dynamic_reprojection) {
 		// Rebuild clip coordinates from the current camera every frame. This is
 		// intentionally separate from the extraction-time fixed NDC override.
-		POSITION = PROJECTION_MATRIX * MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
+		vec4 view_position = MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
+		POSITION = (use_rsp_projection ? rsp_projection : PROJECTION_MATRIX) * view_position;
 	}
 	if (use_dynamic_lighting) {
 		vec3 n = normalize(NORMAL);

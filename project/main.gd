@@ -46,6 +46,8 @@ const _skybox_shader := preload("res://skybox.gdshader")
 # 纯色背景改为 BG_COLOR。可见 pass 用屏幕坐标，cubemap pass 用 EYEDIR。
 var _sky := Sky.new()
 var _sky_material := ShaderMaterial.new()
+var _rsp_projection: Projection
+var _has_rsp_projection := false
 
 # 关卡编号 = decomp include/level_table.h 的 LevelNum（BOB = 9）。
 # 名称先从 ROM 段2提取；提取失败时回退到这些硬编码名称。
@@ -222,10 +224,21 @@ func _extract_and_render() -> void:
 func _apply_projection_context() -> void:
 	var context: Dictionary = rom_manager.getProjectionContext()
 	if context.is_empty() or not context.get("perspective", false):
+		_has_rsp_projection = false
 		return
 	camera.fov = float(context.fov)
 	camera.near = maxf(0.01, float(context.near))
 	camera.far = maxf(camera.near + 1.0, float(context.far))
+	var values: PackedFloat32Array = context.get("projection", PackedFloat32Array())
+	if values.size() == 16:
+		_rsp_projection = Projection(
+			Vector4(values[0], values[1], values[2], values[3]),
+			Vector4(values[4], values[5], values[6], values[7]),
+			Vector4(values[8], values[9], values[10], values[11]),
+			Vector4(values[12], values[13], values[14], values[15]))
+		_has_rsp_projection = true
+	else:
+		_has_rsp_projection = false
 
 ## 设置当前区域的背景：天空盒（skybox.c 的 10×8 图块贴图集，屏幕 pass 用
 ## SCREEN_UV、cubemap pass 用 EYEDIR 采样）或纯色填充（geo_process_background
@@ -902,6 +915,9 @@ func _build_projected_material(md: Dictionary, tex_img: Image) -> ShaderMaterial
 	# Fixed NDC is extraction-camera specific; keep the dynamic camera branches active.
 	sm.set_shader_parameter("use_rsp_position", false)
 	sm.set_shader_parameter("use_dynamic_reprojection", true)
+	sm.set_shader_parameter("use_rsp_projection", _has_rsp_projection)
+	if _has_rsp_projection:
+		sm.set_shader_parameter("rsp_projection", _rsp_projection)
 	return sm
 
 ## 受光材质的 Fast3D model-view 光照 shader：shade = ambient + Σ max(0, n̂·l̂)·color；

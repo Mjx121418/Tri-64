@@ -128,6 +128,10 @@ func _init() -> void:
 		push_error("projected geometry did not enable dynamic camera reprojection")
 		quit(1)
 		return
+	if not projected_material.get_shader_parameter("use_rsp_projection"):
+		push_error("projected geometry did not use the extracted projection matrix")
+		quit(1)
+		return
 	if main_scene._billboard_nodes.is_empty():
 		push_error("BOB has no camera-dependent billboard nodes")
 		quit(1)
