@@ -267,6 +267,10 @@ uint32_t reciprocalSqrt(uint32_t input) noexcept;
 FixedVector3 normalizeVector(const FixedVector3 &vector) noexcept;
 Fixed fixedDot(const FixedVector3 &left, const FixedVector3 &right) noexcept;
 
+// Fast3D's VMULF: signed Q1.15 multiplication with the RSP's 0x4000
+// fractional rounding and signed 16-bit result clamp.
+int16_t rspMultiplyFraction(int16_t left, int16_t right) noexcept;
+
 constexpr FixedVector3 makeVector3(Fixed x, Fixed y, Fixed z) noexcept {
     return FixedVector3 {x, y, z};
 }

@@ -790,7 +790,8 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 ## 根据材质字典 + 绘制层构建材质。层语义（游戏 renderModeTable_1Cycle/2Cycle，
 ## 见 Engine.md §5）：0-3 OPA（忽略 alpha，强制不透明，深度写开）、4 TEX_EDGE
 ##（alpha scissor——硬边裁剪，深度写开）、5-7 XLU（alpha 混合，深度写关）。
-## 受光且不透明的材质用 Fast3D model-view 光照 shader；
+## 受光且不透明的材质用 Fast3D model-view 光照 shader；静态区域和对象都保留
+## 相机参与的 model-view 光照，不能只使用提取时烘焙的 SHADE。
 ## 其余走 StandardMaterial3D。
 func _build_material(md: Dictionary, layer: int = 0) -> Material:
 	var color_source: int = md.color_source
@@ -875,7 +876,7 @@ func _build_projected_material(md: Dictionary, tex_img: Image) -> ShaderMaterial
 	var base_color: Color = md.env_color if int(md.color_source) == 5 else md.color
 	sm.set_shader_parameter("base_color", Vector3(base_color.r, base_color.g, base_color.b))
 	sm.set_shader_parameter("use_vertex", md.use_vertex)
-	var dynamic_lighting: bool = md.get("inline_object", false) and md.lit and md.use_vertex \
+	var dynamic_lighting: bool = md.lit and md.use_vertex \
 			and int(md.get("num_lights", 0)) > 0
 	sm.set_shader_parameter("use_dynamic_lighting", dynamic_lighting)
 	sm.set_shader_parameter("num_lights", int(md.get("num_lights", 0)))
@@ -886,7 +887,7 @@ func _build_projected_material(md: Dictionary, tex_img: Image) -> ShaderMaterial
 		sm.set_shader_parameter("light_dirs", md.light_dirs)
 	if md.has("light_cols"):
 		sm.set_shader_parameter("light_cols", md.light_cols)
-	# Fixed NDC is extraction-camera specific; keep the dynamic camera branch active.
+	# Fixed NDC is extraction-camera specific; keep the dynamic camera branches active.
 	sm.set_shader_parameter("use_rsp_position", false)
 	sm.set_shader_parameter("use_dynamic_reprojection", true)
 	return sm
@@ -911,7 +912,10 @@ func _build_lighting_material(md: Dictionary, tex: ImageTexture) -> ShaderMateri
 	sm.set_shader_parameter("light_dirs", md.light_dirs)
 	sm.set_shader_parameter("light_cols", md.light_cols)
 	sm.set_shader_parameter("cull_back", md.get("cull_back", true))
-	sm.set_shader_parameter("use_vertex_shade", md.get("exact_shade", false))
+	# The game recomputes light directions after the camera model-view is active.
+	# The captured SHADE remains available in vertex colors for export/tests, but is
+	# not the renderer's final light input for this live path.
+	sm.set_shader_parameter("use_vertex_shade", false)
 	return sm
 
 ## SM64 的 IA16 圆形/遮罩纹理把形状放在 alpha 里（RGB 可能全黑），

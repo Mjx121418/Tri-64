@@ -14,8 +14,8 @@ uniform vec4 uv_clamp = vec4(0.0, 0.0, 1.0, 1.0);
 // Extraction-time NDC is only valid while the matching camera is fixed.
 uniform bool use_rsp_position = false;
 uniform bool use_dynamic_reprojection = true;
-// Inline lit objects use the same Fast3D light-space path as cached objects. Their
-// fixed SHADE is still exported for inspection, but should not darken them twice.
+// Static area and inline object materials use the same live Fast3D light-space path.
+// Their fixed SHADE is still exported for inspection, but should not darken them twice.
 uniform bool use_dynamic_lighting = false;
 uniform int num_lights = 0;
 uniform vec3 ambient = vec3(0.0);

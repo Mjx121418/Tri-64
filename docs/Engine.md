@@ -236,32 +236,30 @@ lights + clips vertices, and issues RDP commands. Fast3d (F3D) — not F3DEX2 �
 microcode, so all GBI encodings here are the F3D layouts.
 
 **Ours** — `GBI::CommandDecoder` + `DLInterpreter` decode the 8-byte commands in software:
-- **Matrix stack**: we keep a float model-view stack (the RSP is fixed-point). Projection
-  matrices are recorded but not applied (Godot projects). No near-plane clipping.
-- **Vertices**: transformed by the model-view matrix; texture scale from `G_TEXTURE`
-  applied. The **normal is also transformed by the model-view matrix's 3×3** (before,
-  only the position was); the 4th word is kept as the normal/color.
-- **Lights (Phase 2 + world space)**: `gsSPLight` (`G_MOVEMEM G_MV_L0-7`) is parsed into
+- **Matrix stack**: we keep parallel float and signed Q16.16 model-view stacks. `G_VTX`
+  processes position, normal, texture coordinates, lighting, and projection state at
+  load time; later matrix or texture changes do not alter the cached vertex. Projection
+  matrices are captured, but Godot still performs the live camera projection. No
+  near-plane clipping.
+- **Vertices**: the fixed path transforms them with the RSP-style 48-bit accumulator;
+  the float position remains available for the normal renderer. Texture scale from
+  `G_TEXTURE` is applied at `G_VTX`, and the 4th word is kept as the normal/color.
+- **Lights (Phase 2 + fixed shade)**: `gsSPLight` (`G_MOVEMEM G_MV_L0-7`) is parsed into
   `RSPState` (`Light` = col/dir), and `G_MOVEWORD G_MW_NUMLIGHT`/`G_MW_LIGHTCOL`/
   `G_MW_FOG` are parsed. The ambient is at slot `num_lights` (the game's convention;
   `Ambient_t` is only 8 bytes, so `gsSPLight(&light.a, 2)` over-reads into the next
   light — identified by slot, not `dir==0`). `num_lights` defaults to 1 (the game's
   persistent NUMLIGHTS_1; terrain DLs don't set G_MW_NUMLIGHT).
-  **Rendering uses a Godot shader** (`sm64_lighting.gdshader`) that computes the
-  world-space shade once per vertex and interpolates it across the triangle, matching
-  Fast3D's vertex lighting: `shade = ambient + Σ max(0, n̂·l̂)·color`. The world normal
-  is computed in the vertex stage via `MODEL_MATRIX` (so Godot's node/instance rotation
-  is included → per-instance correct) and dotted with the material's exported
-  world-space lights. The bridge exports each material's
-  `num_lights`/`ambient`/`light_dirs`/`light_cols` from the captured `Lights`. The
-  per-vertex shade is also baked in C++ (`ambient + Σ …` against the local normal) for
-  the OBJ export and the castle-lighting test; lit materials without captured lights
-  fall back to white (no modulation).
-- **Light arithmetic**: the RSP uses signed 16-bit vector lanes, a 48-bit accumulator,
-  fixed-point matrix/light products, and the microcode's reciprocal-square-root path;
-  ours uses floating-point normalization/dot products and truncates the final color to
-  bytes. The formula is equivalent for the usual orthonormal matrices, but it is not
-  bit-exact.
+   The C++ path uses signed Q16.16 values, wrapped 48-bit products, the RSP reciprocal
+   square-root ROM, and VMULF rounding/saturation for the exported `SHADE` bytes. The
+   Godot shaders keep the raw Light_t directions and apply the active model-view
+   transform for both static area and object geometry; the captured shade remains
+   available for export/tests but is not multiplied into the live renderer a second
+   time. Lit materials without captured lights fall back to white (no modulation).
+- **Light arithmetic**: the fixed path now mirrors the RSP's signed 16-bit vector lanes,
+  48-bit accumulator overflow, VMULF fractional rounding, and signed saturation for
+  matrix/light products and shade accumulation. Remaining matrix/vector edge cases and
+  exact camera/depth behavior are still Milestone 1 validation work.
 - **`G_TEXTURE`**: F3D on-bit = `w0 bit 0`; tile/lod (bits 8-13) recorded. We always
   sample render tile 0 (SM64's convention); multi-tile/mipmap DLs are not emulated.
 - **`G_TEXTURE_GEN`** (environment mapping): not emulated (the star's reflection-mapped
@@ -483,11 +481,13 @@ per frame.
   256-per-circle, converted). `oBhvParams`/`oBhvParams2ndByte` are packed game-exactly
   per source.
 - **Camera**: the extracted camera/projection context is supplied to the fixed G_VTX
-  pass. Godot's live camera reprojects inline meshes every frame; exact RSP depth and
-  camera-matrix equivalence remain Milestone 1 validation work.
-- **Lights**: parsed (Phase 2) and used for per-vertex shading (`texel × shade` for
-  textured-lit, `shade` for flat-lit), so the castle-grounds grass (authored grey,
-  colored by the green lights) and the goomba/cannon/bobomb flat parts render shaded.
+  pass. Godot's live camera reprojects static and inline meshes every frame, and the
+  live model-view light branch follows camera rotation like the original master-list
+  submission; exact RSP depth and camera-matrix equivalence remain Milestone 1
+  validation work.
+- **Lights**: parsed (Phase 2) and used for live per-vertex shading (`texel × shade` for
+  textured-lit, `shade` for flat-lit), so static castle-grounds grass and inline
+  goomba/cannon/bobomb parts follow the same camera-dependent model-view timing.
 - **Movtex (Phase 2)**: water/lava quads extracted by `MovtexDecoder` (heuristic scan
   for `MovtexQuadCollection` with strict content validation). The game generates the
   animated water DLs each frame. Waterfall vertex-meshes (`MOV_TEX_TRIS` + a tri-DL with

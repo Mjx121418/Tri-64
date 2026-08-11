@@ -17,6 +17,7 @@ func _init() -> void:
 		return
 
 	var meshes: Array = bridge.getMeshes()
+	var materials: Array = bridge.getMaterials()
 	var projected := 0
 	for mesh in meshes:
 		if not mesh.get("rsp_projected", false):
@@ -33,6 +34,23 @@ func _init() -> void:
 
 	if projected == 0:
 		push_error("BOB area has no projected static geometry")
+		quit(1)
+		return
+	var static_dynamic_lit_materials := 0
+	for mesh in meshes:
+		var material_data: Dictionary = materials[int(mesh.material)]
+		if not material_data.get("lit", false) or not material_data.get("use_vertex", false) \
+				or int(material_data.get("num_lights", 0)) == 0:
+			continue
+		var material: Material = main_scene._build_material(material_data, int(mesh.layer))
+		if not material is ShaderMaterial \
+				or not material.get_shader_parameter("use_dynamic_lighting"):
+			push_error("static lit geometry did not use dynamic model-view lighting")
+			quit(1)
+			return
+		static_dynamic_lit_materials += 1
+	if static_dynamic_lit_materials == 0:
+		push_error("BOB has no static lit material to validate")
 		quit(1)
 		return
 	var inline_objects: Array = bridge.getInlineObjectModels()
@@ -113,6 +131,7 @@ func _init() -> void:
 		quit(1)
 		return
 	print("projected geometry: meshes=", meshes.size(), " projected=", projected,
+			" static_dynamic_lit=", static_dynamic_lit_materials,
 			" inline=", inline_objects.size(), " inline_projected=", inline_projected)
 	quit()
 

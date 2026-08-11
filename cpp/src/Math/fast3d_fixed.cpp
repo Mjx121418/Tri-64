@@ -114,6 +114,19 @@ uint8_t shadeComponent(int64_t value) noexcept {
     return saturateUnsigned8(value);
 }
 
+int16_t saturatingAdd16(int16_t left, int16_t right) noexcept {
+    return saturateSigned16(static_cast<int64_t>(left) + right);
+}
+
+int16_t q16ToQ15(Fixed value) noexcept {
+    // Fast3D stores vector lanes as signed Q1.15. The fixed path keeps the
+    // same values in Q16.16 so matrix translation can share one type.
+    const int64_t shifted = value >= 0
+        ? static_cast<int64_t>(value) >> 1
+        : -((static_cast<int64_t>(-value) + 1) >> 1);
+    return saturateSigned16(shifted);
+}
+
 } // namespace
 
 FixedMatrix identityMatrix() noexcept {
@@ -191,18 +204,20 @@ uint32_t reciprocalSqrt(uint32_t input) noexcept {
 }
 
 FixedVector3 normalizeVector(const FixedVector3 &vector) noexcept {
-    int64_t squared = 0;
+    Accumulator48 squared_accumulator;
     for (const Fixed value : vector) {
-        squared += (static_cast<int64_t>(value) * value) >> kFractionBits;
+        squared_accumulator.addFixedProduct(value, value);
     }
+    const Fixed squared = squared_accumulator.toFixed();
     if (squared <= 0) {
         return makeVector3(0, 0, 0);
     }
 
     // VRSQ returns 2^31/sqrt(input). The input here is Q16.16, so shifting
     // the result down by seven converts it to the Q16.16 reciprocal length.
-    const uint32_t squared_input = static_cast<uint32_t>(std::min<int64_t>(
-        squared, std::numeric_limits<uint32_t>::max()));
+    // `squared` is already the VMADH/VMADN saturated result, so do not widen
+    // positive overflow to UINT32_MAX before entering the RSP ROM path.
+    const uint32_t squared_input = static_cast<uint32_t>(squared);
     const Fixed inverse_length = static_cast<Fixed>(
         reciprocalSqrt(squared_input) >> 7);
 
@@ -220,6 +235,18 @@ Fixed fixedDot(const FixedVector3 &left, const FixedVector3 &right) noexcept {
         accumulator.addFixedProduct(left[i], right[i]);
     }
     return accumulator.toFixed();
+}
+
+int16_t rspMultiplyFraction(int16_t left, int16_t right) noexcept {
+    const int64_t product = static_cast<int64_t>(left) * right;
+    // VMULF computes (left * right + 0x4000) >> 15 and clamps the signed
+    // result. Use an explicit arithmetic shift so the behavior is stable on
+    // targets where right-shifting a negative signed value is not specified.
+    const int64_t rounded = product + 0x4000;
+    const int64_t result = rounded >= 0
+        ? rounded >> 15
+        : -(((-rounded) + ((int64_t {1} << 15) - 1)) >> 15);
+    return saturateSigned16(result);
 }
 
 FixedVector3 lightDirectionQ16(const Light &light) noexcept {
@@ -245,28 +272,42 @@ std::array<uint8_t, 4> shadeVertex(
     }
 
     const uint8_t directional_count = std::min<uint8_t>(num_lights, 7);
-    int64_t rgb[3] {
-        lights[directional_count].color[0],
-        lights[directional_count].color[1],
-        lights[directional_count].color[2],
+    int16_t rgb[3] {
+        static_cast<int16_t>(lights[directional_count].color[0] << 7),
+        static_cast<int16_t>(lights[directional_count].color[1] << 7),
+        static_cast<int16_t>(lights[directional_count].color[2] << 7),
+    };
+    const int16_t normal_q15[3] {
+        q16ToQ15(normal[0]), q16ToQ15(normal[1]), q16ToQ15(normal[2]),
     };
     for (uint8_t i = 0; i < directional_count; i++) {
         if (lights[i].color[0] == 0 && lights[i].color[1] == 0 && lights[i].color[2] == 0) {
             continue;
         }
-        const Fixed dot = fixedDot(normal, transformed_lights[i]);
+        const int16_t light_q15[3] {
+            q16ToQ15(transformed_lights[i][0]),
+            q16ToQ15(transformed_lights[i][1]),
+            q16ToQ15(transformed_lights[i][2]),
+        };
+        const int16_t x = rspMultiplyFraction(normal_q15[0], light_q15[0]);
+        const int16_t y = rspMultiplyFraction(normal_q15[1], light_q15[1]);
+        const int16_t z = rspMultiplyFraction(normal_q15[2], light_q15[2]);
+        // The lighting overlay horizontally reduces with saturating VADDs.
+        int16_t dot = saturatingAdd16(x, y);
+        dot = saturatingAdd16(dot, z);
         if (dot <= 0) {
             continue;
         }
         for (int channel = 0; channel < 3; channel++) {
-            rgb[channel] += (static_cast<int64_t>(dot) * lights[i].color[channel])
-                >> kFractionBits;
+            const int16_t light_color = static_cast<int16_t>(lights[i].color[channel] << 7);
+            const int16_t contribution = rspMultiplyFraction(light_color, dot);
+            rgb[channel] = saturatingAdd16(rgb[channel], std::max<int16_t>(contribution, 0));
         }
     }
 
-    shade[0] = shadeComponent(rgb[0]);
-    shade[1] = shadeComponent(rgb[1]);
-    shade[2] = shadeComponent(rgb[2]);
+    shade[0] = shadeComponent(rgb[0] >> 7);
+    shade[1] = shadeComponent(rgb[1] >> 7);
+    shade[2] = shadeComponent(rgb[2] >> 7);
     return shade;
 }
 

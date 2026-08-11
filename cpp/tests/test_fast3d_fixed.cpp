@@ -187,6 +187,28 @@ void testFast3DFixed() {
           "fractional product truncates like VMAD");
     check(fixedMultiply(signExtend32(0xFFFFC000), 0x00008000) == signExtend32(0xFFFFE000),
           "negative fractional product keeps its sign");
+    check(fixedMultiply(std::numeric_limits<Fixed>::max(), fixedFromInteger(2))
+              == std::numeric_limits<Fixed>::max(),
+          "positive fixed product saturates at the VMAD boundary");
+    check(fixedMultiply(std::numeric_limits<Fixed>::min(), fixedFromInteger(-1))
+              == std::numeric_limits<Fixed>::max(),
+          "negative times negative fixed product saturates at the VMAD boundary");
+    check(fixedMultiply(std::numeric_limits<Fixed>::min(), fixedFromInteger(1))
+              == std::numeric_limits<Fixed>::min(),
+          "negative fixed product preserves the lower boundary");
+    FixedMatrix overflow_scale = identityMatrix();
+    overflow_scale[0][0] = fixedFromInteger(2);
+    checkVector3(transformPoint(
+                     overflow_scale,
+                     makeVector3(std::numeric_limits<Fixed>::max(), 0, 0)),
+                 makeVector3(std::numeric_limits<Fixed>::max(), 0, 0),
+                 "vector matrix positive overflow saturates");
+    overflow_scale[0][0] = fixedFromInteger(-1);
+    checkVector3(transformPoint(
+                     overflow_scale,
+                     makeVector3(std::numeric_limits<Fixed>::min(), 0, 0)),
+                 makeVector3(std::numeric_limits<Fixed>::max(), 0, 0),
+                 "vector matrix negative overflow saturates");
 
     const FixedVector3 fractionalPoint = makeVector3(0x00010000, 0x00020000, 0x00030000);
     checkVector3(transformPoint(fractionalProduct, fractionalPoint),
@@ -198,6 +220,31 @@ void testFast3DFixed() {
     check(fixedDot(makeVector3(0x00018000, 0, 0), makeVector3(0x00008000, 0, 0))
               == 0x0000C000,
           "fixed vector dot product");
+    check(rspMultiplyFraction(0x7FFF, 0x7FFF) == 0x7FFE,
+          "VMULF fractional rounding");
+    check(rspMultiplyFraction(std::numeric_limits<int16_t>::min(),
+                              std::numeric_limits<int16_t>::min())
+              == std::numeric_limits<int16_t>::max(),
+          "VMULF positive signed saturation");
+    check(rspMultiplyFraction(std::numeric_limits<int16_t>::min(), 0x7FFF) == -32767,
+          "VMULF negative signed rounding");
+
+    std::array<Light, 8> shade_lights {};
+    std::array<FixedVector3, 8> shade_directions {};
+    shade_lights[0].color = {255, 255, 255};
+    shade_lights[0].direction = {127, 0, 0};
+    shade_lights[1].color = {10, 20, 30};
+    shade_directions[0] = makeVector3(-kFixedOne, 0, 0);
+    const auto negative_shade = shadeVertex(
+        makeVector3(kFixedOne, 0, 0), shade_directions, shade_lights, 1, true, 0x5A);
+    check(negative_shade == std::array<uint8_t, 4> {10, 20, 30, 0x5A},
+          "negative light dot keeps ambient only");
+    shade_lights[0].color = {255, 255, 255};
+    shade_directions[0] = makeVector3(kFixedOne, 0, 0);
+    const auto overbright_shade = shadeVertex(
+        makeVector3(kFixedOne, 0, 0), shade_directions, shade_lights, 1, true, 0xFF);
+    check(overbright_shade == std::array<uint8_t, 4> {255, 255, 255, 0xFF},
+          "overbright light accumulation saturates to white");
 
     const Mtxf object_transform = mtxfMul(
         mtxfRotationZXY({0x1200, 0x2300, 0x0800}), mtxfTranslation(17, -9, 31));
