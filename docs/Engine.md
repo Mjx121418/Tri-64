@@ -239,7 +239,8 @@ microcode, so all GBI encodings here are the F3D layouts.
 - **Matrix stack**: we keep parallel float and signed Q16.16 model-view stacks. `G_VTX`
   processes position, normal, texture coordinates, lighting, and projection state at
   load time; later matrix or texture changes do not alter the cached vertex. Projection
-  matrices are captured, but Godot still performs the live camera projection. No
+  matrices are captured, and the exported perspective divide uses the ROM-compatible
+  `VRCP` path from `fast3d.s`; Godot still performs the live camera projection. No
   near-plane clipping.
 - **Vertices**: the fixed path transforms them with the RSP-style 48-bit accumulator;
   the float position remains available for the normal renderer. Texture scale from
@@ -251,8 +252,8 @@ microcode, so all GBI encodings here are the F3D layouts.
   light — identified by slot, not `dir==0`). `num_lights` defaults to 1 (the game's
   persistent NUMLIGHTS_1; terrain DLs don't set G_MW_NUMLIGHT).
    The C++ path uses signed Q16.16 values, wrapped 48-bit products, the RSP reciprocal
-   square-root ROM, and VMULF rounding/saturation for the exported `SHADE` bytes. The
-   Godot shaders keep the raw Light_t directions and apply the active model-view
+   and reciprocal-square-root ROM paths, and VMULF rounding/saturation for the exported
+   `SHADE` bytes. The Godot shaders keep the raw Light_t directions and apply the active model-view
    transform for both static area and object geometry; the captured shade remains
    available for export/tests but is not multiplied into the live renderer a second
    time. Lit materials without captured lights fall back to white (no modulation).

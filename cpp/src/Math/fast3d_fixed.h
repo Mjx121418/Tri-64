@@ -233,9 +233,8 @@ constexpr Fixed fixedMultiply(Fixed lhs, Fixed rhs) noexcept {
     return accumulator.toFixed();
 }
 
-// Divide two Q16.16 values while keeping the result in Q16.16. This is used
-// for the projected vertex diagnostic path; the numerator is widened before
-// division so no floating-point rounding enters the exported depth data.
+// Divide two Q16.16 values while keeping the result in Q16.16. This remains
+// available for non-RSP callers; projected vertices use rspReciprocal below.
 Fixed fixedDivide(Fixed numerator, Fixed denominator) noexcept;
 
 FixedMatrix identityMatrix() noexcept;
@@ -261,6 +260,11 @@ FixedVector3 transformDirection(const FixedMatrix &matrix,
 // RSP reciprocal-square-root result. This is the raw 32-bit VRSQ result; the
 // caller supplies the binary point implied by the vector accumulator.
 uint32_t reciprocalSqrt(uint32_t input) noexcept;
+
+// RSP reciprocal result for a signed S15.16 input. This is the raw VRCP
+// result; Fast3D's perspective path doubles it because the instruction's
+// result uses the reciprocal's normalized half-range.
+Fixed rspReciprocal(Fixed input) noexcept;
 
 // Deterministic fixed-point normalization used by the Fast3D light overlay.
 // Uses the RSP reciprocal-square-root ROM rather than floating-point math.

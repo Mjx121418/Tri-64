@@ -667,11 +667,17 @@ void DLInterpreter::processVertex(ProcessedVertex &dst) {
         if (y > w) dst.clip_code |= 1 << 3;
         if (z < -w) dst.clip_code |= 1 << 4;
         if (z > w) dst.clip_code |= 1 << 5;
-        dst.inverse_w = Fast3D::fixedDivide(Fast3D::kFixedOne, w);
+        // Fast3D uses the RSP VRCP overlay rather than an exact divide. The
+        // overlay doubles the normalized raw reciprocal before multiplying
+        // clip coordinates, matching f3d_04001000 in fast3d.s.
+        const Fast3D::Fixed inverse_w = Fast3D::fixedMultiply(
+            Fast3D::rspReciprocal(w), Fast3D::fixedFromInteger(2));
+        dst.inverse_w = inverse_w;
         if (w != 0) {
             dst.ndc_position = Fast3D::makeVector3(
-                Fast3D::fixedDivide(x, w), Fast3D::fixedDivide(y, w),
-                Fast3D::fixedDivide(z, w));
+                Fast3D::fixedMultiply(x, inverse_w),
+                Fast3D::fixedMultiply(y, inverse_w),
+                Fast3D::fixedMultiply(z, inverse_w));
             if (state_.viewport.valid) {
                 for (size_t i = 0; i < 3; i++) {
                     dst.viewport_position[i] = state_.viewport.translate[i]

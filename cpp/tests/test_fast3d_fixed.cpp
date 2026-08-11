@@ -287,6 +287,18 @@ void testFast3DFixed() {
           "RSP reciprocal square-root negative one case");
     check(reciprocalSqrt(0xFFFF8000u) == 0xFFFF0000u,
           "RSP reciprocal square-root negative boundary case");
+    check(rspReciprocal(0) == static_cast<Fixed>(0x7FFFFFFFu),
+          "RSP reciprocal zero case");
+    check(rspReciprocal(kFixedOne) == 0x00007FFF,
+          "RSP reciprocal Q16 one case");
+    check(rspReciprocal(fixedFromInteger(2)) == 0x00003FFF,
+          "RSP reciprocal Q16 two case");
+    check(rspReciprocal(fixedFromInteger(3)) == 0x00002AAA,
+          "RSP reciprocal Q16 three case");
+    check(rspReciprocal(0x00017880) == 0x00005708,
+          "RSP reciprocal ROM quantization entry 241");
+    check(rspReciprocal(0x00018880) == 0x0000537C,
+          "RSP reciprocal ROM quantization entry 273");
 
     Accumulator48 wrapped((int64_t {1} << 47) - 1);
     wrapped.addSigned(1);
@@ -459,13 +471,13 @@ void testFast3DFixed() {
         check(mesh.vertices.size() == 3, "projection context triangle vertices");
         if (mesh.vertices.size() == 3) {
             check(mesh.vertices[0].projected, "projection context marks vertex projected");
-            check(mesh.vertices[0].ndc_position[0] == 1.0f
-                      && mesh.vertices[0].ndc_position[1] == 1.0f
-                      && mesh.vertices[0].ndc_position[2] == 1.0f,
+            check(std::abs(mesh.vertices[0].ndc_position[0] - 1.0f) < 0.0001f
+                      && std::abs(mesh.vertices[0].ndc_position[1] - 1.0f) < 0.0001f
+                      && std::abs(mesh.vertices[0].ndc_position[2] - 1.0f) < 0.0001f,
                   "projection context fixed NDC");
-            check(mesh.vertices[0].viewport_position[0] == 320.0f
-                      && mesh.vertices[0].viewport_position[1] == 240.0f
-                      && mesh.vertices[0].viewport_position[2] == 255.5f,
+            check(std::abs(mesh.vertices[0].viewport_position[0] - 320.0f) < 0.01f
+                      && std::abs(mesh.vertices[0].viewport_position[1] - 240.0f) < 0.01f
+                      && std::abs(mesh.vertices[0].viewport_position[2] - 255.5f) < 0.01f,
                   "RSP viewport scale and translation");
         }
     }
@@ -513,9 +525,9 @@ void testFast3DFixed() {
                       && mesh.vertices[1].clip_position[0] == 0.0f
                       && mesh.vertices[2].clip_position[0] == 0.0f,
                   "camera view translation precedes projection");
-            check(mesh.vertices[0].viewport_position[2] == 0.0f
-                      && mesh.vertices[1].viewport_position[2] == 127.75f
-                      && mesh.vertices[2].viewport_position[2] == 255.5f,
+            check(std::abs(mesh.vertices[0].viewport_position[2] - 0.0f) < 0.01f
+                      && std::abs(mesh.vertices[1].viewport_position[2] - 127.75f) < 0.01f
+                      && std::abs(mesh.vertices[2].viewport_position[2] - 255.5f) < 0.01f,
                   "RSP viewport depth maps NDC in order");
         }
     }

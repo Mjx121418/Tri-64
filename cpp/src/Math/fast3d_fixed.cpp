@@ -110,6 +110,47 @@ uint32_t reciprocalSqrtCore(uint32_t bits) noexcept {
     return result ^ sign;
 }
 
+uint16_t reciprocalRomValue(unsigned index) noexcept {
+    // The reciprocal half of the RSP ROM is exactly the quantized reciprocal
+    // of the normalized mantissa. Keeping this as integer arithmetic avoids a
+    // second 512-entry table while retaining the ROM's truncation.
+    const uint64_t normalized = (uint64_t {1} << 31) + (uint64_t {index} << 22);
+    const uint64_t quotient = (uint64_t {0x20000} << 31) / normalized;
+    int64_t value = static_cast<int64_t>(quotient) - 0x10000;
+    // These two ROM entries are one above the analytic truncation. Preserve
+    // the hardware table rather than making the reciprocal path approximate.
+    if (index == 241 || index == 273) {
+        value++;
+    }
+    return saturateUnsigned16(value);
+}
+
+Fixed rspReciprocalCore(Fixed input) noexcept {
+    const int32_t signed_input = input;
+    const uint32_t sign = signed_input < 0 ? 0xFFFFFFFFu : 0u;
+    uint32_t data = static_cast<uint32_t>(input) ^ sign;
+
+    // VRCP uses one's-complement magnitude handling for negative inputs,
+    // except for the signed 16-bit boundary represented by -32768.
+    if (signed_input > -32768) {
+        data -= sign;
+    }
+    if (data == 0) {
+        return static_cast<Fixed>(0x7FFFFFFFu);
+    }
+    if (signed_input == -32768) {
+        return static_cast<Fixed>(0xFFFF0000u);
+    }
+
+    const unsigned shift = std::countl_zero(data);
+    const unsigned index = static_cast<unsigned>(
+        ((static_cast<uint64_t>(data) << shift) & 0x7FC00000u) >> 22);
+    const uint32_t rom = reciprocalRomValue(index);
+    uint32_t result = ((0x10000u | rom) << 14) >> (31 - shift);
+    result ^= sign;
+    return static_cast<Fixed>(result);
+}
+
 uint8_t shadeComponent(int64_t value) noexcept {
     return saturateUnsigned8(value);
 }
@@ -201,6 +242,10 @@ FixedVector3 transformDirection(const FixedMatrix &matrix,
 
 uint32_t reciprocalSqrt(uint32_t input) noexcept {
     return reciprocalSqrtCore(input);
+}
+
+Fixed rspReciprocal(Fixed input) noexcept {
+    return rspReciprocalCore(input);
 }
 
 FixedVector3 normalizeVector(const FixedVector3 &vector) noexcept {
