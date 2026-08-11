@@ -40,6 +40,11 @@ void vertex() {
 		// clip space; the fixed NDC diagnostics retain the original RSP sign.
 		if (use_rsp_projection) {
 			clip_position.y = -clip_position.y;
+			// Godot Forward+ uses reverse Z (CLIP_SPACE_FAR == 0), while the
+			// Fast3D matrix produces the conventional NDC range [-1, 1].
+			if (CLIP_SPACE_FAR == 0.0) {
+				clip_position.z = (clip_position.w - clip_position.z) * 0.5;
+			}
 		}
 		POSITION = clip_position;
 	}
