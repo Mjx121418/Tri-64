@@ -4,6 +4,7 @@
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
+#include <godot_cpp/variant/packed_float32_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/packed_vector2_array.hpp>
 #include <godot_cpp/variant/packed_vector3_array.hpp>
@@ -15,7 +16,7 @@ namespace {
 // 每个（材质, 绘制层）一个网格字典（材质表去重不变，层是每三角形的属性：
 // geo 节点 flags 高 8 位，0-7；游戏按层升序渲染并在每层设置 render mode）。
 // 渲染端按 d["layer"] 做分层材质（0-3 OPA / 4 TEX_EDGE / 5-7 XLU，见 Engine.md）。
-Array meshDicts(const GBI::Mesh &mesh) {
+Array meshDicts(const GBI::Mesh &mesh, bool exact_shade) {
     Array out;
     for (size_t m = 0; m < mesh.materials.size(); m++) {
         // 顶点色导出规则（按 combine 是否用到 SHADE）：
@@ -34,6 +35,13 @@ Array meshDicts(const GBI::Mesh &mesh) {
             PackedVector2Array uvs;
             PackedInt32Array indices;
             PackedColorArray colors;
+            PackedFloat32Array rsp_ndc;
+            PackedFloat32Array rsp_viewport;
+            PackedFloat32Array rsp_depth;
+            PackedFloat32Array rsp_inverse_w;
+            PackedInt32Array rsp_clip_codes;
+            bool all_projected = true;
+            bool has_vertices = false;
 
             for (size_t t = 0; t < mesh.material_ids.size(); t++) {
                 if (mesh.material_ids[t] != m) {
@@ -51,9 +59,22 @@ Array meshDicts(const GBI::Mesh &mesh) {
                     verts.push_back(Vector3(v.position[0], v.position[1], v.position[2]));
                     normals.push_back(Vector3(v.normal[0], v.normal[1], v.normal[2]));
                     uvs.push_back(Vector2(v.uv[0], v.uv[1]));
+                    has_vertices = true;
+                    all_projected = all_projected && v.projected;
+                    rsp_ndc.push_back(v.ndc_position[0]);
+                    rsp_ndc.push_back(v.ndc_position[1]);
+                    rsp_ndc.push_back(v.ndc_position[2]);
+                    rsp_ndc.push_back(1.0f);
+                    rsp_viewport.push_back(v.viewport_position[0]);
+                    rsp_viewport.push_back(v.viewport_position[1]);
+                    rsp_viewport.push_back(v.viewport_position[2]);
+                    rsp_depth.push_back(v.viewport_position[2]);
+                    rsp_inverse_w.push_back(v.inverse_w);
+                    rsp_clip_codes.push_back(v.clip_code);
                     if (use_vertex_colors) {
-                        colors.push_back(Color(v.color[0] / 255.0f, v.color[1] / 255.0f,
-                                               v.color[2] / 255.0f, v.color[3] / 255.0f));
+                        const uint8_t *shade = v.shade_valid ? v.shade : v.color;
+                        colors.push_back(Color(shade[0] / 255.0f, shade[1] / 255.0f,
+                                               shade[2] / 255.0f, shade[3] / 255.0f));
                     }
                     indices.push_back(base + static_cast<int32_t>(k));
                 }
@@ -71,6 +92,14 @@ Array meshDicts(const GBI::Mesh &mesh) {
             d["indices"] = indices;
             d["material"] = static_cast<int64_t>(m);
             d["layer"] = static_cast<int64_t>(layer);
+            d["rsp_projected"] = has_vertices && all_projected;
+            if (has_vertices && all_projected) {
+                d["rsp_ndc"] = rsp_ndc;
+                d["rsp_viewport"] = rsp_viewport;
+                d["rsp_depth"] = rsp_depth;
+                d["rsp_inverse_w"] = rsp_inverse_w;
+                d["rsp_clip_codes"] = rsp_clip_codes;
+            }
             out.push_back(d);
         }
     }
@@ -79,7 +108,8 @@ Array meshDicts(const GBI::Mesh &mesh) {
 
 // 与 meshDicts 的 material 一一对应：{ textured, color, tex_width, tex_height,
 // tex_pixels }。textures 与 mesh.materials 并行。
-Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &textures) {
+Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &textures,
+                    bool exact_shade) {
     Array out;
     for (size_t m = 0; m < mesh.materials.size(); m++) {
         Dictionary d;
@@ -87,6 +117,13 @@ Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &text
         const bool has_tex = m < textures.size() && !textures[m].pixels.empty();
         d["textured"] = has_tex;
         d["lit"] = state.lit; // G_LIGHTING
+        d["cull_back"] = state.cull_back;
+        d["exact_shade"] = exact_shade;
+        bool all_projected = !mesh.vertices.empty();
+        for (const auto &vertex : mesh.vertices) {
+            all_projected = all_projected && vertex.projected;
+        }
+        d["rsp_projection"] = exact_shade && all_projected;
         // combine 颜色源（G_CC_SHADE → 顶点色；PRIMITIVE → prim；ENV → env）。
         // 渲染端据此决定底色：SHADE 用 WHITE × 顶点色，PRIMITIVE/ENV 用对应色。
         const GBI::CombineSource color_source =
@@ -136,7 +173,7 @@ Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &text
                 break;
         }
         d["alpha"] = static_cast<int64_t>(alpha);
-        // 灯光（world 空间，供光照 shader 用）：方向光槽 0..num_lights-1 +
+        // 灯光（原始 Light_t 方向，供 Fast3D model-view shader 变换）：方向光槽 0..num_lights-1 +
         // 环境光（槽 num_lights）。loaded=false 或 num_lights=0 → 无灯光，
         // 渲染端按不调光处理（shade = 白）。
         d["num_lights"] = static_cast<int64_t>(state.lights.loaded ? state.lights.num_lights : 0);
@@ -197,6 +234,8 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("getMaterials"), &GodotBridge::getMaterials);
     ClassDB::bind_method(D_METHOD("getObjects"), &GodotBridge::getObjects);
     ClassDB::bind_method(D_METHOD("getObjectModels"), &GodotBridge::getObjectModels);
+    ClassDB::bind_method(D_METHOD("getInlineObjectModels"),
+                         &GodotBridge::getInlineObjectModels);
     ClassDB::bind_method(D_METHOD("getCollisionTriangles"), &GodotBridge::getCollisionTriangles);
     ClassDB::bind_method(D_METHOD("getObjectCollisions"), &GodotBridge::getObjectCollisions);
     ClassDB::bind_method(D_METHOD("getWarnings"), &GodotBridge::getWarnings);
@@ -248,11 +287,11 @@ bool GodotBridge::extractLevel(int level_num, int area_index) {
 // 每个材质一个网格（与 OBJ 导出的 usemtl 分组一致），方便每个
 // MeshInstance3D 单独挂材质。
 Array GodotBridge::getMeshes() {
-    return meshDicts(result_.mesh);
+    return meshDicts(result_.mesh, true);
 }
 
 Array GodotBridge::getMaterials() {
-    return materialDicts(result_.mesh, result_.textures);
+    return materialDicts(result_.mesh, result_.textures, true);
 }
 
 Array GodotBridge::getObjects() {
@@ -294,14 +333,46 @@ Array GodotBridge::getObjectModels() {
     for (const auto &[model_id, model] : result_.object_models) {
         Dictionary d;
         d["model"] = static_cast<int64_t>(model_id);
-        d["meshes"] = meshDicts(model.mesh);
-        d["materials"] = materialDicts(model.mesh, model.textures);
+        d["meshes"] = meshDicts(model.mesh, false);
+        d["materials"] = materialDicts(model.mesh, model.textures, false);
         Array parts;
         for (const auto &part : model.billboard_parts) {
             Dictionary p;
             p["pivot"] = Vector3(part.pivot.x, part.pivot.y, part.pivot.z);
-            p["meshes"] = meshDicts(part.mesh);
-            p["materials"] = materialDicts(part.mesh, part.textures);
+            p["meshes"] = meshDicts(part.mesh, false);
+            p["materials"] = materialDicts(part.mesh, part.textures, false);
+            parts.push_back(p);
+        }
+        d["billboard_parts"] = parts;
+        out.push_back(d);
+    }
+    return out;
+}
+
+Array GodotBridge::getInlineObjectModels() {
+    Array out;
+    for (size_t i = 0; i < result_.inline_object_models.size(); i++) {
+        const auto &model = result_.inline_object_models[i];
+        if (model.mesh.indices.empty() && model.billboard_parts.empty()) {
+            continue;
+        }
+        Dictionary d;
+        d["object"] = static_cast<int64_t>(i);
+        d["billboard"] = i < result_.objects.size() && result_.objects[i].billboard;
+        d["meshes"] = meshDicts(model.mesh, true);
+        Array materials = materialDicts(model.mesh, model.textures, true);
+        for (int m = 0; m < materials.size(); m++) {
+            Dictionary material = materials[m];
+            material["inline_object"] = true;
+            materials[m] = material;
+        }
+        d["materials"] = materials;
+        Array parts;
+        for (const auto &part : model.billboard_parts) {
+            Dictionary p;
+            p["pivot"] = Vector3(part.pivot.x, part.pivot.y, part.pivot.z);
+            p["meshes"] = meshDicts(part.mesh, false);
+            p["materials"] = materialDicts(part.mesh, part.textures, false);
             parts.push_back(p);
         }
         d["billboard_parts"] = parts;

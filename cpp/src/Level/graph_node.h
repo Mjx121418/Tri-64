@@ -76,9 +76,9 @@ struct GraphNodeCamera {
     // SM64：相机节点的 look-at 矩阵（视图矩阵，由 geo 处理计算）。
     // 导出不渲染场景，保留以忠实还原 decomp 的结构（游戏里是定点 Mtx，
     // 这里用浮点 Mtxf 记录）。
-    Mtxf look_at;
-    int16_t roll;
-    int16_t roll_screen;
+    Mtxf look_at {mtxfIdentity()};
+    int16_t roll {0};
+    int16_t roll_screen {0};
     // GEO_CAMERA 的相机类型（mode）与函数指针（raw 段地址，不执行）。
     int16_t mode {0};
     uint32_t func {0};

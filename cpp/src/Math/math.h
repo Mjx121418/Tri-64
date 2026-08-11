@@ -59,6 +59,14 @@ int16_t convertRotation(int16_t inRotation);
 Mtxf mtxfTranslation(float x, float y, float z);
 Mtxf mtxfScale(float s);
 
+// Camera/projection matrices matching the row-vector convention used by the
+// SM64 math helpers and Fast3D.
+Mtxf mtxfLookAt(const Vec3<float> &from, const Vec3<float> &to, int16_t roll);
+Mtxf mtxfPerspective(float fov_degrees, float aspect, float near_plane,
+                     float far_plane);
+Mtxf mtxfOrtho(float left, float right, float bottom, float top,
+               float near_plane, float far_plane);
+
 // 与 decomp 的 mtxf_rotate_zxy_and_translate 一致（平移为 0），
 // rotation 为 SM64 角度单位。
 Mtxf mtxfRotationZXY(Vec3<int16_t> rotation);
@@ -73,5 +81,8 @@ Vec3<float> transformPoint(const Mtxf &m, const Vec3<float> &p);
 // 用矩阵 m 的 3x3 线性部分变换方向向量（法线）并归一化；
 // 均匀缩放不改变方向，仅改变长度。
 Vec3<float> transformNormal(const Mtxf &m, const Vec3<float> &n);
+
+// Affine inverse for row-vector transforms (translation in m[3][0..2]).
+Mtxf mtxfInverse(const Mtxf &m);
 
 #endif /* MATH_H */

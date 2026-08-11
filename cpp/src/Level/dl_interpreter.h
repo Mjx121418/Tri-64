@@ -4,6 +4,7 @@
 #include "Level/dl_command.h"
 #include "Log.h"
 #include "Memory/segment.h"
+#include "Math/fast3d_fixed.h"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -29,15 +30,62 @@ bool combineUsesShade(uint32_t mux0, uint32_t mux1);
 // 颜色输出是否采样纹素（与 combineUsesTexel 等价，供渲染端判断纹理材质）。
 bool combineUsesTexel(uint32_t mux0, uint32_t mux1);
 
+struct Viewport {
+    // N64 Vp fields have two fractional bits. These values are converted to
+    // Q16.16 before the fixed viewport transform runs.
+    Fast3D::Fixed scale[3] {};
+    Fast3D::Fixed translate[3] {};
+    bool valid {false};
+};
+
+struct ProjectionContext {
+    Mtxf view_matrix {mtxfIdentity()};
+    Fast3D::FixedMatrix fixed_view_matrix {Fast3D::identityMatrix()};
+    Mtxf projection_matrix {mtxfIdentity()};
+    Fast3D::FixedMatrix fixed_projection_matrix {Fast3D::identityMatrix()};
+    Viewport viewport {};
+    float root_x {0};
+    float root_y {0};
+    float root_width {0};
+    float root_height {0};
+    bool valid {false};
+};
+
 // 输出网格顶点（模型空间）
 struct MeshVertex {
     float position[3];
     float normal[3];
     float uv[2];
-    // 顶点第 4 个字（coordinate_or_normal）：G_LIGHTING 开启 = 有符号法线
-    // （见 normal）；关闭 = 顶点 RGBA 色（fast3d 的 G_SHADE 插值用）。
-    // 导出未输出顶点色，保留供未来使用。
+    // color remains the renderer-facing SHADE/RGBA value for compatibility.
     uint8_t color[4];
+    // Preserve both sides of the Fast3D vertex input for the exact combiner path.
+    uint8_t source_color[4];
+    uint8_t shade[4];
+    bool shade_valid {false};
+    float clip_position[4] {};
+    float ndc_position[3] {};
+    float viewport_position[3] {};
+    float inverse_w {0};
+    uint16_t clip_code {0};
+    bool projected {false};
+};
+
+// Fast3D transforms a vertex when G_VTX executes. The raw input is retained so
+// later RDP state changes can still snapshot a material at G_TRI1 time.
+struct ProcessedVertex {
+    Vtx source {};
+    Fast3D::FixedVector3 position {};
+    Fast3D::FixedVector3 normal {};
+    Fast3D::FixedVector4 clip_position {};
+    Fast3D::FixedVector3 ndc_position {};
+    Fast3D::FixedVector3 viewport_position {};
+    Fast3D::Fixed inverse_w {0};
+    uint16_t clip_code {0};
+    bool projected {false};
+    std::array<Fast3D::Fixed, 2> texture_coordinate {};
+    std::array<uint8_t, 4> shade {};
+    bool lighting {false};
+    bool valid {false};
 };
 
 // fast3d 的 Light_t（16 字节 = col[3],pad,colc[3],pad,dir[3],pad）。渲染端用它
@@ -90,8 +138,11 @@ struct Material {
     uint16_t tex_line {0};           // G_SETTILE 的 line（TMEM 行跨度 64 位字）
     uint8_t lut_type {0};            // OTHERMODE 的 TEXTLUT 位域（G_TT_*：CI 调色板格式）
     // 本材质绘制时的灯光（drawTriangle 从 RSP 状态快照；两个灯光不同的三角形是
-    // 不同的材质）。渲染端据此做世界空间逐顶点光照。
+    // 不同的材质）。渲染端按 Fast3D 的 model-view 语义变换方向后做逐顶点光照。
     Lights lights {};
+    // Geometry culling at the draw. SM64 starts with G_CULL_BACK, and display lists
+    // may clear it for intentionally two-sided geometry.
+    bool cull_back {true};
 
     bool operator==(const Material &o) const {
         return combine_w0 == o.combine_w0 && combine_w1 == o.combine_w1
@@ -111,6 +162,7 @@ struct Material {
             && tex_clamp_s == o.tex_clamp_s && tex_clamp_t == o.tex_clamp_t
             && tex_palette == o.tex_palette && tex_line == o.tex_line
             && lut_type == o.lut_type
+            && cull_back == o.cull_back
             && lights.loaded == o.lights.loaded && lights.num_lights == o.lights.num_lights
             && std::equal(lights.light.begin(),
                           lights.light.begin() + lights.num_lights + 1,
@@ -154,19 +206,27 @@ inline constexpr uint8_t kRenderTile = 0;
 
 // RSP 状态：投影矩阵 + 模型视图矩阵栈 + 顶点缓冲 + RDP 纹理绑定
 struct RSPState {
-    // 投影矩阵（gSPMatrix 带 MTX_PROJECTION 时载入）：SM64 用它把世界坐标
-    // 变换到 NDC 供光栅化。导出不做投影（Godot 自行投影），仅忠实记录状态。
+    // Projection is retained in both representations. The current mesh bridge
+    // still exports model-space positions and lets Godot project them.
     Mtxf projection {};
+    Fast3D::FixedMatrix fixed_projection {};
+    bool projection_loaded {false};
+    Mtxf view_matrix {mtxfIdentity()};
+    Fast3D::FixedMatrix fixed_view_matrix {Fast3D::identityMatrix()};
+    bool view_loaded {false};
+    Viewport viewport {};
     std::vector<Mtxf> matrix_stack;  // 模型视图矩阵栈（栈顶 = 当前矩阵，初始为单位阵）
-    std::array<Vtx, kVertexBufferSize> vertices {};
+    std::vector<Fast3D::FixedMatrix> fixed_matrix_stack;
+    std::array<Fast3D::FixedVector3, 8> transformed_lights {};
+    bool transformed_lights_valid {false};
+    std::array<ProcessedVertex, kVertexBufferSize> vertices {};
     // 防御性纹理绑定：G_SETTILE 记录每个 tile 的 tmem；G_LOADBLOCK/LOADTILE
     // 把当前 G_SETTEXIMAGE 图像绑定到该 tmem 槽位。三角形采样渲染 tile（0）
     // 的 tmem → 查表得到真正加载的图像（支持"先加载多个纹理再切换"）。
     std::array<uint16_t, 8> tile_tmem {};       // G_SETTILE 的 tmem（64 位字，9 位）
     std::array<uint32_t, kTMEMWords> tmem_images {}; // tmem → 图像段地址（0=未绑定）
     // G_TEXTURE 的纹理坐标缩放：w1 = (S<<16)|T，16.16 定点（0xFFFF≈1.0）。
-    // fast3d 在 G_VTX 时把它乘到每个顶点的纹理坐标上（dmem 0x124/0x126，
-    // 默认 0，见 rsp/fast3d.s 的 dma_VTX/imm_TEXTURE）。
+    // Fast3D applies it when G_VTX executes.
     uint16_t tex_scale_s {0};
     uint16_t tex_scale_t {0};
     // G_TEXTURE 的渲染 tile 与 mipmap 层级（F3D：w0 bits 8-13）。SM64 用 tile 0，
@@ -190,6 +250,7 @@ struct RSPState {
     // G_MW_FOG 的 fog 系数（mult<<16 | offset，gsSPFogFactor）。
     uint16_t fog_mult {0};
     uint16_t fog_offset {0};
+    uint16_t persp_norm {0xFFFF};
     // G_SETOTHERMODE_H/L 累积的 OTHERMODE 位域（周期类型/纹理过滤/LUT 等）。
     uint32_t othermode {0};
     // G_LOADTLUT 加载的调色板（tmem 槽位 → 源图像段地址，0 = 未加载）：
@@ -226,9 +287,9 @@ struct RSPState {
 
 // DL 解释器：执行一条 DL（含子 DL 调用），累积三角形到 Mesh。
 //
-// 当前阶段（Milestone 2）：
-//   - G_MTX / G_POPMTX：模型视图矩阵栈（push/load/multiply）+ 投影矩阵
-//   - 顶点经模型视图矩阵变换到世界空间（投影跳过）
+// 当前阶段（Milestone 1）：
+//   - G_MTX / G_POPMTX：float export stack plus fixed Fast3D matrix stack
+//   - G_VTX processes and caches transformed position, normal, and UV
 //   - G_VTX / G_TRI1 / G_DL / G_ENDDL 累积三角形
 //   - 材质命令（SETCOMBINE/颜色/SETTILE/TEXIMAGE/TEXTURE/几何模式）→ Material 表
 class DLInterpreter {
@@ -254,6 +315,13 @@ public:
     // layer 是本 DL 的绘制层（geo 节点 flags 高 8 位），记到每个三角形的
     // triangle_layers。每次 run 从空 mesh_ 开始，本 DL 的三角形经 mesh() 取得。
     Mesh &run(SegmentedAddress dl, bool reset_state, uint8_t layer = 0);
+
+    // Execute with the graph-node model-view matrix already active. The
+    // default overload preserves the historical identity initial matrix.
+    Mesh &run(SegmentedAddress dl, bool reset_state, uint8_t layer,
+              const Mtxf &initial_matrix,
+              const Fast3D::FixedMatrix &initial_fixed_matrix,
+              const ProjectionContext &projection_context = {});
 
     // 本 DL 累积的网格（run 后读取）。
     Mesh &mesh() { return mesh_; }
@@ -283,7 +351,9 @@ private:
     void updateOtherModeFields();
     void loadVertices(const DecodedCommand &cmd);
     void drawTriangle(const DecodedCommand &cmd);
-    void appendVertex(const Vtx &v);
+    void appendVertex(const ProcessedVertex &v);
+    void processVertex(ProcessedVertex &dst);
+    void updateTransformedLights();
     uint32_t materialId(uint32_t tex_image, uint32_t tlut);
     // 从 state_ 的渲染寄存器重建 material_（drawTriangle 时调用；三角形按
     // combine/颜色/tile/几何模式等内容归组去重）。

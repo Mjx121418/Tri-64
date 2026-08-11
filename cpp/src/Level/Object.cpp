@@ -283,30 +283,18 @@ void applyTransform(GBI::Mesh &mesh, const Mtxf &m) {
     }
 }
 
-struct DisplayListWithTransform {
-    SegmentedAddress dl;
-    Mtxf transform;
-    // 该 DL 位于某个 GEO_BILLBOARD 节点之下：游戏用 mtxf_billboard 把它渲染成
-    // 相机空间轴对齐（始终面向相机，只随 camera roll 旋转，静态导出取 roll=0），
-    // 位置 = 父矩阵（全链，含旋转/缩放）应用到节点平移。这些三角形单独导出，
-    // 渲染端放在 pivot 上并每帧面向相机。
-    bool is_billboard {false};
-    Vec3<float> billboard_pivot {0, 0, 0}; // 所属 billboard 节点的锚点（模型空间）
-    // 绘制层（geo 节点 flags 高 8 位，0-7）：与游戏的 geo_append_display_list
-    // 一致，DL 按层升序渲染（render mode 每层设置一次，见 Engine.md §5）。
-    uint8_t layer {0};
-};
-
 // 遍历对象模型的 geo 图节点，累积缩放/旋转/平移，收集 (DL, 变换) 对。
 // billboard 子树按 mtxf_billboard 语义只取父矩阵的平移（T(pivot)，旋转/缩放
 // 丢弃）——位置跟随父链，朝向由渲染端每帧面向相机补足。frame0 非空时，
 // 每个 animated part 再叠加动画 frame-0 的平移/旋转增量（按 geo 遍历顺序
 // 逐个调用 frame0->next()，与游戏的 gCurrAnimAttribute 游标一致）。
 void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
+                                      const Fast3D::FixedMatrix &fixed_parent,
                                       std::vector<DisplayListWithTransform> &out,
                                       Frame0Animator *frame0,
                                       std::optional<Vec3<float>> billboard_pivot = std::nullopt) {
     Mtxf current = parent;
+    Fast3D::FixedMatrix fixed_current = fixed_parent;
     std::optional<SegmentedAddress> node_dl;
 
     std::visit([&](const auto &d) {
@@ -317,14 +305,22 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
             // 缩放节点：游戏用 mtxf_scale_vec3f（= diag(s) × mtx，保留平移行），
             // 即预乘。在 decomp 的矩阵约定下 (A·B)·v = B·(A·v)。
             current = mtxfMul(mtxfScale(d.scale), current);
+            fixed_current = Fast3D::matrixMultiply(
+                Fast3D::fromFloatMatrix(mtxfScale(d.scale)), fixed_current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeTranslation>) {
             // 平移节点：游戏 mtxf_mul(new, T, current)，预乘（父空间平移）
             current = mtxfMul(
                 mtxfTranslation(d.translation.x, d.translation.y, d.translation.z), current);
+            fixed_current = Fast3D::matrixMultiply(
+                Fast3D::fromFloatMatrix(mtxfTranslation(d.translation.x, d.translation.y,
+                                                         d.translation.z)),
+                fixed_current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeRotation>) {
             current = mtxfMul(mtxfRotationZXY(d.rotation), current);
+            fixed_current = Fast3D::matrixMultiply(
+                Fast3D::fromFloatMatrix(mtxfRotationZXY(d.rotation)), fixed_current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeTranslationRotation>) {
             // mtxf_rotate_zxy_and_translate：旋转后平移。行向量约定下等价于
@@ -333,6 +329,7 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
                 mtxfRotationZXY(d.rotation),
                 mtxfTranslation(d.translation.x, d.translation.y, d.translation.z));
             current = mtxfMul(tr, current);
+            fixed_current = Fast3D::matrixMultiply(Fast3D::fromFloatMatrix(tr), fixed_current);
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeBillboard>) {
             // 镜像 geo_process_billboard 的 mtxf_billboard（roll=0）：只保留父
@@ -343,6 +340,7 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
                 current, {static_cast<float>(d.translation.x), static_cast<float>(d.translation.y),
                           static_cast<float>(d.translation.z)});
             current = mtxfTranslation(p.x, p.y, p.z);
+            fixed_current = Fast3D::fromFloatMatrix(current);
             billboard_pivot = p;
             node_dl = d.display_list;
         } else if constexpr (std::is_same_v<T, GraphNodeAnimatedPart>) {
@@ -364,12 +362,14 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
             }
             const Mtxf tr = mtxfMul(mtxfRotationXYZ(r), mtxfTranslation(t.x, t.y, t.z));
             current = mtxfMul(tr, current);
+            fixed_current = Fast3D::matrixMultiply(Fast3D::fromFloatMatrix(tr), fixed_current);
             node_dl = d.display_list;
         }
     }, node.data);
 
     if (node_dl) {
-        DisplayListWithTransform dlt {*node_dl, current};
+        DisplayListWithTransform dlt {
+            *node_dl, current, fixed_current, false, {}, 0};
         if (billboard_pivot) {
             dlt.is_billboard = true;
             dlt.billboard_pivot = *billboard_pivot;
@@ -387,8 +387,8 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
         if (!node.children.empty()) {
             const int16_t idx = sw.selected_case >= 0 ? sw.selected_case : 0;
             collectDisplayListsWithTransform(
-                *node.children[std::min<size_t>(idx, node.children.size() - 1)], current, out, frame0,
-                billboard_pivot);
+                *node.children[std::min<size_t>(idx, node.children.size() - 1)], current,
+                fixed_current, out, frame0, billboard_pivot);
         }
         return;
     }
@@ -398,15 +398,25 @@ void collectDisplayListsWithTransform(const GraphNode &node, const Mtxf &parent,
         const auto &lod = std::get<GraphNodeLevelOfDetail>(node.data);
         if (lod.min_distance <= 0 && 0 < lod.max_distance) {
             for (const auto &child : node.children) {
-                collectDisplayListsWithTransform(*child, current, out, frame0, billboard_pivot);
+                collectDisplayListsWithTransform(
+                    *child, current, fixed_current, out, frame0, billboard_pivot);
             }
         }
         return;
     }
 
     for (const auto &child : node.children) {
-        collectDisplayListsWithTransform(*child, current, out, frame0, billboard_pivot);
+        collectDisplayListsWithTransform(*child, current, fixed_current, out, frame0,
+                                         billboard_pivot);
     }
+}
+
+std::vector<DisplayListWithTransform> collectDisplayLists(const GraphNode &root,
+                                                          Frame0Animator *frame0) {
+    std::vector<DisplayListWithTransform> out;
+    collectDisplayListsWithTransform(
+        root, mtxfIdentity(), Fast3D::identityMatrix(), out, frame0);
+    return out;
 }
 
 void ObjectModelDecoder::mergeMesh(GBI::Mesh &merged, GBI::Mesh &&src) {
@@ -448,8 +458,8 @@ void ObjectModelDecoder::runModel(const GraphNode *node, ObjectExtract::Frame0An
         return;
     }
 
-    std::vector<ObjectExtract::DisplayListWithTransform> dls;
-    collectDisplayListsWithTransform(*node, mtxfIdentity(), dls, frame0);
+    std::vector<ObjectExtract::DisplayListWithTransform> dls =
+        ObjectExtract::collectDisplayLists(*node, frame0);
     if (dls.empty()) {
         return;
     }

@@ -176,6 +176,24 @@ private:
     void skipAttribute();
 };
 
+// 一个对象图节点最终提交到 master list 的 DL 实例。transform 是对象模型自身的
+// geo 变换；对象实例的世界变换由 LevelExtractor 另行预乘。这样同一个 geo 模型
+// 可以在每个对象实例的 G_VTX 时刻重新执行，而不是共享已经变换过的顶点。
+struct DisplayListWithTransform {
+    SegmentedAddress dl;
+    Mtxf transform;
+    Fast3D::FixedMatrix fixed_transform;
+    bool is_billboard {false};
+    Vec3<float> billboard_pivot {0, 0, 0};
+    uint8_t layer {0};
+};
+
+// 遍历对象 geo 图，返回其 DL 与局部变换。frame0 非空时把出生帧动画变换
+// 应用到 GEO_ANIMATED_PART；调用方可以把对象实例矩阵加入后交给同一个
+// DLInterpreter。
+std::vector<DisplayListWithTransform> collectDisplayLists(const GraphNode &root,
+                                                          Frame0Animator *frame0 = nullptr);
+
 // 对象模型/对象出生数据解码器（镜像 LevelScriptVM 的结构）：构造时绑定段表，
 // runModel(node[, frame0]) 重置并解码一个对象模型，结果经 model() 读取或
 // takeModel() 移出。

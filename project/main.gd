@@ -36,9 +36,9 @@ var _visible_collision_triangles := 0
 # ——mtxf_billboard 的 modelview = R_z(roll)，roll≈0 → 始终面向相机）。
 var _billboard_nodes: Array = []
 
-# SM64 世界空间光照 shader（受光材质用；Godot 的 NORMAL 含节点旋转 → 对象实例
-# 旋转后光照正确）。
+# SM64 Fast3D model-view lighting shader（受光材质用）。
 const _sm64_lighting_shader := preload("res://sm64_lighting.gdshader")
+const _sm64_projected_shader := preload("res://sm64_projected.gdshader")
 # SM64 天空盒 shader（skybox.c 的 10×8 图块贴图集，按相机 yaw/pitch 滚动）。
 const _skybox_shader := preload("res://skybox.gdshader")
 
@@ -291,6 +291,8 @@ func _render_geometry() -> void:
 		arrays[Mesh.ARRAY_VERTEX] = md.vertices
 		arrays[Mesh.ARRAY_NORMAL] = md.normals
 		arrays[Mesh.ARRAY_TEX_UV] = md.uvs
+		if md.get("rsp_projected", false):
+			arrays[Mesh.ARRAY_TANGENT] = md.rsp_ndc
 		if md.has("colors"):
 			arrays[Mesh.ARRAY_COLOR] = md.colors
 		arrays[Mesh.ARRAY_INDEX] = md.indices
@@ -308,16 +310,25 @@ func _render_geometry() -> void:
 	var model_cache := {}
 	for md in object_models:
 		model_cache[int(md.model)] = _build_object_mesh(md)
+	var inline_objects: Array = rom_manager.getInlineObjectModels()
+	var inline_cache := {}
+	for md in inline_objects:
+		inline_cache[int(md.object)] = md
 
 	var rendered_objects := 0
-	for obj in objects:
+	for object_index in objects.size():
+		var obj: Dictionary = objects[object_index]
 		# 出生状态（行为脚本）：HIDE/DISABLE_RENDERING/DEACTIVATE 的对象不渲染。
 		if obj.hidden:
 			continue
 		var model_id: int = obj.model
-		if model_id == 0 or not model_cache.has(model_id):
+		if model_id == 0:
 			continue
-		var entry: Dictionary = model_cache[model_id]
+		var entry: Dictionary = model_cache.get(model_id, {})
+		if inline_cache.has(object_index):
+			_render_inline_object(inline_cache[object_index], obj, entry)
+			rendered_objects += 1
+			continue
 		if entry.is_empty():
 			continue
 		var oi := MeshInstance3D.new()
@@ -347,28 +358,115 @@ func _render_geometry() -> void:
 		# 设为相机的世界基（见 _billboard_nodes 更新）。
 		if obj.billboard:
 			_billboard_nodes.append(oi)
-		if entry.has("billboard_parts") and not entry.billboard_parts.is_empty():
-			for part in entry.billboard_parts:
-				var bi := MeshInstance3D.new()
-				bi.mesh = part.mesh
-				bi.position = part.pivot
-				var part_materials: Array = part.surface_materials
-				if opacity < 255:
-					for s in part_materials.size():
-						var mat: StandardMaterial3D = part_materials[s].duplicate()
-						mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-						mat.albedo_color.a = opacity / 255.0
-						bi.set_surface_override_material(s, mat)
-				else:
-					for s in part_materials.size():
-						bi.set_surface_override_material(s, part_materials[s])
-				oi.add_child(bi)
-				_billboard_nodes.append(bi)
+		_add_billboard_parts(oi, entry, opacity)
 		rendered_objects += 1
 
 	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects (%d rendered)." % [
 			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
 			objects.size(), rendered_objects]
+
+## Inline object meshes already include the object's graph transform. Keep them at the
+## world root so Godot does not apply the instance transform a second time. A whole
+## object billboard instead gets a camera-facing parent.
+func _render_inline_object(inline_md: Dictionary, obj: Dictionary, cached_entry: Dictionary) -> void:
+	var opacity: int = obj.opacity
+	var object_parent: Node3D = null
+	if obj.billboard:
+		object_parent = Node3D.new()
+		object_parent.position = obj.pos
+		object_parent.rotation = Vector3.ZERO
+		object_parent.scale = obj.scale
+		model_root.add_child(object_parent)
+		_billboard_nodes.append(object_parent)
+	for me in inline_md.meshes:
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = me.vertices
+		arrays[Mesh.ARRAY_NORMAL] = me.normals
+		arrays[Mesh.ARRAY_TEX_UV] = me.uvs
+		if me.get("rsp_projected", false):
+			arrays[Mesh.ARRAY_TANGENT] = me.rsp_ndc
+		if me.has("colors"):
+			arrays[Mesh.ARRAY_COLOR] = me.colors
+		arrays[Mesh.ARRAY_INDEX] = me.indices
+		var am := ArrayMesh.new()
+		am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var mi := MeshInstance3D.new()
+		mi.mesh = am
+		var mat: Material = _build_material(inline_md.materials[int(me.material)], int(me.layer))
+		if opacity < 255 and mat is StandardMaterial3D:
+			var alpha_mat: StandardMaterial3D = mat.duplicate()
+			alpha_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			alpha_mat.albedo_color.a = opacity / 255.0
+			mat = alpha_mat
+		mi.material_override = mat
+		if object_parent != null:
+			object_parent.add_child(mi)
+		else:
+			model_root.add_child(mi)
+
+	if inline_md.has("billboard_parts") and not inline_md.billboard_parts.is_empty():
+		var parent := object_parent
+		if parent == null:
+			parent = Node3D.new()
+			parent.position = obj.pos
+			parent.rotation = obj.angle
+			parent.scale = obj.scale
+			model_root.add_child(parent)
+		_add_inline_billboard_parts(parent, inline_md.billboard_parts, opacity)
+	elif cached_entry.has("billboard_parts") and not cached_entry.billboard_parts.is_empty():
+		var parent := Node3D.new()
+		parent.position = obj.pos
+		parent.rotation = obj.angle
+		parent.scale = obj.scale
+		model_root.add_child(parent)
+		_add_billboard_parts(parent, cached_entry, opacity)
+
+func _add_inline_billboard_parts(parent: Node3D, parts: Array, opacity: int) -> void:
+	for part in parts:
+		for me in part.meshes:
+			var arrays := []
+			arrays.resize(Mesh.ARRAY_MAX)
+			arrays[Mesh.ARRAY_VERTEX] = me.vertices
+			arrays[Mesh.ARRAY_NORMAL] = me.normals
+			arrays[Mesh.ARRAY_TEX_UV] = me.uvs
+			if me.has("colors"):
+				arrays[Mesh.ARRAY_COLOR] = me.colors
+			arrays[Mesh.ARRAY_INDEX] = me.indices
+			var am := ArrayMesh.new()
+			am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			var bi := MeshInstance3D.new()
+			bi.mesh = am
+			bi.position = part.pivot
+			var mat: Material = _build_material(part.materials[int(me.material)], int(me.layer))
+			if opacity < 255 and mat is StandardMaterial3D:
+				var alpha_mat: StandardMaterial3D = mat.duplicate()
+				alpha_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				alpha_mat.albedo_color.a = opacity / 255.0
+				mat = alpha_mat
+			bi.material_override = mat
+			parent.add_child(bi)
+			_billboard_nodes.append(bi)
+
+func _add_billboard_parts(parent: Node3D, entry: Dictionary, opacity: int) -> void:
+	if not entry.has("billboard_parts") or entry.billboard_parts.is_empty():
+		return
+	for part in entry.billboard_parts:
+		var bi := MeshInstance3D.new()
+		bi.mesh = part.mesh
+		bi.position = part.pivot
+		var part_materials: Array = part.surface_materials
+		if opacity < 255:
+			for s in part_materials.size():
+				var mat: StandardMaterial3D = part_materials[s].duplicate()
+				mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				mat.albedo_color.a = opacity / 255.0
+				bi.set_surface_override_material(s, mat)
+		else:
+			for s in part_materials.size():
+				bi.set_surface_override_material(s, part_materials[s])
+		parent.add_child(bi)
+		_billboard_nodes.append(bi)
 
 ## 按 model id 分组对象；每组是一个可展开的树节点，组按 id 数值升序排列。
 func _populate_object_list(objects: Array) -> void:
@@ -692,7 +790,7 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 ## 根据材质字典 + 绘制层构建材质。层语义（游戏 renderModeTable_1Cycle/2Cycle，
 ## 见 Engine.md §5）：0-3 OPA（忽略 alpha，强制不透明，深度写开）、4 TEX_EDGE
 ##（alpha scissor——硬边裁剪，深度写开）、5-7 XLU（alpha 混合，深度写关）。
-## 受光且不透明的材质用世界空间光照 shader（对象实例旋转后光照正确）；
+## 受光且不透明的材质用 Fast3D model-view 光照 shader；
 ## 其余走 StandardMaterial3D。
 func _build_material(md: Dictionary, layer: int = 0) -> Material:
 	var color_source: int = md.color_source
@@ -711,6 +809,8 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 	var alpha_blend := layer >= 5
 	# 受光 + 有灯光 + 不透明（OPA 层忽略纹理 alpha；其余层纹理无 alpha、材质
 	# alpha 满）→ 光照 shader。
+	if md.get("rsp_projection", false) and layer < 4:
+		return _build_projected_material(md, tex_img)
 	if md.lit and md.num_lights > 0 and alpha >= 255 \
 			and (md.textured and (not alpha_matters or not tex_alpha) or not md.textured):
 		var light_tex: ImageTexture = null
@@ -719,7 +819,8 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 		return _build_lighting_material(md, light_tex)
 
 	var mat := StandardMaterial3D.new()
-	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.cull_mode = (BaseMaterial3D.CULL_FRONT if md.get("cull_back", true)
+			else BaseMaterial3D.CULL_DISABLED)
 	# SM64 是无光照渲染（fast3d 的 G_LIGHTING 仅用于物体），导出模型用 Unshaded
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	if md.textured:
@@ -757,8 +858,41 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 		mat.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 	return mat
 
-## 受光材质的世界空间光照 shader：shade = ambient + Σ max(0, n̂·l̂)·color，
-## 用 Godot 的 NORMAL（含实例旋转）点乘世界空间灯光；texel × shade 或 shade。
+## Static area geometry shader. The captured Fast3D NDC/depth remains in the
+## TANGENT channel for diagnostics; the active branch reprojects with Godot's
+## current camera so movement remains live.
+func _build_projected_material(md: Dictionary, tex_img: Image) -> ShaderMaterial:
+	var sm := ShaderMaterial.new()
+	sm.shader = _sm64_projected_shader
+	if tex_img != null:
+		sm.set_shader_parameter("albedo_tex", ImageTexture.create_from_image(tex_img))
+		sm.set_shader_parameter("use_texel", true)
+		sm.set_shader_parameter("clamp_uv", not (md.repeat_s or md.repeat_t))
+		if md.has("uv_clamp"):
+			sm.set_shader_parameter("uv_clamp", md.uv_clamp)
+	else:
+		sm.set_shader_parameter("use_texel", false)
+	var base_color: Color = md.env_color if int(md.color_source) == 5 else md.color
+	sm.set_shader_parameter("base_color", Vector3(base_color.r, base_color.g, base_color.b))
+	sm.set_shader_parameter("use_vertex", md.use_vertex)
+	var dynamic_lighting: bool = md.get("inline_object", false) and md.lit and md.use_vertex \
+			and int(md.get("num_lights", 0)) > 0
+	sm.set_shader_parameter("use_dynamic_lighting", dynamic_lighting)
+	sm.set_shader_parameter("num_lights", int(md.get("num_lights", 0)))
+	sm.set_shader_parameter("cull_back", md.get("cull_back", true))
+	if md.has("ambient"):
+		sm.set_shader_parameter("ambient", md.ambient)
+	if md.has("light_dirs"):
+		sm.set_shader_parameter("light_dirs", md.light_dirs)
+	if md.has("light_cols"):
+		sm.set_shader_parameter("light_cols", md.light_cols)
+	# Fixed NDC is extraction-camera specific; keep the dynamic camera branch active.
+	sm.set_shader_parameter("use_rsp_position", false)
+	sm.set_shader_parameter("use_dynamic_reprojection", true)
+	return sm
+
+## 受光材质的 Fast3D model-view 光照 shader：shade = ambient + Σ max(0, n̂·l̂)·color；
+## 保持原始 Light_t 方向并按当前 MODELVIEW_MATRIX 变换；texel × shade 或 shade。
 func _build_lighting_material(md: Dictionary, tex: ImageTexture) -> ShaderMaterial:
 	var sm := ShaderMaterial.new()
 	sm.shader = _sm64_lighting_shader
@@ -776,6 +910,8 @@ func _build_lighting_material(md: Dictionary, tex: ImageTexture) -> ShaderMateri
 	sm.set_shader_parameter("ambient", md.ambient)
 	sm.set_shader_parameter("light_dirs", md.light_dirs)
 	sm.set_shader_parameter("light_cols", md.light_cols)
+	sm.set_shader_parameter("cull_back", md.get("cull_back", true))
+	sm.set_shader_parameter("use_vertex_shade", md.get("exact_shade", false))
 	return sm
 
 ## SM64 的 IA16 圆形/遮罩纹理把形状放在 alpha 里（RGB 可能全黑），

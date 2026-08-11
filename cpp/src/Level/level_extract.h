@@ -33,8 +33,12 @@ struct Result {
     GBI::Mesh mesh;                      // 合并后的网格（含材质表与纹理源图像）
     std::vector<GBI::Texture> textures;  // 与 mesh.materials 并行：解码纹理
     std::vector<ObjectExtract::Object> objects; // 统一对象（OBJECT 命令 + 宏 +
-                                                // 特殊对象变换而来；行为脚本的作用对象）
+                                                 // 特殊对象变换而来；行为脚本的作用对象）
     std::map<int16_t, ObjectExtract::ObjectModel> object_models; // 对象模型缓存（按 model id 去重）
+    // 每个对象实例重新执行其 geo display lists 后得到的网格（与 objects 平行）。
+    // 顶点已经包含对象的图形位置/旋转/缩放，供固定点 G_VTX 与相机投影路径使用；
+    // billboard 子树仍由 object_models 的相机跟踪部分渲染。
+    std::vector<ObjectExtract::ObjectModel> inline_object_models;
     std::vector<Collision::Data> object_collisions; // 与 objects 并行：各对象行为
                                                     // LOAD_COLLISION_DATA 的碰撞（本地空间）
     Movtex::Data movtex;          // 移动纹理四边形（水/熔岩表面，Y 由水盒补充）
@@ -75,6 +79,9 @@ class LevelExtractor {
     struct DisplayListRef {
         SegmentedAddress dl;
         uint8_t layer {0};
+        Mtxf transform {mtxfIdentity()};
+        Fast3D::FixedMatrix fixed_transform {Fast3D::identityMatrix()};
+        GBI::ProjectionContext projection {};
     };
 
     struct DisplayListCollection {

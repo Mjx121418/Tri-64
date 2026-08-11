@@ -85,6 +85,125 @@ Mtxf mtxfScale(float s) {
     return m;
 }
 
+Mtxf mtxfLookAt(const Vec3<float> &from, const Vec3<float> &to, int16_t roll) {
+    // Mirrors decomp math_util.c:194 (mtxf_lookat). The matrix is built in
+    // the same row-vector convention as mtxf_mul_vec3s.
+    const float dx = to.x - from.x;
+    const float dz = to.z - from.z;
+    const float horizontal_length = std::sqrt(dx * dx + dz * dz);
+    if (horizontal_length < 1e-6f) {
+        return mtxfIdentity();
+    }
+
+    const float horizontal_inverse = -1.0f / horizontal_length;
+    const float normalized_dx = dx * horizontal_inverse;
+    const float normalized_dz = dz * horizontal_inverse;
+    const float roll_radians = sm64AngleToRadians(roll);
+    const float sin_roll = std::sin(roll_radians);
+    const float cos_roll = std::cos(roll_radians);
+
+    float x_col_y = sin_roll * normalized_dz;
+    float y_col_y = cos_roll;
+    float z_col_y = -sin_roll * normalized_dx;
+
+    float x_col_z = to.x - from.x;
+    float y_col_z = to.y - from.y;
+    float z_col_z = to.z - from.z;
+    const float view_length = std::sqrt(
+        x_col_z * x_col_z + y_col_z * y_col_z + z_col_z * z_col_z);
+    if (view_length < 1e-6f) {
+        return mtxfIdentity();
+    }
+    const float view_inverse = -1.0f / view_length;
+    x_col_z *= view_inverse;
+    y_col_z *= view_inverse;
+    z_col_z *= view_inverse;
+
+    float x_col_x = y_col_y * z_col_z - z_col_y * y_col_z;
+    float y_col_x = z_col_y * x_col_z - x_col_y * z_col_z;
+    float z_col_x = x_col_y * y_col_z - y_col_y * x_col_z;
+    const float x_length = std::sqrt(
+        x_col_x * x_col_x + y_col_x * y_col_x + z_col_x * z_col_x);
+    if (x_length < 1e-6f) {
+        return mtxfIdentity();
+    }
+    const float x_inverse = 1.0f / x_length;
+    x_col_x *= x_inverse;
+    y_col_x *= x_inverse;
+    z_col_x *= x_inverse;
+
+    x_col_y = y_col_z * z_col_x - z_col_z * y_col_x;
+    y_col_y = z_col_z * x_col_x - x_col_z * z_col_x;
+    z_col_y = x_col_z * y_col_x - y_col_z * x_col_x;
+    const float y_length = std::sqrt(
+        x_col_y * x_col_y + y_col_y * y_col_y + z_col_y * z_col_y);
+    if (y_length < 1e-6f) {
+        return mtxfIdentity();
+    }
+    const float y_inverse = 1.0f / y_length;
+    x_col_y *= y_inverse;
+    y_col_y *= y_inverse;
+    z_col_y *= y_inverse;
+
+    Mtxf matrix {};
+    matrix[0][0] = x_col_x;
+    matrix[1][0] = y_col_x;
+    matrix[2][0] = z_col_x;
+    matrix[3][0] = -(from.x * x_col_x + from.y * y_col_x + from.z * z_col_x);
+    matrix[0][1] = x_col_y;
+    matrix[1][1] = y_col_y;
+    matrix[2][1] = z_col_y;
+    matrix[3][1] = -(from.x * x_col_y + from.y * y_col_y + from.z * z_col_y);
+    matrix[0][2] = x_col_z;
+    matrix[1][2] = y_col_z;
+    matrix[2][2] = z_col_z;
+    matrix[3][2] = -(from.x * x_col_z + from.y * y_col_z + from.z * z_col_z);
+    matrix[3][3] = 1.0f;
+    return matrix;
+}
+
+Mtxf mtxfPerspective(float fov_degrees, float aspect, float near_plane,
+                     float far_plane) {
+    Mtxf matrix {};
+    if (aspect <= 0.0f || near_plane <= 0.0f || far_plane <= near_plane) {
+        return mtxfIdentity();
+    }
+    constexpr float pi = 3.14159265358979323846f;
+    const float half_fov = fov_degrees * pi / 360.0f;
+    const float sine = std::sin(half_fov);
+    if (std::abs(sine) < 1e-6f) {
+        return mtxfIdentity();
+    }
+    const float cotangent = std::cos(half_fov) / sine;
+    const float range = far_plane - near_plane;
+    matrix[0][0] = cotangent / aspect;
+    matrix[1][1] = cotangent;
+    matrix[2][2] = -(far_plane + near_plane) / range;
+    matrix[2][3] = -1.0f;
+    matrix[3][2] = -(2.0f * far_plane * near_plane) / range;
+    return matrix;
+}
+
+Mtxf mtxfOrtho(float left, float right, float bottom, float top,
+               float near_plane, float far_plane) {
+    Mtxf matrix {};
+    const float width = right - left;
+    const float height = top - bottom;
+    const float depth = far_plane - near_plane;
+    if (std::abs(width) < 1e-6f || std::abs(height) < 1e-6f
+        || std::abs(depth) < 1e-6f) {
+        return mtxfIdentity();
+    }
+    matrix[0][0] = 2.0f / width;
+    matrix[1][1] = 2.0f / height;
+    matrix[2][2] = -2.0f / depth;
+    matrix[3][0] = -(right + left) / width;
+    matrix[3][1] = -(top + bottom) / height;
+    matrix[3][2] = -(far_plane + near_plane) / depth;
+    matrix[3][3] = 1.0f;
+    return matrix;
+}
+
 Mtxf mtxfRotationZXY(Vec3<int16_t> rotation) {
     const float sx = std::sin(sm64AngleToRadians(rotation.x));
     const float cx = std::cos(sm64AngleToRadians(rotation.x));
@@ -152,4 +271,47 @@ Vec3<float> transformNormal(const Mtxf &m, const Vec3<float> &n) {
         out.z /= len;
     }
     return out;
+}
+
+Mtxf mtxfInverse(const Mtxf &m) {
+    const float a00 = m[0][0];
+    const float a01 = m[0][1];
+    const float a02 = m[0][2];
+    const float a10 = m[1][0];
+    const float a11 = m[1][1];
+    const float a12 = m[1][2];
+    const float a20 = m[2][0];
+    const float a21 = m[2][1];
+    const float a22 = m[2][2];
+
+    const float c00 = a11 * a22 - a12 * a21;
+    const float c01 = a02 * a21 - a01 * a22;
+    const float c02 = a01 * a12 - a02 * a11;
+    const float c10 = a12 * a20 - a10 * a22;
+    const float c11 = a00 * a22 - a02 * a20;
+    const float c12 = a02 * a10 - a00 * a12;
+    const float c20 = a10 * a21 - a11 * a20;
+    const float c21 = a01 * a20 - a00 * a21;
+    const float c22 = a00 * a11 - a01 * a10;
+    const float determinant = a00 * c00 + a01 * c10 + a02 * c20;
+    if (std::abs(determinant) < 1e-8f) {
+        return mtxfIdentity();
+    }
+
+    const float inverse_determinant = 1.0f / determinant;
+    Mtxf inverse = mtxfIdentity();
+    inverse[0][0] = c00 * inverse_determinant;
+    inverse[0][1] = c01 * inverse_determinant;
+    inverse[0][2] = c02 * inverse_determinant;
+    inverse[1][0] = c10 * inverse_determinant;
+    inverse[1][1] = c11 * inverse_determinant;
+    inverse[1][2] = c12 * inverse_determinant;
+    inverse[2][0] = c20 * inverse_determinant;
+    inverse[2][1] = c21 * inverse_determinant;
+    inverse[2][2] = c22 * inverse_determinant;
+    for (size_t j = 0; j < 3; j++) {
+        inverse[3][j] = -(m[3][0] * inverse[0][j] + m[3][1] * inverse[1][j] +
+                          m[3][2] * inverse[2][j]);
+    }
+    return inverse;
 }

@@ -104,6 +104,34 @@ void testObject() {
             printf("test_object: FAIL no objects\n");
         }
 
+        // Inline object extraction replays ordinary object geo/DLs with the instance
+        // transform already active at G_VTX time. Billboard objects remain on the
+        // camera-facing cached-part path.
+        size_t inline_objects = 0;
+        size_t inline_triangles = 0;
+        size_t inline_billboard_parts = 0;
+        bool inline_projection_ok = r.inline_object_models.size() == r.objects.size();
+        for (size_t i = 0; i < r.inline_object_models.size(); i++) {
+            const auto &model = r.inline_object_models[i];
+            inline_billboard_parts += model.billboard_parts.size();
+            if (model.mesh.indices.empty()) {
+                continue;
+            }
+            inline_objects++;
+            inline_triangles += model.mesh.indices.size() / 3;
+            inline_projection_ok = inline_projection_ok &&
+                model.mesh.triangle_layers.size() == model.mesh.material_ids.size();
+            for (const auto &vertex : model.mesh.vertices) {
+                inline_projection_ok = inline_projection_ok && vertex.projected;
+            }
+        }
+        printf("test_object: inline instances=%zu triangles=%zu billboard_parts=%zu projected=%d\n",
+               inline_objects, inline_triangles, inline_billboard_parts,
+               int(inline_projection_ok));
+        if (is_vanilla && (inline_objects == 0 || !inline_projection_ok)) {
+            printf("test_object: FAIL inline object draw stream\n");
+        }
+
         if (is_vanilla) {
             if (r.objects.size() != 103 || with_model != 92) {
                 printf("test_object: FAIL BOB object counts (objects=%zu model!=0=%zu, expect "

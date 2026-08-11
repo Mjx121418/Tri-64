@@ -286,9 +286,12 @@ microcode, so all GBI encodings here are the F3D layouts.
   the initial combine is the RDP reset value 0). `Material` is snapshotted from
   `RSPState` at each triangle (so a DL that sets no combine — e.g. WF's
   `LAYER_TRANSPARENT_DECAL` yellow decal — inherits the preceding DL's G_CC_SHADE).
-  Object models are decoded with fresh per-DL state (not inherited), but their DLs are
-  now sorted by layer the same way (stable sort keeps the geo append order inside a
-  layer).
+  The inline object path now adds ordinary object geo/DLs to the same layer-sorted
+  extraction stream as area DLs. Each instance enters the `DLInterpreter` with its
+  object graph matrix already active, so `G_VTX` captures per-instance position,
+  normal, shade, clip, and projection state; the interpreter's RDP/RSP registers persist
+  across the combined stream. The legacy model cache remains as the renderer fallback
+  for data that cannot be submitted inline.
 - **Drawing layers**: every triangle carries its layer (`Mesh::triangle_layers`,
   from the geo node's `flags >> 8` — the game's `geo_append_display_list` buckets the
   same way). `meshDicts` groups surfaces by (material, layer) and exports `layer`.
@@ -461,21 +464,27 @@ per frame.
   applied: `getObjects` exports `pos.y + oGraphYOffset` for the model placement; the
   object collision stays at `oPosY` (see §8).
 - **Billboard parts**: `GEO_BILLBOARD` subtrees are split per node into
-  `ObjectModel::billboard_parts` (`{pivot, pivot-relative mesh}`) and rendered on a
-  second node at the pivot whose `global_basis` tracks the camera's world basis every
-  frame (always facing the camera — see §4). Object-level `BILLBOARD` (behavior 0x21)
-  registers the body node for the same per-frame basis.
+  `ObjectModel::billboard_parts` (`{pivot, pivot-relative mesh}`) and decoded per
+  object instance with the object transform active for fixed G_VTX state. Godot renders
+  each part on a second node at the pivot whose `global_basis` tracks the camera's
+  world basis every frame (always facing the camera — see §4). Object-level `BILLBOARD`
+  (behavior 0x21) likewise decodes a per-instance local body under a camera-facing
+  parent; the extraction camera basis is used only for fixed shade/projection state.
 - **Object drawing layers**: object-model DLs carry their layer (`flags >> 8`) and are
   decoded in layer order (stable); the merged body/part meshes export per-triangle
   layers, so object surfaces get the same layer-driven materials as the area mesh
   (OPA/TEX_EDGE/XLU — see §5).
-- **Frame-0 animation baked** into the model cache (`Frame0Animator`, mirrors
+- **Frame-0 animation**: the inline path runs a separate `Frame0Animator` while
+  collecting each object instance, so different instances do not share a baked pose.
+  The model cache still bakes frame-0 as a fallback (`Frame0Animator`, mirrors
   `geo_process_animated_part`). See `Quirks.md`.
 - **Spawn transform**: objects are placed at their spawn pos + yaw (macro objects:
   preset yaw converted to SM64 angle units; special objects: the terrain-stream yaw is
   256-per-circle, converted). `oBhvParams`/`oBhvParams2ndByte` are packed game-exactly
   per source.
-- **Camera**: recorded (Phase 2) but the renderer uses its own camera.
+- **Camera**: the extracted camera/projection context is supplied to the fixed G_VTX
+  pass. Godot's live camera reprojects inline meshes every frame; exact RSP depth and
+  camera-matrix equivalence remain Milestone 1 validation work.
 - **Lights**: parsed (Phase 2) and used for per-vertex shading (`texel × shade` for
   textured-lit, `shade` for flat-lit), so the castle-grounds grass (authored grey,
   colored by the green lights) and the goomba/cannon/bobomb flat parts render shaded.

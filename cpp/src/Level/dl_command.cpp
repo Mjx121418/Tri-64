@@ -13,15 +13,18 @@ DecodedCommand CommandDecoder::decode(SegmentedAddress addr) const {
     return cmd;
 }
 
+Fast3D::FixedMatrix CommandDecoder::decodeFixedMtx(SegmentedAddress addr) const {
+    return *Fast3D::decodeMatrix(seg_table_.data(addr, Fast3D::kMatrixBytes));
+}
+
 Mtxf CommandDecoder::decodeMtx(SegmentedAddress addr) const {
-    std::span<const uint8_t> d = seg_table_.data(addr, 64);
+    const Fast3D::FixedMatrix fixed = decodeFixedMtx(addr);
     Mtxf m {};
-    for (int k = 0; k < 16; k++) {
-        // 布局：字节 0-31 = 各元素高 16 位，字节 32-63 = 低 16 位
-        uint16_t hi = readInt<uint16_t>(d, 2 * k);
-        uint16_t lo = readInt<uint16_t>(d, 32 + 2 * k);
-        int32_t fixed = static_cast<int32_t>((hi << 16) | lo);
-        m[k / 4][k % 4] = fixed / 65536.0f;
+    for (size_t row = 0; row < m.size(); row++) {
+        for (size_t column = 0; column < m[row].size(); column++) {
+            m[row][column] = static_cast<float>(fixed[row][column])
+                / static_cast<float>(Fast3D::kFixedOne);
+        }
     }
     return m;
 }

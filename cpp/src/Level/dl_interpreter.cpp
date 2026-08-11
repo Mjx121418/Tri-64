@@ -6,6 +6,19 @@
 namespace GBI {
 
 namespace {
+
+float fixedToFloat(Fast3D::Fixed value) {
+    return static_cast<float>(value) / static_cast<float>(Fast3D::kFixedOne);
+}
+
+int32_t scaleTextureCoordinate(int16_t value, uint16_t scale) {
+    // G_TEXTURE uses the RSP's signed product followed by a 16-bit shift.
+    return static_cast<int32_t>((static_cast<int64_t>(value) * scale) >> 16);
+}
+
+} // namespace
+
+namespace {
 constexpr uint64_t kMaxSteps = 10'000'000;
 constexpr size_t kMaxDLDepth = 32;
 
@@ -113,6 +126,13 @@ CombineSource combineAlphaSource(uint32_t mux0, uint32_t mux1) {
 }
 
 Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state, uint8_t layer) {
+    return run(dl, reset_state, layer, mtxfIdentity(), Fast3D::identityMatrix(), {});
+}
+
+Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state, uint8_t layer,
+                         const Mtxf &initial_matrix,
+                         const Fast3D::FixedMatrix &initial_fixed_matrix,
+                         const ProjectionContext &projection_context) {
     dl_stack_.clear();
     mesh_ = {};
     finished = false;
@@ -125,12 +145,29 @@ Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state, uint8_t layer) {
         state_ = {};
         state_.num_lights = 1;
         state_.geometry_mode = kDefaultGeometryMode;
+        state_.projection = mtxfIdentity();
+        state_.fixed_projection = Fast3D::identityMatrix();
+        state_.view_matrix = mtxfIdentity();
+        state_.fixed_view_matrix = Fast3D::identityMatrix();
+        state_.view_loaded = false;
+        state_.viewport = {};
+    }
+    if (projection_context.valid) {
+        state_.projection = projection_context.projection_matrix;
+        state_.fixed_projection = projection_context.fixed_projection_matrix;
+        state_.projection_loaded = true;
+        state_.view_matrix = projection_context.view_matrix;
+        state_.fixed_view_matrix = projection_context.fixed_view_matrix;
+        state_.view_loaded = true;
+        state_.viewport = projection_context.viewport;
     }
     // 模型视图矩阵栈初始为单位阵（不使用矩阵的 DL 输出原始顶点）。继续运行时
     // 保留上一个 DL 的渲染寄存器（combine/颜色/tile/几何模式/纹理绑定/灯光）——
     // 游戏只在分层渲染时改 render mode，其余状态跨顶层 DL 继承。
     state_.matrix_stack.clear();
-    state_.matrix_stack.push_back(mtxfIdentity());
+    state_.matrix_stack.push_back(initial_matrix);
+    state_.fixed_matrix_stack.clear();
+    state_.fixed_matrix_stack.push_back(initial_fixed_matrix);
     material_ = {};
 
     SegmentedAddress pc = dl;
@@ -363,25 +400,40 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
 }
 
 void DLInterpreter::handleMtx(const DecodedCommand &cmd) {
+    const Fast3D::FixedMatrix fixed = cmd_decoder_.decodeFixedMtx(cmd.mtxAddress());
     Mtxf m = cmd_decoder_.decodeMtx(cmd.mtxAddress());
     uint8_t params = cmd.mtxParams();
 
     if (params & MTX_PROJECTION) {
-        state_.projection = m; // 投影矩阵只记录，网格输出不应用（Godot 自行投影）
+        if (params & MTX_LOAD) {
+            state_.projection = m;
+            state_.fixed_projection = fixed;
+        } else {
+            state_.projection = mtxfMul(state_.projection, m);
+            state_.fixed_projection = Fast3D::matrixMultiply(
+                state_.fixed_projection, fixed);
+        }
+        state_.projection_loaded = true;
         return;
     }
+
+    state_.transformed_lights_valid = false;
 
     // 模型视图矩阵栈
     if (params & MTX_PUSH) {
         // 压栈：复制当前栈顶（栈保证至少有一个单位阵）
         state_.matrix_stack.push_back(state_.matrix_stack.back());
+        state_.fixed_matrix_stack.push_back(state_.fixed_matrix_stack.back());
     }
 
     Mtxf &top = state_.matrix_stack.back();
+    Fast3D::FixedMatrix &fixed_top = state_.fixed_matrix_stack.back();
     if (params & MTX_LOAD) {
         top = m; // 载入：替换栈顶
+        fixed_top = fixed; // 载入：替换栈顶
     } else {
         top = mtxfMul(top, m); // 乘：top = top × m（先应用 m）
+        fixed_top = Fast3D::matrixMultiply(fixed_top, fixed);
     }
 }
 
@@ -389,7 +441,9 @@ void DLInterpreter::handlePopMtx(const DecodedCommand &cmd) {
     // fast3d 的 imm_POPMTX 固定弹出 1 个矩阵（栈指针 -0x40），w1 被完全忽略
     // （SM64 的 gSPPopMatrix 传 G_MTX_MODELVIEW=0，见 rsp/fast3d.s imm_POPMTX）。
     if (state_.matrix_stack.size() > 1) {
+        state_.transformed_lights_valid = false;
         state_.matrix_stack.pop_back(); // 保留栈底单位阵
+        state_.fixed_matrix_stack.pop_back();
     }
 }
 
@@ -423,6 +477,7 @@ void DLInterpreter::snapshotMaterial() {
     material_.tex_line = state_.tex_line;
     material_.lut_type = state_.lut_type;
     material_.lit = (state_.geometry_mode & G_LIGHTING) != 0;
+    material_.cull_back = (state_.geometry_mode & G_CULL_BACK) != 0;
     // 灯光：快照当前 RSP 灯光槽（含环境光所在的槽 num_lights）。
     material_.lights.light = state_.lights;
     material_.lights.num_lights = state_.num_lights;
@@ -437,6 +492,21 @@ void DLInterpreter::handleMovemem(const DecodedCommand &cmd) {
     // gsSPLight(l, n) = gsDma1p(G_MOVEMEM, l, 16, (n-1)*2+G_MV_L0)：把 16 字节
     // Light_t 拷入灯光槽。G_MV_VIEWPORT/LOOKAT/MATRIX 等是运行时/未使用状态。
     const uint8_t index = cmd.memIndex();
+    if (index == G_MV_VIEWPORT) {
+        const std::span<const uint8_t> d = seg_table_.data(cmd.memAddress(), 16);
+        if (d.size() < 16) {
+            return;
+        }
+        for (size_t i = 0; i < 3; i++) {
+            const int16_t scale = readInt<int16_t>(d, i * sizeof(int16_t));
+            const int16_t translate = readInt<int16_t>(
+                d, (i + 4) * sizeof(int16_t));
+            state_.viewport.scale[i] = Fast3D::fixedFromInteger(scale) / 4;
+            state_.viewport.translate[i] = Fast3D::fixedFromInteger(translate) / 4;
+        }
+        state_.viewport.valid = true;
+        return;
+    }
     if (index >= G_MV_L0 && index <= G_MV_L7) {
         const size_t slot = static_cast<size_t>((index - G_MV_L0) / 2);
         if (slot >= state_.lights.size()) {
@@ -454,6 +524,7 @@ void DLInterpreter::handleMovemem(const DecodedCommand &cmd) {
         state_.lights[slot].dir[1] = static_cast<int8_t>(d[9]);
         state_.lights[slot].dir[2] = static_cast<int8_t>(d[10]);
         state_.lights_loaded = true;
+        state_.transformed_lights_valid = false;
     }
 }
 
@@ -463,11 +534,15 @@ void DLInterpreter::handleMoveword(const DecodedCommand &cmd) {
     case G_MW_NUMLIGHT:
         // bit31 = 重新初始化标志，低 12 位 = (numLights+1)*32（gbi.h gsSPSetNumLights）
         state_.num_lights = static_cast<uint8_t>(((cmd.mwValue() & 0xFFF) / 32) - 1);
+        state_.transformed_lights_valid = false;
         break;
     case G_MW_FOG:
         // fog 系数：mult<<16 | offset（gsSPFogFactor）
         state_.fog_mult = static_cast<uint16_t>(cmd.mwValue() >> 16);
         state_.fog_offset = static_cast<uint16_t>(cmd.mwValue() & 0xFFFF);
+        break;
+    case G_MW_PERSPNORM:
+        state_.persp_norm = static_cast<uint16_t>(cmd.mwValue());
         break;
     case G_MW_LIGHTCOL: {
         // 打补丁灯光颜色（gsSPLightColor）：dmem 偏移 (n-1)*24+4 选灯。
@@ -478,6 +553,7 @@ void DLInterpreter::handleMoveword(const DecodedCommand &cmd) {
             state_.lights[slot].col[0] = static_cast<uint8_t>(col >> 24);
             state_.lights[slot].col[1] = static_cast<uint8_t>(col >> 16);
             state_.lights[slot].col[2] = static_cast<uint8_t>(col >> 8);
+            state_.transformed_lights_valid = false;
         }
         break;
     }
@@ -548,18 +624,126 @@ void DLInterpreter::loadVertices(const DecodedCommand &cmd) {
         if (o + 16 > data.size()) {
             break;
         }
-        Vtx &v = state_.vertices[dest + i];
-        v.position[0] = readInt<int16_t>(data, o + 0);
-        v.position[1] = readInt<int16_t>(data, o + 2);
-        v.position[2] = readInt<int16_t>(data, o + 4);
-        v.flag = readInt<uint16_t>(data, o + 6);
-        v.texture_coordinate[0] = readInt<int16_t>(data, o + 8);
-        v.texture_coordinate[1] = readInt<int16_t>(data, o + 10);
-        v.coordinate_or_normal[0] = data[o + 12];
-        v.coordinate_or_normal[1] = data[o + 13];
-        v.coordinate_or_normal[2] = data[o + 14];
-        v.coordinate_or_normal[3] = data[o + 15];
+        ProcessedVertex &v = state_.vertices[dest + i];
+        v = {};
+        v.source.position[0] = readInt<int16_t>(data, o + 0);
+        v.source.position[1] = readInt<int16_t>(data, o + 2);
+        v.source.position[2] = readInt<int16_t>(data, o + 4);
+        v.source.flag = readInt<uint16_t>(data, o + 6);
+        v.source.texture_coordinate[0] = readInt<int16_t>(data, o + 8);
+        v.source.texture_coordinate[1] = readInt<int16_t>(data, o + 10);
+        v.source.coordinate_or_normal[0] = data[o + 12];
+        v.source.coordinate_or_normal[1] = data[o + 13];
+        v.source.coordinate_or_normal[2] = data[o + 14];
+        v.source.coordinate_or_normal[3] = data[o + 15];
+        processVertex(v);
     }
+}
+
+void DLInterpreter::processVertex(ProcessedVertex &dst) {
+    const auto &matrix = state_.fixed_matrix_stack.back();
+    const Fast3D::FixedVector3 position {
+        Fast3D::fixedFromInteger(dst.source.position[0]),
+        Fast3D::fixedFromInteger(dst.source.position[1]),
+        Fast3D::fixedFromInteger(dst.source.position[2]),
+    };
+    dst.position = Fast3D::transformPoint(matrix, position);
+    if (state_.projection_loaded) {
+        const Fast3D::FixedVector4 world_position = Fast3D::vectorMatrixMultiply(
+            Fast3D::makeVector4(position[0], position[1], position[2]), matrix);
+        const Fast3D::FixedVector4 view_position = state_.view_loaded
+            ? Fast3D::vectorMatrixMultiply(world_position, state_.fixed_view_matrix)
+            : world_position;
+        dst.clip_position = Fast3D::vectorMatrixMultiply(view_position,
+                                                          state_.fixed_projection);
+        const Fast3D::Fixed x = dst.clip_position[0];
+        const Fast3D::Fixed y = dst.clip_position[1];
+        const Fast3D::Fixed z = dst.clip_position[2];
+        const Fast3D::Fixed w = dst.clip_position[3];
+        dst.clip_code = 0;
+        if (x < -w) dst.clip_code |= 1 << 0;
+        if (x > w) dst.clip_code |= 1 << 1;
+        if (y < -w) dst.clip_code |= 1 << 2;
+        if (y > w) dst.clip_code |= 1 << 3;
+        if (z < -w) dst.clip_code |= 1 << 4;
+        if (z > w) dst.clip_code |= 1 << 5;
+        dst.inverse_w = Fast3D::fixedDivide(Fast3D::kFixedOne, w);
+        if (w != 0) {
+            dst.ndc_position = Fast3D::makeVector3(
+                Fast3D::fixedDivide(x, w), Fast3D::fixedDivide(y, w),
+                Fast3D::fixedDivide(z, w));
+            if (state_.viewport.valid) {
+                for (size_t i = 0; i < 3; i++) {
+                    dst.viewport_position[i] = state_.viewport.translate[i]
+                        + Fast3D::fixedMultiply(dst.ndc_position[i],
+                                                state_.viewport.scale[i]);
+                }
+            }
+        }
+        dst.projected = true;
+    }
+
+    const Fast3D::FixedVector3 normal {
+        static_cast<Fast3D::Fixed>(static_cast<int32_t>(
+            static_cast<int8_t>(dst.source.coordinate_or_normal[0])) * 512),
+        static_cast<Fast3D::Fixed>(static_cast<int32_t>(
+            static_cast<int8_t>(dst.source.coordinate_or_normal[1])) * 512),
+        static_cast<Fast3D::Fixed>(static_cast<int32_t>(
+            static_cast<int8_t>(dst.source.coordinate_or_normal[2])) * 512),
+    };
+    dst.normal = Fast3D::transformDirection(matrix, normal);
+    dst.texture_coordinate = {
+        scaleTextureCoordinate(dst.source.texture_coordinate[0], state_.tex_scale_s),
+        scaleTextureCoordinate(dst.source.texture_coordinate[1], state_.tex_scale_t),
+    };
+    dst.lighting = (state_.geometry_mode & G_LIGHTING) != 0;
+    if (dst.lighting) {
+        if (!state_.transformed_lights_valid) {
+            updateTransformedLights();
+        }
+        const Fast3D::FixedVector3 local_normal {
+            static_cast<Fast3D::Fixed>(static_cast<int32_t>(
+                static_cast<int8_t>(dst.source.coordinate_or_normal[0])) * 512),
+            static_cast<Fast3D::Fixed>(static_cast<int32_t>(
+                static_cast<int8_t>(dst.source.coordinate_or_normal[1])) * 512),
+            static_cast<Fast3D::Fixed>(static_cast<int32_t>(
+                static_cast<int8_t>(dst.source.coordinate_or_normal[2])) * 512),
+        };
+        std::array<Fast3D::Light, 8> lights {};
+        for (size_t i = 0; i < lights.size(); i++) {
+            lights[i].color = {
+                state_.lights[i].col[0], state_.lights[i].col[1], state_.lights[i].col[2],
+            };
+            lights[i].direction = {
+                state_.lights[i].dir[0], state_.lights[i].dir[1], state_.lights[i].dir[2],
+            };
+        }
+        dst.shade = Fast3D::shadeVertex(local_normal, state_.transformed_lights,
+                                        lights, state_.num_lights, state_.lights_loaded,
+                                        dst.source.coordinate_or_normal[3]);
+    } else {
+        dst.shade = {
+            dst.source.coordinate_or_normal[0], dst.source.coordinate_or_normal[1],
+            dst.source.coordinate_or_normal[2], dst.source.coordinate_or_normal[3],
+        };
+    }
+    dst.valid = true;
+}
+
+void DLInterpreter::updateTransformedLights() {
+    const auto &matrix = state_.fixed_matrix_stack.back();
+    for (size_t i = 0; i < state_.transformed_lights.size(); i++) {
+        Fast3D::Light light;
+        light.color = {
+            state_.lights[i].col[0], state_.lights[i].col[1], state_.lights[i].col[2],
+        };
+        light.direction = {
+            state_.lights[i].dir[0], state_.lights[i].dir[1], state_.lights[i].dir[2],
+        };
+        state_.transformed_lights[i] = Fast3D::normalizeVector(
+            Fast3D::transformDirection(matrix, Fast3D::lightDirectionQ16(light)));
+    }
+    state_.transformed_lights_valid = true;
 }
 
 void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
@@ -607,34 +791,34 @@ void DLInterpreter::drawTriangle(const DecodedCommand &cmd) {
     mesh_.triangle_layers.push_back(current_layer_);
 }
 
-void DLInterpreter::appendVertex(const Vtx &v) {
+void DLInterpreter::appendVertex(const ProcessedVertex &v) {
     MeshVertex mv;
-    // 应用当前模型视图矩阵（平移在 m[3][0..2]，与 decomp 的 mtxf_mul_vec3s 一致）
-    const Mtxf &m = state_.matrix_stack.back();
-    const float x = v.position[0];
-    const float y = v.position[1];
-    const float z = v.position[2];
-    mv.position[0] = m[0][0] * x + m[1][0] * y + m[2][0] * z + m[3][0];
-    mv.position[1] = m[0][1] * x + m[1][1] * y + m[2][1] * z + m[3][1];
-    mv.position[2] = m[0][2] * x + m[1][2] * y + m[2][2] * z + m[3][2];
-    // coordinate_or_normal 为有符号法线（-128..127）。用模型视图矩阵的 3x3
-    // 线性部分变换法线（同 applyTransform；Godot 实例旋转再叠加），得到世界/
-    // 模型空间法线供渲染端光照。
-    {
-        const Vec3<float> ln {static_cast<int8_t>(v.coordinate_or_normal[0]) / 127.0f,
-                              static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f,
-                              static_cast<int8_t>(v.coordinate_or_normal[2]) / 127.0f};
-        const Vec3<float> wn = transformNormal(m, ln);
-        mv.normal[0] = wn.x;
-        mv.normal[1] = wn.y;
-        mv.normal[2] = wn.z;
+    mv.position[0] = fixedToFloat(v.position[0]);
+    mv.position[1] = fixedToFloat(v.position[1]);
+    mv.position[2] = fixedToFloat(v.position[2]);
+    if (v.projected) {
+        for (size_t i = 0; i < 4; i++) {
+            mv.clip_position[i] = fixedToFloat(v.clip_position[i]);
+        }
+        for (size_t i = 0; i < 3; i++) {
+            mv.ndc_position[i] = fixedToFloat(v.ndc_position[i]);
+            mv.viewport_position[i] = fixedToFloat(v.viewport_position[i]);
+        }
+        mv.inverse_w = fixedToFloat(v.inverse_w);
+        mv.clip_code = v.clip_code;
+        mv.projected = true;
     }
-    // 纹理坐标：原始 16 位 → 纹素（16-bit 纹理每纹素 32 个原始单位，8-bit 为 16；
-    // 见 movtex_make_quad_vertex：scale=1（平铺 1 次）四边形 = 992 原始单位 =
-    // 31 纹素），再乘 G_TEXTURE 的 S/T 缩放（RSP 在 dma_VTX 里执行
-    // raw×scale>>16，见 fast3d.s 的 vmudm）→ 按纹理尺寸归一化（1 次平铺 = 1.0）
-    mv.uv[0] = v.texture_coordinate[0] / 32.0f * (state_.tex_scale_s / 65536.0f);
-    mv.uv[1] = v.texture_coordinate[1] / 32.0f * (state_.tex_scale_t / 65536.0f);
+    const float nx = fixedToFloat(v.normal[0]);
+    const float ny = fixedToFloat(v.normal[1]);
+    const float nz = fixedToFloat(v.normal[2]);
+    const float normal_length = std::sqrt(nx * nx + ny * ny + nz * nz);
+    mv.normal[0] = normal_length > 0.000001f ? nx / normal_length : 0.0f;
+    mv.normal[1] = normal_length > 0.000001f ? ny / normal_length : 0.0f;
+    mv.normal[2] = normal_length > 0.000001f ? nz / normal_length : 0.0f;
+    // Keep the existing normalized texture convention, but use the scaled
+    // coordinate cached at G_VTX rather than the later RSP state.
+    mv.uv[0] = v.texture_coordinate[0] / 32.0f;
+    mv.uv[1] = v.texture_coordinate[1] / 32.0f;
     if (material_.textured && material_.tex_width() > 0 && material_.tex_height() > 0) {
         mv.uv[0] /= material_.tex_width();
         mv.uv[1] /= material_.tex_height();
@@ -642,64 +826,11 @@ void DLInterpreter::appendVertex(const Vtx &v) {
     // 注意：不翻转 v 轴。Godot 的 ArrayMesh ARRAY_TEX_UV 用 v=0 为顶部（与
     // 图像第 0 行一致），N64 的 t=0 也是顶部，直接映射即可；翻转会导致所有
     // 纹理上下颠倒（树木最明显，见 docs/engine-notes.md）。
-    if (material_.lit) {
-        // 受光几何：顶点第 4 字是法线，用它计算逐顶点 shade（镜像 fast3d 的
-        // 光照 overlay）：shade = Σ max(0, n̂·l̂)·color（方向光，槽 0..num-1）+
-        // 环境光（最后一个光槽，贡献全量 col）。槽 num_lights 是 gsSPLight(a)
-        // 读入的环境光（Ambient_t 只有 8 字节，dir 字段是下个灯的 colc，非 0，
-        // 不能按 dir==0 识别，只能按槽位）。
-        float r = 255.0f, g = 255.0f, b = 255.0f; // 无灯光时回退为白（不调光）
-        if (state_.lights_loaded) {
-            float nx = static_cast<int8_t>(v.coordinate_or_normal[0]) / 127.0f;
-            float ny = static_cast<int8_t>(v.coordinate_or_normal[1]) / 127.0f;
-            float nz = static_cast<int8_t>(v.coordinate_or_normal[2]) / 127.0f;
-            const float nl = std::sqrt(nx * nx + ny * ny + nz * nz);
-            if (nl > 0.001f) {
-                nx /= nl;
-                ny /= nl;
-                nz /= nl;
-            }
-            r = 0.0f;
-            g = 0.0f;
-            b = 0.0f;
-            const int n = std::min<int>(state_.num_lights, 7);
-            for (int i = 0; i < n; i++) { // 方向光
-                const Light &L = state_.lights[i];
-                if (L.col[0] == 0 && L.col[1] == 0 && L.col[2] == 0) {
-                    continue;
-                }
-                float lx = L.dir[0] / 127.0f;
-                float ly = L.dir[1] / 127.0f;
-                float lz = L.dir[2] / 127.0f;
-                const float ll = std::sqrt(lx * lx + ly * ly + lz * lz);
-                if (ll > 0.001f) {
-                    lx /= ll;
-                    ly /= ll;
-                    lz /= ll;
-                }
-                const float dot = nx * lx + ny * ly + nz * lz;
-                if (dot > 0.0f) {
-                    r += dot * L.col[0];
-                    g += dot * L.col[1];
-                    b += dot * L.col[2];
-                }
-            }
-            // 环境光：槽 num_lights（贡献全量 col）
-            const Light &A = state_.lights[state_.num_lights];
-            r += A.col[0];
-            g += A.col[1];
-            b += A.col[2];
-        }
-        mv.color[0] = static_cast<uint8_t>(std::min(r, 255.0f));
-        mv.color[1] = static_cast<uint8_t>(std::min(g, 255.0f));
-        mv.color[2] = static_cast<uint8_t>(std::min(b, 255.0f));
-        mv.color[3] = 255;
-    } else {
-        mv.color[0] = v.coordinate_or_normal[0];
-        mv.color[1] = v.coordinate_or_normal[1];
-        mv.color[2] = v.coordinate_or_normal[2];
-        mv.color[3] = v.coordinate_or_normal[3];
-    }
+    std::copy(v.source.coordinate_or_normal,
+              v.source.coordinate_or_normal + 4, mv.source_color);
+    std::copy(v.shade.begin(), v.shade.end(), mv.shade);
+    mv.shade_valid = v.valid;
+    std::copy(v.shade.begin(), v.shade.end(), mv.color);
     mesh_.vertices.push_back(mv);
 }
 

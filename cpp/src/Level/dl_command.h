@@ -3,6 +3,7 @@
 
 #include "Memory/segment.h"
 #include "Math/math.h"
+#include "Math/fast3d_fixed.h"
 #include <cstdint>
 
 // GBI (Graphics Binary Interface) 命令层。
@@ -108,6 +109,7 @@ enum MoveWordOffset : uint16_t {
     G_MW_SEGMENT    = 0x06,
     G_MW_FOG        = 0x08,
     G_MW_LIGHTCOL   = 0x0A,
+    G_MW_PERSPNORM  = 0x0E,
 };
 
 // G_MOVEMEM 的 dmem 表索引（fast3d/F3D：gsDma1p 的 params 字段，w0 bits 16-23；
@@ -261,6 +263,7 @@ public:
     DecodedCommand decode(SegmentedAddress addr) const;
 
     // 读取并解码一条 G_MTX 的 64 字节定点矩阵。
+    Fast3D::FixedMatrix decodeFixedMtx(SegmentedAddress addr) const;
     Mtxf decodeMtx(SegmentedAddress addr) const;
 };
 

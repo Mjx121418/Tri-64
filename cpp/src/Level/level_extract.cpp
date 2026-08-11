@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <map>
 #include <optional>
@@ -27,6 +28,101 @@ constexpr std::array<uint8_t, 4> kLevelTablePattern { 0x3C, 0x04, 0x01, 0x03 };
 // (segmented address 0x0210F68).  It's an array of 27 segmented pointers (u32 each).
 // Segment 2 is always loaded at seg 0x02 by runLevelScript().
 constexpr uint32_t kCourseNameTableOffset = 0x10F68;
+
+Fast3D::Fixed viewportFixed(int16_t value) {
+    // N64 Vp values use two fractional bits; convert directly to Q16.16.
+    return static_cast<Fast3D::Fixed>(static_cast<int32_t>(value) << 14);
+}
+
+GBI::ProjectionContext rootProjectionContext(const GraphNodeRoot &root) {
+    GBI::ProjectionContext context;
+    context.root_x = static_cast<float>(root.x);
+    context.root_y = static_cast<float>(root.y);
+    context.root_width = static_cast<float>(root.width);
+    context.root_height = static_cast<float>(root.height);
+    context.viewport.scale[0] = viewportFixed(static_cast<int16_t>(root.width * 4));
+    context.viewport.scale[1] = viewportFixed(static_cast<int16_t>(root.height * 4));
+    context.viewport.scale[2] = viewportFixed(511);
+    context.viewport.translate[0] = viewportFixed(static_cast<int16_t>(root.x * 4));
+    context.viewport.translate[1] = viewportFixed(static_cast<int16_t>(root.y * 4));
+    context.viewport.translate[2] = viewportFixed(511);
+    context.viewport.valid = root.width > 0 && root.height > 0;
+    return context;
+}
+
+void setPerspectiveContext(GBI::ProjectionContext &context,
+                           const GraphNodePerspective &perspective) {
+    if (!context.viewport.valid || context.root_height == 0.0f) {
+        context.valid = false;
+        return;
+    }
+    const float aspect = context.root_width / context.root_height;
+    context.projection_matrix = mtxfPerspective(
+        perspective.fov, aspect, static_cast<float>(perspective.near),
+        static_cast<float>(perspective.far));
+    context.fixed_projection_matrix = Fast3D::fromFloatMatrix(context.projection_matrix);
+    context.valid = true;
+}
+
+void setOrthoContext(GBI::ProjectionContext &context,
+                     const GraphNodeOrthoProjection &ortho) {
+    if (!context.viewport.valid) {
+        context.valid = false;
+        return;
+    }
+    const float left = (context.root_x - context.root_width) * 0.5f * ortho.scale;
+    const float right = (context.root_x + context.root_width) * 0.5f * ortho.scale;
+    const float top = (context.root_y - context.root_height) * 0.5f * ortho.scale;
+    const float bottom = (context.root_y + context.root_height) * 0.5f * ortho.scale;
+    context.projection_matrix = mtxfOrtho(left, right, bottom, top, -2.0f, 2.0f);
+    context.fixed_projection_matrix = Fast3D::fromFloatMatrix(context.projection_matrix);
+    context.valid = true;
+}
+
+void setCameraContext(GBI::ProjectionContext &context, const GraphNodeCamera &camera) {
+    if (!context.valid) {
+        return;
+    }
+    context.view_matrix = camera.look_at;
+    context.fixed_view_matrix = Fast3D::fromFloatMatrix(context.view_matrix);
+    if (camera.roll_screen != 0) {
+        const Mtxf roll = mtxfRotationZXY({0, 0, camera.roll_screen});
+        context.projection_matrix = mtxfMul(context.projection_matrix, roll);
+        context.fixed_projection_matrix = Fast3D::matrixMultiply(
+            context.fixed_projection_matrix, Fast3D::fromFloatMatrix(roll));
+    }
+}
+
+Mtxf objectRenderTransform(const ObjectExtract::Object &object) {
+    const Vec3<float> position = object.pos();
+    const Vec3<int16_t> angle = object.faceAngle();
+    const Mtxf rotate_translate = mtxfMul(
+        mtxfRotationZXY(angle),
+        mtxfTranslation(position.x, position.y + object.f32(ObjectExtract::F::GraphYOffset),
+                        position.z));
+    // Object behavior SCALE is uniform in SM64 (oGfx.scale is a Vec3f whose
+    // components are written together). Keep the matrix form explicit so the
+    // same transform is passed to both float and fixed RSP paths.
+    return mtxfMul(mtxfScale(object.scale.x), rotate_translate);
+}
+
+Mtxf objectBillboardTransform(const ObjectExtract::Object &object,
+                              const GBI::ProjectionContext &projection) {
+    const Vec3<float> position = object.pos();
+    Mtxf basis = mtxfIdentity();
+    if (projection.valid) {
+        const Mtxf inverse_view = mtxfInverse(projection.view_matrix);
+        for (size_t i = 0; i < 3; i++) {
+            for (size_t j = 0; j < 3; j++) {
+                basis[i][j] = inverse_view[i][j];
+            }
+        }
+    }
+    basis[3][0] = position.x;
+    basis[3][1] = position.y + object.f32(ObjectExtract::F::GraphYOffset);
+    basis[3][2] = position.z;
+    return mtxfMul(mtxfScale(object.scale.x), basis);
+}
 
 } // namespace
 
@@ -79,7 +175,67 @@ void LevelExtractor::loadCourseNameSegment() {
 LevelExtractor::DisplayListCollection
 LevelExtractor::collectDisplayLists(const GraphNode &root) {
     DisplayListCollection collected;
-    const auto visit = [&collected](const auto &self, const GraphNode &node) -> void {
+    const auto visit = [&collected](const auto &self, const GraphNode &node,
+                                    const Mtxf &parent,
+                                    const Fast3D::FixedMatrix &fixed_parent,
+                                    const GBI::ProjectionContext &parent_projection) -> void {
+        Mtxf current = parent;
+        Fast3D::FixedMatrix fixed_current = fixed_parent;
+        GBI::ProjectionContext projection = parent_projection;
+        std::optional<SegmentedAddress> node_dl;
+
+        std::visit([&](const auto &data) {
+            using T = std::decay_t<decltype(data)>;
+            Mtxf local = mtxfIdentity();
+            bool has_local = false;
+            if constexpr (std::is_same_v<T, GraphNodeRoot>) {
+                projection = rootProjectionContext(data);
+            } else if constexpr (std::is_same_v<T, GraphNodePerspective>) {
+                setPerspectiveContext(projection, data);
+            } else if constexpr (std::is_same_v<T, GraphNodeOrthoProjection>) {
+                setOrthoContext(projection, data);
+            } else if constexpr (std::is_same_v<T, GraphNodeCamera>) {
+                setCameraContext(projection, data);
+            } else if constexpr (std::is_same_v<T, GraphNodeDisplayList>) {
+                node_dl = data.display_list;
+            } else if constexpr (std::is_same_v<T, GraphNodeScale>) {
+                local = mtxfScale(data.scale);
+                has_local = true;
+                node_dl = data.display_list;
+            } else if constexpr (std::is_same_v<T, GraphNodeTranslation>) {
+                local = mtxfTranslation(data.translation.x, data.translation.y,
+                                         data.translation.z);
+                has_local = true;
+                node_dl = data.display_list;
+            } else if constexpr (std::is_same_v<T, GraphNodeRotation>) {
+                local = mtxfRotationZXY(data.rotation);
+                has_local = true;
+                node_dl = data.display_list;
+            } else if constexpr (std::is_same_v<T, GraphNodeTranslationRotation>) {
+                local = mtxfMul(
+                    mtxfRotationZXY(data.rotation),
+                    mtxfTranslation(data.translation.x, data.translation.y,
+                                     data.translation.z));
+                has_local = true;
+                node_dl = data.display_list;
+            } else if constexpr (std::is_same_v<T, GraphNodeAnimatedPart>) {
+                local = mtxfTranslation(data.translation.x, data.translation.y,
+                                         data.translation.z);
+                has_local = true;
+                node_dl = data.display_list;
+            } else if constexpr (std::is_same_v<T, GraphNodeBillboard>) {
+                local = mtxfTranslation(data.translation.x, data.translation.y,
+                                         data.translation.z);
+                has_local = true;
+                node_dl = data.display_list;
+            }
+            if (has_local) {
+                current = mtxfMul(local, current);
+                fixed_current = Fast3D::matrixMultiply(
+                    Fast3D::fromFloatMatrix(local), fixed_current);
+            }
+        }, node.data);
+
         // 区域背景节点（GEO_BACKGROUND 0x19，area geo 根下的 ortho 子树）：
         // 与 DL 收集同一次遍历捕获，不再单独扫描。
         if (collected.background == nullptr
@@ -87,10 +243,13 @@ LevelExtractor::collectDisplayLists(const GraphNode &root) {
             collected.background = &std::get<GraphNodeBackGround>(node.data);
         }
 
-        if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
+        if (node_dl) {
             DisplayListRef ref;
-            ref.dl = std::get<GraphNodeDisplayList>(node.data).display_list;
+            ref.dl = *node_dl;
             ref.layer = static_cast<uint8_t>(node.flags >> 8);
+            ref.transform = current;
+            ref.fixed_transform = fixed_current;
+            ref.projection = projection;
             collected.lists.push_back(ref);
         }
 
@@ -98,7 +257,7 @@ LevelExtractor::collectDisplayLists(const GraphNode &root) {
         // 分支（房间）的 DL（不跨 case 去重——重复 DL 原样收集）。
         if (std::holds_alternative<GraphNodeSwitchCase>(node.data)) {
             for (const auto &child : node.children) {
-                self(self, *child);
+                self(self, *child, current, fixed_current, projection);
             }
             return;
         }
@@ -108,17 +267,17 @@ LevelExtractor::collectDisplayLists(const GraphNode &root) {
             const auto &lod = std::get<GraphNodeLevelOfDetail>(node.data);
             if (lod.min_distance <= 0 && 0 < lod.max_distance) {
                 for (const auto &child : node.children) {
-                    self(self, *child);
+                    self(self, *child, current, fixed_current, projection);
                 }
             }
             return;
         }
 
         for (const auto &child : node.children) {
-            self(self, *child);
+            self(self, *child, current, fixed_current, projection);
         }
     };
-    visit(visit, root);
+    visit(visit, root, mtxfIdentity(), Fast3D::identityMatrix(), {});
     return collected;
 }
 
@@ -512,37 +671,6 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
         result_.movtex = movtex_decoder.data();
     }
 
-    GBI::Mesh &merged = result_.mesh;
-    GBI::DLInterpreter interp(seg_table_, log_);
-    for (size_t i = 0; i < dls.size(); i++) {
-        // 首个 DL 复位 RDP/RSP 状态，其余继承上一个 DL 留下的渲染寄存器；
-        // layer 记到每个三角形的 triangle_layers（渲染端分层材质用）。
-        GBI::Mesh &mesh = interp.run(dls[i].dl, /*reset_state=*/i == 0, dls[i].layer);
-        ObjectExtract::ObjectModelDecoder::mergeMesh(merged, std::move(mesh));
-    }
-
-    // 每材质解码一个 RGBA8 纹理（与 merged.materials 并行；解码失败留空）
-    result_.textures.resize(merged.materials.size());
-    GBI::TextureDecoder tex_decoder(seg_table_);
-    for (size_t m = 0; m < merged.materials.size(); m++) {
-        if (merged.materials[m].textured && merged.material_images[m] != 0) {
-            if (tex_decoder.run(merged.materials[m], segAddress(merged.material_images[m]),
-                                merged.material_tlut[m])) {
-                result_.textures[m] = tex_decoder.takeTexture();
-            } else {
-                log_.add("texture",
-                         "material " + std::to_string(m) + " (image 0x" + [&]() {
-                             char buf[16];
-                             std::snprintf(buf, sizeof(buf), "%08X",
-                                           merged.material_images[m]);
-                             return std::string(buf);
-                         }() +
-                             ") could not be decoded to RGBA8; it renders as a flat color: " +
-                             tex_decoder.error());
-            }
-        }
-    }
-
     // 对象 = OBJECT 命令 + MACRO_OBJECTS 展开 + 碰撞特殊对象展开，全部统一成
     // Object（镜像 decomp：spawn_object / spawn_macro_object / spawn_special_objects
     // 都产生 struct Object）。宏/特殊对象 preset 表从主段（段 0）解析。
@@ -627,6 +755,203 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
                 behavior_vm.run(child, child.behavior, &result_.collision);
             }
             objects.push_back(std::move(child));
+        }
+    }
+
+    // Build one ordered draw stream for the area and ordinary object display lists. The
+    // game appends both kinds of DL to the layer master lists, so object vertices must
+    // be processed with the instance matrix already active at G_VTX time. Billboard
+    // parts keep their local pivot-relative mesh, while their camera-facing basis is
+    // still supplied by Godot every frame.
+    struct InlineCall {
+        int object_index {-1};
+        SegmentedAddress dl {};
+        uint8_t layer {0};
+        Mtxf transform {mtxfIdentity()};
+        Fast3D::FixedMatrix fixed_transform {Fast3D::identityMatrix()};
+        GBI::ProjectionContext projection {};
+        bool object_billboard {false};
+        bool billboard {false};
+        Vec3<float> billboard_pivot {0, 0, 0};
+        Mtxf object_inverse {mtxfIdentity()};
+    };
+
+    GBI::ProjectionContext area_projection {};
+    for (const auto &dl : dls) {
+        if (dl.projection.valid) {
+            area_projection = dl.projection;
+            break;
+        }
+    }
+
+    std::vector<InlineCall> inline_calls;
+    inline_calls.reserve(dls.size());
+    for (const auto &dl : dls) {
+        inline_calls.push_back(InlineCall {
+            -1, dl.dl, dl.layer, dl.transform, dl.fixed_transform, dl.projection,
+            false, false, {}, {mtxfIdentity()}});
+    }
+
+    result_.inline_object_models.clear();
+    result_.inline_object_models.resize(objects.size());
+    for (size_t object_index = 0; object_index < objects.size(); object_index++) {
+        const auto &obj = objects[object_index];
+        // GRAPH_RENDER_BILLBOARD uses the current extraction camera basis for the fixed
+        // vertex pass, then the Godot parent follows the live camera at render time.
+        // Invisible/deactivated objects do not submit display lists in the game either.
+        if (obj.model_id <= 0 || obj.invisible || obj.deactivated || !obj.active) {
+            continue;
+        }
+        if (obj.model_id >= static_cast<int16_t>(level_.loaded_graph_node.size())) {
+            continue;
+        }
+        const GraphNode *node = level_.loaded_graph_node[obj.model_id].get();
+        if (node == nullptr) {
+            continue;
+        }
+
+        std::optional<ObjectExtract::Frame0Animator> frame0;
+        if (obj.raw[ObjectExtract::F::Animations] != 0) {
+            const int16_t anim_index = (obj.animate_index >= 0) ? obj.animate_index : 0;
+            frame0.emplace(seg_table_, obj.addr(ObjectExtract::F::Animations), anim_index);
+        }
+        const Mtxf object_transform = obj.billboard
+            ? objectBillboardTransform(obj, area_projection)
+            : objectRenderTransform(obj);
+        const Fast3D::FixedMatrix fixed_object_transform =
+            Fast3D::fromFloatMatrix(object_transform);
+        const Mtxf object_inverse = mtxfInverse(object_transform);
+        for (const auto &dlt : ObjectExtract::collectDisplayLists(*node, frame0 ? &*frame0 : nullptr)) {
+            if (dlt.dl.seg < 0 || dlt.dl.seg > 31 ||
+                (dlt.dl.seg == 0 && dlt.dl.offset == 0)) {
+                continue;
+            }
+            // collectDisplayLists uses row-vector matrices: model-local geometry is
+            // transformed by dlt.transform first, then by the object matrix.
+            inline_calls.push_back(InlineCall {
+                static_cast<int>(object_index), dlt.dl, dlt.layer,
+                mtxfMul(dlt.transform, object_transform),
+                Fast3D::matrixMultiply(dlt.fixed_transform, fixed_object_transform),
+                area_projection, obj.billboard, dlt.is_billboard, dlt.billboard_pivot,
+                object_inverse});
+        }
+    }
+
+    std::stable_sort(inline_calls.begin(), inline_calls.end(),
+                     [](const InlineCall &a, const InlineCall &b) {
+                         return a.layer < b.layer;
+                     });
+
+    GBI::Mesh &merged = result_.mesh;
+    GBI::DLInterpreter inline_interpreter(seg_table_, log_);
+    bool reset_state = true;
+    for (const auto &call : inline_calls) {
+        GBI::Mesh &decoded = inline_interpreter.run(
+            call.dl, reset_state, call.layer, call.transform, call.fixed_transform,
+            call.projection);
+        reset_state = false;
+        if (call.object_index < 0) {
+            ObjectExtract::ObjectModelDecoder::mergeMesh(merged, std::move(decoded));
+        } else {
+            if (call.object_billboard || call.billboard) {
+                for (auto &vertex : decoded.vertices) {
+                    const Vec3<float> world_position {
+                        vertex.position[0], vertex.position[1], vertex.position[2]};
+                    const Vec3<float> local_position =
+                        transformPoint(call.object_inverse, world_position);
+                    vertex.position[0] = local_position.x;
+                    vertex.position[1] = local_position.y;
+                    vertex.position[2] = local_position.z;
+                    const Vec3<float> local_normal = transformNormal(
+                        call.object_inverse, {vertex.normal[0], vertex.normal[1], vertex.normal[2]});
+                    vertex.normal[0] = local_normal.x;
+                    vertex.normal[1] = local_normal.y;
+                    vertex.normal[2] = local_normal.z;
+                    if (call.billboard) {
+                        vertex.position[0] -= call.billboard_pivot.x;
+                        vertex.position[1] -= call.billboard_pivot.y;
+                        vertex.position[2] -= call.billboard_pivot.z;
+                    }
+                }
+            }
+            if (!call.billboard) {
+                ObjectExtract::ObjectModelDecoder::mergeMesh(
+                    result_.inline_object_models[static_cast<size_t>(call.object_index)].mesh,
+                    std::move(decoded));
+                continue;
+            }
+            auto &parts = result_.inline_object_models[static_cast<size_t>(call.object_index)]
+                              .billboard_parts;
+            auto part = std::find_if(parts.begin(), parts.end(), [&](const auto &candidate) {
+                return candidate.pivot.x == call.billboard_pivot.x &&
+                       candidate.pivot.y == call.billboard_pivot.y &&
+                       candidate.pivot.z == call.billboard_pivot.z;
+            });
+            if (part == parts.end()) {
+                parts.push_back(ObjectExtract::BillboardPart {call.billboard_pivot, {}, {}});
+                part = parts.end() - 1;
+            }
+            ObjectExtract::ObjectModelDecoder::mergeMesh(part->mesh, std::move(decoded));
+        }
+    }
+
+    struct TextureCacheEntry {
+        GBI::Material material;
+        uint32_t image {0};
+        uint32_t tlut {0};
+        GBI::Texture texture;
+        bool ok {false};
+    };
+    std::vector<TextureCacheEntry> texture_cache;
+    auto decodeTextures = [&](const GBI::Mesh &mesh, std::vector<GBI::Texture> &textures) {
+        textures.resize(mesh.materials.size());
+        GBI::TextureDecoder texture_decoder(seg_table_);
+        for (size_t m = 0; m < mesh.materials.size(); m++) {
+            if (!mesh.materials[m].textured || mesh.material_images[m] == 0) {
+                continue;
+            }
+            const auto cached = std::find_if(
+                texture_cache.begin(), texture_cache.end(), [&](const TextureCacheEntry &entry) {
+                    return entry.image == mesh.material_images[m] &&
+                           entry.tlut == mesh.material_tlut[m] &&
+                           entry.material == mesh.materials[m];
+                });
+            if (cached != texture_cache.end()) {
+                if (cached->ok) {
+                    textures[m] = cached->texture;
+                }
+                continue;
+            }
+            texture_cache.push_back(TextureCacheEntry {
+                mesh.materials[m], mesh.material_images[m], mesh.material_tlut[m], {}, false});
+            TextureCacheEntry &entry = texture_cache.back();
+            if (texture_decoder.run(mesh.materials[m], segAddress(mesh.material_images[m]),
+                                    mesh.material_tlut[m])) {
+                entry.texture = texture_decoder.takeTexture();
+                entry.ok = true;
+                textures[m] = entry.texture;
+            } else {
+                log_.add("texture",
+                         "material " + std::to_string(m) + " (image 0x" + [&]() {
+                             char buf[16];
+                             std::snprintf(buf, sizeof(buf), "%08X",
+                                           mesh.material_images[m]);
+                             return std::string(buf);
+                         }() +
+                             ") could not be decoded to RGBA8; it renders as a flat color: " +
+                             texture_decoder.error());
+            }
+        }
+    };
+    decodeTextures(merged, result_.textures);
+    for (auto &model : result_.inline_object_models) {
+        if (!model.mesh.indices.empty()) {
+            decodeTextures(model.mesh, model.textures);
+        }
+        for (auto &part : model.billboard_parts) {
+            if (!part.mesh.indices.empty()) {
+                decodeTextures(part.mesh, part.textures);
+            }
         }
     }
 

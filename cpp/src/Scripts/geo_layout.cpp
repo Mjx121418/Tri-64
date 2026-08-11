@@ -256,6 +256,9 @@ void GeoLayoutProcessor::cmdNodeCamera() {
                   static_cast<float>(readInt<int16_t>(command_data, 12)),
                   static_cast<float>(readInt<int16_t>(command_data, 14)) };
     cam.func = readInt<uint32_t>(command_data, 16);
+    cam.roll = 0;
+    cam.roll_screen = 0;
+    cam.look_at = mtxfLookAt(cam.pos, cam.focus, cam.roll);
 
     node->flags = GRAPH_RENDER_ACTIVE;
     node->data = cam;

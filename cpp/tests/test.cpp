@@ -6,6 +6,7 @@
 #include "Log.h"
 #include "Memory/segment.h"
 #include "Scripts/geo_layout.h"
+#include "test_fast3d_fixed.h"
 #include "test_parallel.h"
 #include "tree_printer.h"
 
@@ -36,6 +37,7 @@ int main() {
         testRomManagerAreaBank,
         testFixedAddressMemory,
         testMopLoader,
+        testFast3DFixed,
         testLevelName,
         testObjectModels,
         testLevelScriptData,

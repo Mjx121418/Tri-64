@@ -191,6 +191,24 @@ void testDoorFrame0(LevelScriptSetup &setup) {
     } else {
         printf("  [FAIL] castle door not centered (frame-0 not applied)\n");
     }
+
+    bool has_front_normal = false;
+    bool has_back_normal = false;
+    bool cull_back = true;
+    bool lit = false;
+    for (const auto &v : it->second.mesh.vertices) {
+        has_front_normal = has_front_normal || v.normal[2] > 0.5f;
+        has_back_normal = has_back_normal || v.normal[2] < -0.5f;
+    }
+    for (const auto &m : it->second.mesh.materials) {
+        lit = lit || m.lit;
+        cull_back = cull_back && m.cull_back;
+    }
+    printf("  castle door normals: +Z=%d -Z=%d lit=%d cull_back=%d\n",
+           int(has_front_normal), int(has_back_normal), int(lit), int(cull_back));
+    if (!has_front_normal || !has_back_normal || !lit || !cull_back) {
+        printf("  [FAIL] castle door lighting/culling state incomplete\n");
+    }
 }
 
 // 验证树模型的纹理映射：材质记录 G_SETTILE 的 S/T CLAMP（导出 repeat 关闭），

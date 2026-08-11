@@ -28,7 +28,8 @@ public:
     // 提取结果（复用 GBI 的 Mesh/Material/Texture 结构）：
     //   getMeshes()    每个材质一个网格：{ vertices: PackedVector3Array,
     //                  normals, uvs: PackedVector2Array,
-    //                  indices: PackedInt32Array, material: int }
+    //                  indices: PackedInt32Array, material: int,
+    //                  rsp_ndc/rsp_viewport/rsp_depth/rsp_clip_codes }
     //   getMaterials() 与 getMeshes 的 material 一一对应：
     //                  { textured: bool, color: Color, tex_width, tex_height:
     //                  int, tex_pixels: PackedByteArray(RGBA8) }
@@ -41,6 +42,10 @@ public:
     Array getMaterials();
     Array getObjects();
     Array getObjectModels();
+    // 每个对象实例重新执行 geo/DL 后的世界空间网格：
+    // { object: int, meshes: [...], materials: [...] }。对象的 billboard 子树
+    // 仍从 getObjectModels() 取，以便每帧跟随 Godot 相机朝向。
+    Array getInlineObjectModels();
     // 碰撞三角形（当前区域的静态碰撞）：{ vertices: PackedVector3Array,
     // normals, indices: PackedInt32Array }。平坦着色，每三角形 3 个顶点。
     Dictionary getCollisionTriangles();
