@@ -63,6 +63,10 @@ Prerequisites:
 - SCons (`pip install scons`)
 - Godot 4.x
 - Linux native builds: LLVM/Clang with libc++
+- macOS cross-builds on Linux: OSXCross with a macOS SDK and a host LLVM/Clang
+  installation whose libc++ headers match that SDK. Set `OSXCROSS_ROOT` and,
+  when automatic detection selects an incompatible compiler, set
+  `OSXCROSS_HOST_LLVM` to the host LLVM `bin` directory.
 - Windows cross-builds: llvm-mingw (`x86_64-w64-mingw32-clang++` and companion
   tools on `PATH`; MinGW GCC is supported as a fallback)
 - `godot-cpp` checked out into `cpp/godot-cpp/` (a branch/tag matching your Godot
@@ -70,25 +74,42 @@ Prerequisites:
 - ROM dumps for testing: `baserom.us.z64` (vanilla) and/or a hack such as
   *Super Mario Treasure World*, placed in `cpp/`
 
-Build the native extension and run the tests:
+Build the host-native extension and run the tests:
 
 ```
 cd cpp
-scons            # macOS: ../project/bin/libtri64.dylib
-                 # Linux: ../project/bin/libtri64.so
+scons            # builds the host target
 scons test       # builds the native test binary
 ./tests/bin/test # runs the parallel suite (expect 0 FAIL)
 ```
 
-SCons selects the matching native `godot-cpp` library and builds it when it is
-missing. It uses available CPU cores for compilation by default; pass `-jN` or
-`jobs=N` to choose a different build concurrency.
-
-Cross-compile the Windows x86_64 extension with llvm-mingw:
+The explicit target aliases are:
 
 ```
-scons windows    # builds ../project/bin/tri64.windows.x86_64.dll
+scons linux     # ../project/bin/libtri64.so
+scons macos     # ../project/bin/libtri64.dylib, universal on Linux
+scons windows   # ../project/bin/tri64.windows.x86_64.dll
 ```
+
+On Linux, configure OSXCross before the macOS target if it is not already
+discoverable:
+
+```
+export OSXCROSS_ROOT=/opt/osxcross
+export OSXCROSS_HOST_LLVM=/usr/lib/llvm-22/bin
+scons macos
+```
+
+The macOS target accepts `macos_arch=universal`, `macos_arch=x86_64`, or
+`macos_arch=arm64`; `universal` is the default. `macos_sdk_path=...` can override
+the SDK selected under `OSXCROSS_ROOT`.
+
+SCons selects the matching `godot-cpp` library and builds it when it is missing.
+`cpp/godot-cpp-profile.json` trims that library to the engine classes used by
+this extension, while retaining all required Godot variant types. Compilation
+uses available CPU cores by default; pass `-jN` or `jobs=N` to choose a different
+build concurrency. `scons test` builds only the host-native test executable;
+cross-built macOS and Windows binaries are not run by the Linux test runner.
 
 The test executable uses one bounded worker pool. Top-level tests and independent
 ROM/level cases run concurrently, including object-model, collision, behavior,

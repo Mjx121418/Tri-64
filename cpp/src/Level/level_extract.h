@@ -10,6 +10,7 @@
 #include "Scripts/Collision.h"
 #include "Scripts/movtex.h"
 #include "Scripts/skybox.h"
+#include <array>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -71,6 +72,16 @@ struct Result {
 // area_index) 重置并执行完整提取，结果经 result() 取得。ROM 数据在
 // run 调用期间必须保持有效（SegmentTable 的 rom_span 指向 ROM::data）。
 class LevelExtractor {
+    struct DisplayListRef {
+        SegmentedAddress dl;
+        uint8_t layer {0};
+    };
+
+    struct DisplayListCollection {
+        std::vector<DisplayListRef> lists;
+        const GraphNodeBackGround *background {nullptr};
+    };
+
     ROM &rom_;
     SegmentTable seg_table_;
     Level level_;
@@ -78,6 +89,20 @@ class LevelExtractor {
     bool ok_ {false};
     std::string error_;
     WarningLog log_; // 本次提取的警告/被守卫的异常（run 时清空，结束后拷入 result_）
+
+    static size_t findPattern(const std::vector<uint8_t> &rom,
+                              const std::array<uint8_t, 4> &pattern, size_t from = 0);
+    static uint32_t readBE32(const uint8_t *p);
+    static std::string decodeSM64String(const uint8_t *data, size_t max_len);
+    static int32_t levelNumToCourseNum(int32_t level_num);
+    static DisplayListCollection collectDisplayLists(const GraphNode &root);
+
+    size_t findScriptsStart() const;
+    void loadSegment2();
+    void loadCourseNameSegment();
+    std::string readCourseName(int32_t level_num) const;
+    std::vector<int> validAreaIndices() const;
+    bool loadMainSegment();
 
     // 定位脚本段、可选加载补充段、运行目标关卡的关卡脚本，构建段表与场景图。
     void runLevelScript(int level_num, bool load_supplemental);
@@ -90,6 +115,13 @@ class LevelExtractor {
 
 public:
     explicit LevelExtractor(ROM &rom) : rom_(rom) {}
+
+    static Result extract(ROM &rom, int level_num, int area_index);
+    static std::vector<int> listAreas(ROM &rom, int level_num);
+    static std::string extractLevelName(ROM &rom, int level_num);
+    static std::map<int, std::string> loadAllLevelNames(ROM &rom);
+    static bool loadMainSegment(SegmentTable &seg_table,
+                                const std::vector<uint8_t> &rom);
 
     // 只运行关卡脚本并返回有效区域，不解码区域几何、纹理或对象模型。
     void runScript(int level_num);

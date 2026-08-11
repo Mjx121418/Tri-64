@@ -23,8 +23,15 @@ constexpr std::array<uint8_t, 4> kScriptsStartMio0Pattern { 0x18, 0x0C, 0x00, 0x
 constexpr std::array<uint8_t, 4> kScriptsStartRawPattern { 0x17, 0x0C, 0x00, 0x04 };
 constexpr std::array<uint8_t, 4> kLevelTablePattern { 0x3C, 0x04, 0x01, 0x03 };
 
-size_t findPattern(const std::vector<uint8_t> &rom, const std::array<uint8_t, 4> &pattern,
-                   size_t from = 0) {
+// seg2_course_name_table is at offset 0x10F68 within decompressed segment 2
+// (segmented address 0x0210F68).  It's an array of 27 segmented pointers (u32 each).
+// Segment 2 is always loaded at seg 0x02 by runLevelScript().
+constexpr uint32_t kCourseNameTableOffset = 0x10F68;
+
+} // namespace
+
+size_t LevelExtractor::findPattern(const std::vector<uint8_t> &rom,
+                                   const std::array<uint8_t, 4> &pattern, size_t from) {
     auto it = std::search(rom.begin() + static_cast<ptrdiff_t>(from), rom.end(),
                           pattern.begin(), pattern.end());
     if (it == rom.end()) {
@@ -33,96 +40,91 @@ size_t findPattern(const std::vector<uint8_t> &rom, const std::array<uint8_t, 4>
     return static_cast<size_t>(it - rom.begin());
 }
 
-size_t findScriptsStart(const std::vector<uint8_t> &rom) {
+size_t LevelExtractor::findScriptsStart() const {
     for (const auto &pattern : { kScriptsStartMio0Pattern, kScriptsStartRawPattern }) {
-        const size_t pos = findPattern(rom, pattern);
-        if (pos == rom.size()) {
+        const size_t pos = findPattern(rom_.data, pattern);
+        if (pos == rom_.data.size()) {
             continue;
         }
-        const size_t search_end = std::min(pos + 0x8000, rom.size());
-        if (findPattern(rom, kLevelTablePattern, pos) < search_end) {
+        const size_t search_end = std::min(pos + 0x8000, rom_.data.size());
+        if (findPattern(rom_.data, kLevelTablePattern, pos) < search_end) {
             return pos;
         }
     }
-    return rom.size();
+    return rom_.data.size();
 }
 
-uint32_t readBE32(const uint8_t *p) {
+uint32_t LevelExtractor::readBE32(const uint8_t *p) {
     return (uint32_t(p[0]) << 24) | (uint32_t(p[1]) << 16) | (uint32_t(p[2]) << 8) | p[3];
 }
 
-// Load segment 2 (contains seg2_course_name_table) into the segment table
-// at seg 0x02.  Detects SM64 Editor hacks by the MIO0 header at 0x800000.
-void loadSegment2(SegmentTable &seg_table, const std::vector<uint8_t> &rom_data) {
-    const bool is_editor_hack = rom_data.size() > 0x800004 &&
-        rom_data[0x800000] == 'M' && rom_data[0x800001] == 'I' &&
-        rom_data[0x800002] == 'O' && rom_data[0x800003] == '0';
+// Load segment 2 (contains seg2_course_name_table) into seg_table_ at seg 0x02.
+// Detects SM64 Editor hacks by the MIO0 header at 0x800000.
+void LevelExtractor::loadSegment2() {
+    seg_table_.rom_span = std::span(rom_.data);
+    const bool is_editor_hack = rom_.data.size() > 0x800004 &&
+        rom_.data[0x800000] == 'M' && rom_.data[0x800001] == 'I' &&
+        rom_.data[0x800002] == 'O' && rom_.data[0x800003] == '0';
     if (is_editor_hack) {
-        seg_table.loadSegment(0x02, 0x803156, 0x81BB64);
-    } else {
-        if (!seg_table.loadMIO0Segment(0x02, 0x108A40, 0x114750)) {
-            printf("loadSegment2: failed to load vanilla segment 2 from 0x108A40-0x114750\n");
-        }
+        seg_table_.loadSegment(0x02, 0x803156, 0x81BB64);
+    } else if (!seg_table_.loadMIO0Segment(0x02, 0x108A40, 0x114750)) {
+        printf("loadSegment2: failed to load vanilla segment 2 from 0x108A40-0x114750\n");
     }
 }
 
-void loadCourseNameSegment(SegmentTable &seg_table, ROM &rom) {
-    seg_table.rom_span = std::span(rom.data);
-    loadSegment2(seg_table, rom.data);
+void LevelExtractor::loadCourseNameSegment() {
+    loadSegment2();
 }
 
-// 一个待解码的显示列表 + 其渲染层（geo 节点把 drawing_layer 存进 flags 高 8 位）。
-// 游戏按 layer 升序渲染（rendering_graph_node.c 的 geo_process_master_list），
-// RDP 渲染状态跨 DL 继承，因此解码顺序必须按 layer 排序。
-struct DisplayListRef {
-    SegmentedAddress dl;
-    uint8_t layer {0};
-};
-
-void collectDisplayLists(const GraphNode &node, std::vector<DisplayListRef> &out,
-                         const GraphNodeBackGround **background_out = nullptr) {
-    // 区域背景节点（GEO_BACKGROUND 0x19，area geo 根下的 ortho 子树）：
-    // 与 DL 收集同一次遍历捕获，不再单独扫描。
-    if (background_out && *background_out == nullptr
-        && std::holds_alternative<GraphNodeBackGround>(node.data)) {
-        *background_out = &std::get<GraphNodeBackGround>(node.data);
-    }
-
-    if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
-        DisplayListRef ref;
-        ref.dl = std::get<GraphNodeDisplayList>(node.data).display_list;
-        ref.layer = static_cast<uint8_t>(node.flags >> 8);
-        out.push_back(ref);
-    }
-
-    // 开关节点：游戏用 geo_switch_area 按当前房间选一个分支；静态导出收集所有
-    // 分支（房间）的 DL（不跨 case 去重——重复 DL 原样收集）。
-    if (std::holds_alternative<GraphNodeSwitchCase>(node.data)) {
-        for (const auto &child : node.children) {
-            collectDisplayLists(*child, out, background_out);
+LevelExtractor::DisplayListCollection
+LevelExtractor::collectDisplayLists(const GraphNode &root) {
+    DisplayListCollection collected;
+    const auto visit = [&collected](const auto &self, const GraphNode &node) -> void {
+        // 区域背景节点（GEO_BACKGROUND 0x19，area geo 根下的 ortho 子树）：
+        // 与 DL 收集同一次遍历捕获，不再单独扫描。
+        if (collected.background == nullptr
+            && std::holds_alternative<GraphNodeBackGround>(node.data)) {
+            collected.background = &std::get<GraphNodeBackGround>(node.data);
         }
-        return;
-    }
 
-    // LOD 节点：取包含相机距离 0 的档位（近景）
-    if (std::holds_alternative<GraphNodeLevelOfDetail>(node.data)) {
-        const auto &lod = std::get<GraphNodeLevelOfDetail>(node.data);
-        if (lod.min_distance <= 0 && 0 < lod.max_distance) {
+        if (std::holds_alternative<GraphNodeDisplayList>(node.data)) {
+            DisplayListRef ref;
+            ref.dl = std::get<GraphNodeDisplayList>(node.data).display_list;
+            ref.layer = static_cast<uint8_t>(node.flags >> 8);
+            collected.lists.push_back(ref);
+        }
+
+        // 开关节点：游戏用 geo_switch_area 按当前房间选一个分支；静态导出收集所有
+        // 分支（房间）的 DL（不跨 case 去重——重复 DL 原样收集）。
+        if (std::holds_alternative<GraphNodeSwitchCase>(node.data)) {
             for (const auto &child : node.children) {
-                collectDisplayLists(*child, out, background_out);
+                self(self, *child);
             }
+            return;
         }
-        return;
-    }
 
-    for (const auto &child : node.children) {
-        collectDisplayLists(*child, out, background_out);
-    }
+        // LOD 节点：取包含相机距离 0 的档位（近景）
+        if (std::holds_alternative<GraphNodeLevelOfDetail>(node.data)) {
+            const auto &lod = std::get<GraphNodeLevelOfDetail>(node.data);
+            if (lod.min_distance <= 0 && 0 < lod.max_distance) {
+                for (const auto &child : node.children) {
+                    self(self, *child);
+                }
+            }
+            return;
+        }
+
+        for (const auto &child : node.children) {
+            self(self, *child);
+        }
+    };
+    visit(visit, root);
+    return collected;
 }
 
 // SM64 US character encoding → ASCII for course name strings.
 // The course names use: space, 0-9, A-Z, ', -, comma, period, null.
-std::string decodeSM64String(const uint8_t *data, size_t max_len) {
+std::string LevelExtractor::decodeSM64String(const uint8_t *data, size_t max_len) {
     std::string result;
     for (size_t i = 0; i < max_len; i++) {
         uint8_t c = data[i];
@@ -152,7 +154,7 @@ std::string decodeSM64String(const uint8_t *data, size_t max_len) {
 
 // Static LevelNum → CourseNum mapping, derived from decomp's level_table.h.
 // Courses not listed here have COURSE_NONE (0) and no entry in the name table.
-int32_t levelNumToCourseNum(int32_t level_num) {
+int32_t LevelExtractor::levelNumToCourseNum(int32_t level_num) {
     switch (level_num) {
         case 4:  return 5;   // BBH
         case 5:  return 4;   // CCM
@@ -182,12 +184,7 @@ int32_t levelNumToCourseNum(int32_t level_num) {
     }
 }
 
-// seg2_course_name_table is at offset 0x10F68 within decompressed segment 2
-// (segmented address 0x0210F68).  It's an array of 27 segmented pointers (u32 each).
-// Segment 2 is always loaded at seg 0x02 by runLevelScript().
-constexpr uint32_t kCourseNameTableOffset = 0x10F68;
-
-std::string readCourseName(SegmentTable &seg_table, int32_t level_num) {
+std::string LevelExtractor::readCourseName(int32_t level_num) const {
     const int32_t course_num = levelNumToCourseNum(level_num);
     if (course_num <= 0 || course_num > 25) {
         return {};
@@ -198,7 +195,7 @@ std::string readCourseName(SegmentTable &seg_table, int32_t level_num) {
     // Bounds check: the segment must be large enough for the table + the
     // requested entry's 4-byte pointer.
     const size_t table_offset = (course_num - 1) * 4;
-    auto seg_data = seg_table.data(SegmentedAddress { seg2, 0 });
+    auto seg_data = seg_table_.data(SegmentedAddress { seg2, 0 });
     if (seg_data.size() <= kCourseNameTableOffset + table_offset + 4) {
         return {};
     }
@@ -237,24 +234,23 @@ std::string readCourseName(SegmentTable &seg_table, int32_t level_num) {
     return raw.substr(start);
 }
 
-std::vector<int> validAreaIndices(const Level &level) {
+std::vector<int> LevelExtractor::validAreaIndices() const {
     std::vector<int> areas;
-    for (int i = 0; i < static_cast<int>(level.areas.size()); i++) {
-        if (level.areas[i].root_node) {
+    for (int i = 0; i < static_cast<int>(level_.areas.size()); i++) {
+        if (level_.areas[i].root_node) {
             areas.push_back(i);
         }
     }
     return areas;
 }
 
-} // namespace
-
 // 游戏主段（代码+数据，含宏/特殊对象 preset 表）由启动入口（asm/entry.s）
 // DMA 到 RDRAM 0x80200000，ROM 起 0x1000；段 0 基址 0x80000000，故游戏里
 // 的 seg-0 地址 = 主段内偏移 + 0x200000。关卡脚本不加载它，这里按主段内
 // 偏移线性载入 seg 0。主段 ROM 范围由入口的 BSS 清零指令推出（清除从
 // _mainSegmentNoloadStart 起 _mainSegmentNoloadSize 字节）。
-bool loadMainSegment(SegmentTable &seg_table, const std::vector<uint8_t> &rom) {
+bool LevelExtractor::loadMainSegment(SegmentTable &seg_table,
+                                     const std::vector<uint8_t> &rom) {
     // 入口序言：lui t0, 0x8034 ; lui t1, 0x0002（BSS 清零循环初始化）
     constexpr std::array<uint8_t, 4> kEntrySignature { 0x3C, 0x08, 0x80, 0x34 };    const size_t pos = findPattern(rom, kEntrySignature);
     if (pos == rom.size() || pos + 12 > rom.size()) {
@@ -285,6 +281,10 @@ bool loadMainSegment(SegmentTable &seg_table, const std::vector<uint8_t> &rom) {
     return true;
 }
 
+bool LevelExtractor::loadMainSegment() {
+    return LevelExtractor::loadMainSegment(seg_table_, rom_.data);
+}
+
 void LevelExtractor::runLevelScript(int level_num, bool load_supplemental) {
     seg_table_ = SegmentTable {};
     level_ = Level {};
@@ -296,7 +296,7 @@ void LevelExtractor::runLevelScript(int level_num, bool load_supplemental) {
         return;
     }
 
-    const size_t scripts_start = findScriptsStart(rom_.data);
+    const size_t scripts_start = findScriptsStart();
     if (scripts_start == rom_.data.size()) {
         error_ = "could not locate the level scripts segment";
         return;
@@ -308,8 +308,8 @@ void LevelExtractor::runLevelScript(int level_num, bool load_supplemental) {
     if (load_supplemental) {
         // 主入口自身会加载公共段 4/3/0x17/0x16/0x13；段 2 与主段是我们的
         // 补充（课程名 / preset 表）。
-        loadSegment2(seg_table_, rom_.data);
-        loadMainSegment(seg_table_, rom_.data);
+        loadSegment2();
+        loadMainSegment();
     }
 
     // 从 level_main_scripts_entry（脚本段首）开始运行整个主入口：它会加载公共
@@ -408,7 +408,7 @@ void LevelExtractor::runScriptInternal(int level_num, bool load_supplemental) {
         return;
     }
 
-    result_.areas = validAreaIndices(level_);
+    result_.areas = validAreaIndices();
     result_.ok = true;
     result_.warnings = log_.entries();
 }
@@ -469,9 +469,9 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     // 背景节点与 DL 同一次遍历捕获：func 非空 = 天空盒（background 是 id 0-9，
     // 贴图在段 0x0A，关卡脚本 LOAD_MIO0 已载入）；func 为空 = background 是
     // RGBA5551 填充色（geo_process_background 画纯色）。
-    std::vector<DisplayListRef> dls;
-    const GraphNodeBackGround *bg_node = nullptr;
-    collectDisplayLists(*area.root_node, dls, &bg_node);
+    DisplayListCollection display_lists = collectDisplayLists(*area.root_node);
+    std::vector<DisplayListRef> dls = std::move(display_lists.lists);
+    const GraphNodeBackGround *bg_node = display_lists.background;
     std::stable_sort(dls.begin(), dls.end(),
                      [](const DisplayListRef &a, const DisplayListRef &b) {
                          return a.layer < b.layer;
@@ -694,7 +694,7 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
                                 static_cast<float>(level_.mario_start_pos.y),
                                 static_cast<float>(level_.mario_start_pos.z) };
     result_.mario_start_angle_y = level_.mario_start_angle_y;
-    result_.level_name = readCourseName(seg_table_, level_num);
+    result_.level_name = readCourseName(level_num);
 
     // 关卡脚本记录的区域/关卡级数据（镜像 Level/Area）
     const Area &sel = level_.areas[area_index];
@@ -719,50 +719,70 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     result_.ok = true;
 }
 
-Result extract(ROM &rom, int level_num, int area_index) {
+Result LevelExtractor::extract(ROM &rom, int level_num, int area_index) {
     LevelExtractor extractor(rom);
     extractor.run(level_num, area_index);
     return extractor.takeResult();
 }
 
-std::vector<int> listAreas(ROM &rom, int level_num) {
+std::vector<int> LevelExtractor::listAreas(ROM &rom, int level_num) {
     LevelExtractor extractor(rom);
     extractor.runScript(level_num);
     return extractor.result().areas;
 }
 
-std::string extractLevelName(ROM &rom, int level_num) {
+std::string LevelExtractor::extractLevelName(ROM &rom, int level_num) {
     if (!rom.is_loaded) {
         return {};
     }
 
-    SegmentTable seg_table;
-    loadCourseNameSegment(seg_table, rom);
+    LevelExtractor extractor(rom);
+    extractor.loadCourseNameSegment();
     try {
-        return readCourseName(seg_table, level_num);
+        return extractor.readCourseName(level_num);
     } catch (const std::out_of_range &) {
         return {};
     }
 }
 
-std::map<int, std::string> loadAllLevelNames(ROM &rom) {
+std::map<int, std::string> LevelExtractor::loadAllLevelNames(ROM &rom) {
     std::map<int, std::string> names;
     if (!rom.is_loaded) return names;
 
-    SegmentTable seg_table;
-    loadCourseNameSegment(seg_table, rom);
+    LevelExtractor extractor(rom);
+    extractor.loadCourseNameSegment();
 
     constexpr int kLevels[] = {
         4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
         20, 21, 22, 23, 24, 26, 27, 28, 29, 30, 31, 33, 34, 36
     };
     for (int lv : kLevels) {
-        std::string name = readCourseName(seg_table, lv);
+        std::string name = extractor.readCourseName(lv);
         if (!name.empty()) {
             names[lv] = name;
         }
     }
     return names;
+}
+
+Result extract(ROM &rom, int level_num, int area_index) {
+    return LevelExtractor::extract(rom, level_num, area_index);
+}
+
+std::vector<int> listAreas(ROM &rom, int level_num) {
+    return LevelExtractor::listAreas(rom, level_num);
+}
+
+std::string extractLevelName(ROM &rom, int level_num) {
+    return LevelExtractor::extractLevelName(rom, level_num);
+}
+
+std::map<int, std::string> loadAllLevelNames(ROM &rom) {
+    return LevelExtractor::loadAllLevelNames(rom);
+}
+
+bool loadMainSegment(SegmentTable &seg_table, const std::vector<uint8_t> &rom) {
+    return LevelExtractor::loadMainSegment(seg_table, rom);
 }
 
 } // namespace LevelExtract

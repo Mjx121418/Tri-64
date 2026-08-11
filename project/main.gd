@@ -595,11 +595,11 @@ func _add_edge_ribbon(qv: PackedVector3Array, qn: PackedVector3Array,
 	qi.append(base); qi.append(base + 1); qi.append(base + 2)
 	qi.append(base); qi.append(base + 2); qi.append(base + 3)
 
-## 碰撞三角形材质：受光照（Per-Pixel）蓝色，双面显示。vertex_color_use_as_albedo
+## 碰撞三角形材质：不受场景光照影响，双面显示。vertex_color_use_as_albedo
 ## 开启，颜色由每三角形的 SurfaceClass（floor 蓝 / wall 绿 / ceiling 红）决定。
 func _build_collision_material() -> StandardMaterial3D:
 	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	mat.albedo_color = Color.WHITE
 	mat.vertex_color_use_as_albedo = true
 	mat.cull_mode = BaseMaterial3D.CULL_DISABLED

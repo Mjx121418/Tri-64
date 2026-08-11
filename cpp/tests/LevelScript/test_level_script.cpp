@@ -163,6 +163,55 @@ void testRomManagerAreaBank() {
     }
 }
 
+void testLevelExtractorReuse() {
+    const auto roms = findRoms();
+    if (roms.empty()) {
+        printf("test_level_extractor_reuse: no ROM found, skipped\n");
+        return;
+    }
+
+    ROM rom;
+    rom.load(roms.front());
+    if (!rom.is_loaded) {
+        printf("test_level_extractor_reuse: ROM load failed\n");
+        return;
+    }
+
+    LevelExtract::LevelExtractor extractor(rom);
+    extractor.runScript(LEVEL_BOB);
+    if (!extractor.result().ok || extractor.result().areas.empty()
+        || !extractor.result().mesh.indices.empty()) {
+        printf("test_level_extractor_reuse: FAIL script-only run left invalid state\n");
+        return;
+    }
+
+    extractor.run(LEVEL_BOB, 1);
+    if (!extractor.result().ok || extractor.result().mesh.indices.empty()) {
+        printf("test_level_extractor_reuse: FAIL first full run: %s\n",
+               extractor.result().error.c_str());
+        return;
+    }
+    const size_t triangles = extractor.result().mesh.indices.size();
+
+    extractor.run(LEVEL_BOB, -1);
+    if (extractor.result().ok || extractor.result().error.empty()
+        || !extractor.result().mesh.indices.empty()
+        || !extractor.result().objects.empty()) {
+        printf("test_level_extractor_reuse: FAIL invalid run retained prior result\n");
+        return;
+    }
+
+    extractor.run(LEVEL_BOB, 1);
+    if (!extractor.result().ok || extractor.result().mesh.indices.size() != triangles) {
+        printf("test_level_extractor_reuse: FAIL second full run: %s\n",
+               extractor.result().error.c_str());
+        return;
+    }
+
+    printf("test_level_extractor_reuse: script/full/invalid/full state reset OK (%zu triangles)\n",
+           triangles / 3);
+}
+
 void testFixedAddressMemory() {
     std::array<uint8_t, 8> rom_data {0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
     SegmentTable seg_table;

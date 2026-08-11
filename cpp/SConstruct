@@ -3,60 +3,19 @@ import platform
 import shutil
 import subprocess
 import sys
+import glob as fileglob
 
-env = Environment(tools = ['default', 'compilation_db'])
 
 # SCons otherwise defaults to one compile job. Keep explicit -j values intact,
-# but use the available cores for the normal build and test invocations.
+# but use the available cores for normal build and test invocations.
 if GetOption('num_jobs') == 1:
     default_jobs = max(1, (os.cpu_count() or 2) - 1)
     SetOption('num_jobs', int(ARGUMENTS.get('jobs', default_jobs)))
 
-# For reference:
-# - CCFLAGS are compilation flags shared between C and C++
-# - CFLAGS are for C-specific compilation flags
-# - CXXFLAGS are for C++-specific compilation flags
-# - CPPFLAGS are for pre-processor flags
-# - CPPDEFINES are for pre-processor defines
-# - LINKFLAGS are for linking flags
-
 godot_cpp_path = "godot-cpp"
-
-host_os = sys.platform
-
-if host_os == 'darwin':
-    host_platform = 'macos'
-    host_arch = 'universal'
-elif host_os == 'linux':
-    host_platform = 'linux'
-    host_arch = {'aarch64': 'arm64'}.get(platform.machine(), platform.machine())
-
-    # Use the installed LLVM/libc++ toolchain for the native Linux build.
-    native_cc = shutil.which('clang') or env['CC']
-    native_cxx = shutil.which('clang++') or env['CXX']
-    env.Replace(CC=native_cc, CXX=native_cxx, LINK=native_cxx, SHLINK=native_cxx)
-    env.Append(CXXFLAGS=['-stdlib=libc++'])
-    env.Append(LINKFLAGS=['-stdlib=libc++'])
-    env.Append(SHLINKFLAGS=['-stdlib=libc++'])
-elif host_os == 'win32':
-    host_platform = 'windows'
-    host_arch = {'AMD64': 'x86_64', 'aarch64': 'arm64'}.get(
-        platform.machine(), platform.machine())
-else:
-    raise SystemExit('unsupported host platform: ' + host_os)
-
-env.Append(CXXFLAGS=['-std=c++26'])
-
-# tweak this if you want to use different folders, or more folders, to store your source code in.
-env.Append(CPPPATH=["src/", "tests/"])
-env.Append(CPPPATH=["src/chart"])
-env.Append(CPPPATH=[godot_cpp_path + "/include", godot_cpp_path + "/gen/include"])
-env.Append(LIBPATH=[godot_cpp_path + "/bin"])
-
+godot_cpp_profile = os.path.abspath("godot-cpp-profile.json")
 debug_mode = ARGUMENTS.get('debug', 0)
-
-if int(debug_mode):
-    env.Append(CCFLAGS = ['-g', '-O0'])
+host_os = sys.platform
 
 sources = [
     Glob("src/*.cpp"),
@@ -68,8 +27,25 @@ sources = [
 ]
 
 
-def build_godot_cpp(platform_name, arch, use_llvm=False, tool_dir=None):
-    """Build godot-cpp with the toolchain selected for the requested target."""
+def make_environment(**variables):
+    target_env = Environment(tools=['default', 'compilation_db'], **variables)
+    target_env.Append(CXXFLAGS=['-std=c++26'])
+    target_env.Append(CPPPATH=[
+        "src/",
+        "tests/",
+        "src/chart",
+        godot_cpp_path + "/include",
+        godot_cpp_path + "/gen/include",
+    ])
+    target_env.Append(LIBPATH=[godot_cpp_path + "/bin"])
+    if int(debug_mode):
+        target_env.Append(CCFLAGS=['-g', '-O0'])
+    return target_env
+
+
+def build_godot_cpp(platform_name, arch, use_llvm=False, tool_dir=None,
+                     extra_args=None, environment=None):
+    """Build the godot-cpp archive for a specific output target."""
     def builder(target, source, env):
         command = [
             'scons',
@@ -79,68 +55,259 @@ def build_godot_cpp(platform_name, arch, use_llvm=False, tool_dir=None):
             'arch=' + arch,
             'target=template_debug',
         ]
+        jobs = GetOption('num_jobs')
+        if jobs > 1:
+            command.append('-j{}'.format(jobs))
+        command.append('build_profile=' + godot_cpp_profile)
         if use_llvm:
             command.append('use_llvm=yes')
+        command.extend(extra_args or [])
 
         child_env = os.environ.copy()
+        child_env.update(environment or {})
         if tool_dir:
             child_env['PATH'] = tool_dir + os.pathsep + child_env.get('PATH', '')
         return subprocess.call(command, env=child_env)
     return builder
 
 
-godot_cpp_lib_name = 'libgodot-cpp.{}.template_debug.{}'.format(
-    host_platform, host_arch)
-godot_cpp_lib_path = '{}/bin/{}.a'.format(godot_cpp_path, godot_cpp_lib_name)
-env.Append(LIBS=[godot_cpp_lib_name])
+def detect_osxcross():
+    root = ARGUMENTS.get('osxcross_root') or os.environ.get('OSXCROSS_ROOT')
+    o64_clang = shutil.which('o64-clang')
+    if not root and o64_clang:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.abspath(o64_clang))))
+    if not root:
+        return None
+
+    root = os.path.abspath(root)
+    bin_path = os.path.join(root, 'target', 'bin')
+    sdk = ARGUMENTS.get('osxcross_sdk') or os.environ.get('OSXCROSS_SDK')
+    if not sdk and os.path.isdir(bin_path):
+        marker = 'x86_64-apple-'
+        for name in sorted(os.listdir(bin_path)):
+            if name.startswith(marker) and name.endswith('-clang'):
+                sdk = name[len(marker):-len('-clang')]
+                break
+
+    sdk_path = ARGUMENTS.get('macos_sdk_path')
+    if not sdk_path:
+        sdk_dir = os.path.join(root, 'target', 'SDK')
+        if os.path.isdir(sdk_dir):
+            for name in sorted(os.listdir(sdk_dir)):
+                if name.startswith('MacOSX') and name.endswith('.sdk'):
+                    sdk_path = os.path.join(sdk_dir, name)
+                    break
+
+    if not sdk or not sdk_path:
+        return None
+    return {
+        'root': root,
+        'bin': bin_path,
+        'sdk': sdk,
+        'sdk_path': sdk_path,
+    }
+
+
+def detect_host_llvm_bin():
+    candidates = []
+    requested = os.environ.get('OSXCROSS_HOST_LLVM')
+    if requested:
+        candidates.append(requested)
+    candidates.extend(sorted(fileglob.glob('/usr/lib/llvm-*/bin'), reverse=True))
+    candidates.extend(['/usr/local/bin', '/usr/bin'])
+    for candidate in candidates:
+        if os.path.isfile(os.path.join(candidate, 'clang++')):
+            return candidate
+    return None
+
+
+def osxcross_target(config, arch):
+    compiler_arch = 'x86_64' if arch == 'universal' else arch
+    return '{}-apple-{}'.format(compiler_arch, config['sdk'])
+
+
+def osxcross_tools(config, arch, host_llvm_bin=None):
+    target = osxcross_target(config, arch)
+    prefix = target + '-'
+    compiler_bin = host_llvm_bin or config['bin']
+    return {
+        'CC': os.path.join(compiler_bin, 'clang'),
+        'CXX': os.path.join(compiler_bin, 'clang++'),
+        'LINK': os.path.join(compiler_bin, 'clang++'),
+        'SHLINK': os.path.join(compiler_bin, 'clang++'),
+        'AR': os.path.join(config['bin'], prefix + 'ar'),
+        'RANLIB': os.path.join(config['bin'], prefix + 'ranlib'),
+        'AS': os.path.join(config['bin'], prefix + 'as'),
+    }
+
+
+def target_database_name(alias, native_alias):
+    if alias == native_alias:
+        return 'compile_commands.json'
+    return 'compile_commands.{}.json'.format(alias)
+
+
+def make_library(alias, target_env, platform_name, arch, godot_cpp_name,
+                 godot_cpp_builder, output, native_alias):
+    target_env.Append(LIBS=[godot_cpp_name])
+    target_env['COMPILATIONDB_PATH_FILTER'] = '*.{}.o'.format(alias)
+    godot_cpp_path_target = '{}/bin/{}.a'.format(godot_cpp_path, godot_cpp_name)
+    godot_cpp_target = target_env.Command(
+        godot_cpp_path_target,
+        [godot_cpp_profile],
+        godot_cpp_builder,
+    )
+
+    library = target_env.SharedLibrary(target=output, source=sources)
+    target_env.Depends(library, godot_cpp_target)
+
+    database = target_env.CompilationDatabase(
+        target_database_name(alias, native_alias), library)
+    target_env.Alias(alias, [library, database])
+    return library, database
+
+
+native_alias = 'linux' if host_os == 'linux' else 'macos' if host_os == 'darwin' else 'windows'
+native_library = None
+native_database = None
+native_env = None
+
+# ---------------------------------------------------------------------------
+# Linux target: scons linux. On Linux this is also the default `scons` target.
+# ---------------------------------------------------------------------------
 if host_os == 'linux':
-    # godot-cpp's Linux archive uses libstdc++; keep that runtime alongside
-    # the native libc++ used by tri64.
-    env.Append(LINKFLAGS=['-Wl,-lstdc++'])
+    linux_arch = {'aarch64': 'arm64'}.get(platform.machine(), platform.machine())
+    linux_cc = shutil.which('clang') or 'clang'
+    linux_cxx = shutil.which('clang++') or 'clang++'
+    linux_env = make_environment(
+        CC=linux_cc,
+        CXX=linux_cxx,
+        LINK=linux_cxx,
+        SHLINK=linux_cxx,
+    )
+    linux_env.Append(CXXFLAGS=['-stdlib=libc++'])
+    linux_env.Append(LINKFLAGS=['-stdlib=libc++', '-Wl,-lstdc++'])
+    linux_env.Append(SHLINKFLAGS=['-stdlib=libc++'])
+    linux_env['SHOBJSUFFIX'] = '.linux.o'
+    linux_env['SHLIBSUFFIX'] = '.so'
+    linux_tool_dir = os.path.dirname(os.path.abspath(linux_cxx))
+    linux_godot_cpp_name = 'libgodot-cpp.linux.template_debug.{}'.format(linux_arch)
+    linux_library, linux_database = make_library(
+        'linux',
+        linux_env,
+        'linux',
+        linux_arch,
+        linux_godot_cpp_name,
+        build_godot_cpp('linux', linux_arch, use_llvm=True, tool_dir=linux_tool_dir),
+        '../project/bin/tri64',
+        native_alias,
+    )
+    native_library = linux_library
+    native_database = linux_database
+    native_env = linux_env
 
-native_tool_dir = None
-if host_os == 'linux':
-    native_tool_dir = os.path.dirname(os.path.abspath(env['CXX']))
+# ---------------------------------------------------------------------------
+# macOS target: scons macos. On Linux this uses OSXCross and emits a universal
+# dylib by default. Use macos_arch=x86_64 or macos_arch=arm64 for one slice.
+# ---------------------------------------------------------------------------
+macos_arch = ARGUMENTS.get('macos_arch', 'universal')
+if macos_arch not in ('universal', 'x86_64', 'arm64'):
+    raise SystemExit('macos_arch must be universal, x86_64, or arm64')
 
-host_godot_cpp = env.Command(
-    godot_cpp_lib_path,
-    [],
-    build_godot_cpp(host_platform, host_arch,
-                    use_llvm=(host_os == 'linux'),
-                    tool_dir=native_tool_dir),
+osxcross = detect_osxcross() if host_os != 'darwin' else None
+macos_target = None
+macos_host_llvm = None
+if host_os == 'darwin':
+    macos_tools = {
+        'CC': 'clang',
+        'CXX': 'clang++',
+        'LINK': 'clang++',
+        'SHLINK': 'clang++',
+    }
+    macos_tool_dir = None
+    macos_child_environment = None
+    macos_extra_args = []
+    macos_sdk_path = None
+else:
+    macos_host_llvm = detect_host_llvm_bin() if osxcross else None
+    macos_target = osxcross_target(osxcross, macos_arch) if osxcross else None
+    macos_tools = osxcross_tools(osxcross, macos_arch, macos_host_llvm) if osxcross else {
+        'CC': 'x86_64-apple-darwin-clang',
+        'CXX': 'x86_64-apple-darwin-clang++',
+        'LINK': 'x86_64-apple-darwin-clang++',
+        'SHLINK': 'x86_64-apple-darwin-clang++',
+    }
+    macos_tool_dir = osxcross['bin'] if osxcross else None
+    macos_child_environment = {'OSXCROSS_ROOT': osxcross['root']} if osxcross else None
+    if osxcross and macos_host_llvm:
+        macos_child_environment['OSXCROSS_HOST_LLVM'] = macos_host_llvm
+    macos_extra_args = ['osxcross_sdk=' + osxcross['sdk']] if osxcross else []
+    if osxcross:
+        macos_extra_args.append('custom_tools=' + os.path.abspath('scons-tools'))
+    macos_sdk_path = osxcross['sdk_path'] if osxcross else None
+
+macos_env = make_environment(**macos_tools)
+macos_env['SHOBJSUFFIX'] = '.macos.o'
+macos_env['SHLIBSUFFIX'] = '.dylib'
+macos_env['SHLIBPREFIX'] = 'lib'
+macos_env.Append(CXXFLAGS=['-stdlib=libc++'])
+if host_os != 'darwin' and osxcross:
+    macos_env.PrependENVPath('PATH', osxcross['bin'])
+    if macos_host_llvm:
+        macos_env.PrependENVPath('PATH', macos_host_llvm)
+macos_arch_flags = []
+if macos_arch == 'universal':
+    macos_arch_flags = ['-arch', 'x86_64', '-arch', 'arm64']
+else:
+    macos_arch_flags = ['-arch', macos_arch]
+if macos_sdk_path:
+    macos_arch_flags += ['-isysroot', macos_sdk_path]
+macos_target_flags = ['--target=' + macos_target] if macos_target else []
+macos_env.Append(CCFLAGS=macos_target_flags + macos_arch_flags)
+macos_env.Append(LINKFLAGS=['-stdlib=libc++'] + macos_target_flags + macos_arch_flags)
+macos_env.Append(SHLINKFLAGS=['-stdlib=libc++'])
+
+macos_godot_cpp_name = 'libgodot-cpp.macos.template_debug.{}'.format(macos_arch)
+macos_library, macos_database = make_library(
+    'macos',
+    macos_env,
+    'macos',
+    macos_arch,
+    macos_godot_cpp_name,
+    build_godot_cpp(
+        'macos',
+        macos_arch,
+        tool_dir=macos_tool_dir,
+        extra_args=macos_extra_args + (
+            ['macos_sdk_path=' + macos_sdk_path] if macos_sdk_path else []),
+        environment=macos_child_environment,
+    ),
+    '../project/bin/tri64',
+    native_alias,
 )
+if host_os == 'darwin':
+    native_library = macos_library
+    native_database = macos_database
+    native_env = macos_env
 
-lib_filename = "tri64"
-library = env.SharedLibrary(
-    target="../project/bin/{}".format(lib_filename),
-    source=sources,
-)
-env.Depends(library, host_godot_cpp)
+# Tests are runnable only for the host-native target. Cross-built macOS and
+# Windows binaries cannot be executed by the Linux test runner.
+if native_env is not None and host_os in ('linux', 'darwin'):
+    test_sources = [Glob("tests/*.cpp"), Glob("tests/LevelScript/*.cpp"), native_library]
+    test_env = native_env.Clone()
+    if host_os == 'linux':
+        test_env.Append(CCFLAGS=['-pthread'])
+        test_env.Append(LINKFLAGS=['-pthread', "-Wl,-rpath,$$ORIGIN/../../project/bin"])
+    test = test_env.Program(target='tests/bin/test', source=test_sources)
+    test_env.Depends(test, native_library)
+    native_env.Alias('test', [test, native_database])
 
-test_sources = [Glob("tests/*.cpp"), Glob("tests/LevelScript/*.cpp"), library]
-
-test_env = env.Clone()
-if host_os == 'linux':
-    # Find the native extension relative to tests/bin, independent of cwd.
-    test_env.Append(CCFLAGS=['-pthread'])
-    test_env.Append(LINKFLAGS=['-pthread', "-Wl,-rpath,$$ORIGIN/../../project/bin"])
-
-test = test_env.Program(
-    target="tests/bin/test",
-    source=test_sources
-)
-
-compilation_database = env.CompilationDatabase('compile_commands.json', library)
-
-Default([library, compilation_database])
-
-env.Alias('test', [test, compilation_database])
+if native_library is not None:
+    Default([native_library, native_database])
 
 # ---------------------------------------------------------------------------
 # Windows (x86_64) cross-compile target: scons windows.
-# Uses llvm-mingw when available, with the MinGW GCC toolchain as a fallback.
-# Produces ../project/bin/tri64.windows.x86_64.dll for the corresponding
-# tri64.gdextension entry. The godot-cpp archive is built incrementally.
 # ---------------------------------------------------------------------------
 mingw_cxx = (shutil.which('x86_64-w64-mingw32-clang++') or
              shutil.which('x86_64-w64-mingw32-g++'))
@@ -153,13 +320,27 @@ mingw_uses_llvm = bool(mingw_cxx and 'clang++' in os.path.basename(mingw_cxx))
 mingw_cxx_command = mingw_cxx or 'x86_64-w64-mingw32-clang++'
 mingw_cc_command = mingw_cc or 'x86_64-w64-mingw32-clang'
 
-godot_cpp_win_lib = 'godot-cpp/bin/libgodot-cpp.windows.template_debug.x86_64.a'
+win_env = make_environment(
+    CC=mingw_cc_command,
+    CXX=mingw_cxx_command,
+    LINK=mingw_cxx_command,
+    SHLINK=mingw_cxx_command,
+    AR=mingw_ar or 'x86_64-w64-mingw32-ar',
+    RANLIB=mingw_ranlib or 'x86_64-w64-mingw32-ranlib',
+)
+win_env['SHOBJSUFFIX'] = '.win.o'
+win_env['SHLIBSUFFIX'] = '.dll'
+win_env['SHLIBPREFIX'] = ''
+win_env.Append(LINKFLAGS=['-shared', '-static', '-static-libgcc', '-static-libstdc++'])
+
+windows_godot_cpp_name = 'libgodot-cpp.windows.template_debug.x86_64'
+windows_godot_cpp_path = '{}/bin/{}.a'.format(godot_cpp_path, windows_godot_cpp_name)
 
 
 def build_godot_cpp_windows(target, source, env):
     if not mingw_cxx or not mingw_cc:
         if host_os == 'darwin':
-            hint = 'brew install llvm-mingw'
+            hint = 'install llvm-mingw and add its bin directory to PATH'
         else:
             hint = 'install llvm-mingw and add its bin directory to PATH'
         print('Windows cross compiler not found; ' + hint)
@@ -172,32 +353,15 @@ def build_godot_cpp_windows(target, source, env):
     )(target, source, env)
 
 
-windows_godot_cpp = env.Command(godot_cpp_win_lib, [], build_godot_cpp_windows)
-
-win_env = Environment(
-    CC=mingw_cc_command,
-    CXX=mingw_cxx_command,
-    LINK=mingw_cxx_command,
-    SHLINK=mingw_cxx_command,
-    AR=mingw_ar or 'x86_64-w64-mingw32-ar',
-    RANLIB=mingw_ranlib or 'x86_64-w64-mingw32-ranlib',
-    CXXFLAGS=['-std=c++26'],
-    # -static：把 libwinpthread/libgcc/libstdc++ 全静态链进去，产物只依赖
-    # 系统 DLL（KERNEL32 + UCRT），无需随游戏分发 mingw 运行库。
-    LINKFLAGS=['-shared', '-static', '-static-libgcc', '-static-libstdc++'],
-    CPPPATH=["src/", "tests/", "src/chart",
-             godot_cpp_path + "/include", godot_cpp_path + "/gen/include"],
-    LIBPATH=[godot_cpp_path + "/bin"],
-    LIBS=["libgodot-cpp.windows.template_debug.x86_64"],
+windows_godot_cpp = win_env.Command(
+    windows_godot_cpp_path,
+    [godot_cpp_profile],
+    build_godot_cpp_windows,
 )
-win_env['SHOBJSUFFIX'] = '.win.o'  # 宿主 darwin 的共享对象后缀是 .os，会与 mac 构建冲突
-win_env['SHLIBSUFFIX'] = '.dll'
-win_env['SHLIBPREFIX'] = ''
-
+win_env.Append(LIBS=[windows_godot_cpp_name])
 windows_dll = win_env.SharedLibrary(
-    target="../project/bin/tri64.windows.x86_64.dll",
+    target='../project/bin/tri64.windows.x86_64.dll',
     source=sources,
 )
 win_env.Depends(windows_dll, windows_godot_cpp)
-
-env.Alias('windows', windows_dll)
+win_env.Alias('windows', windows_dll)

@@ -32,6 +32,7 @@ int main() {
 
     const std::vector<std::function<void()>> tests {
         testRunLevelScript,
+        testLevelExtractorReuse,
         testRomManagerAreaBank,
         testFixedAddressMemory,
         testMopLoader,

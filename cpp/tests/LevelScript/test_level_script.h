@@ -17,6 +17,10 @@
 // lists) is read from the ROM itself, exactly like the game does.
 void testRunLevelScript();
 
+// Reuses one LevelExtractor across script-only, successful full, failed full,
+// and successful full runs to catch stale segment/result state.
+void testLevelExtractorReuse();
+
 // Rom Manager one-bank-0xE regression: LevelExtract must replace seg 0x0E with
 // the selected area's Fast3D ROM range when seg 0x19 contains the RM marker.
 void testRomManagerAreaBank();

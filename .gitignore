@@ -8,6 +8,8 @@
 cpp/.cache/
 cpp/.sconsign.dblite
 cpp/compile_commands.json
+cpp/compile_commands.*.json
+cpp/scons-tools/__pycache__/
 *.o
 *.os
 cpp/tests/bin/
@@ -39,4 +41,3 @@ WORKLOG.md
 
 # .ignore used to block files from OpenCode
 .ignore
-
