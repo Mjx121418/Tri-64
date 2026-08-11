@@ -35,7 +35,13 @@ void vertex() {
 		// Rebuild clip coordinates from the current camera every frame. This is
 		// intentionally separate from the extraction-time fixed NDC override.
 		vec4 view_position = MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
-		POSITION = (use_rsp_projection ? rsp_projection : PROJECTION_MATRIX) * view_position;
+		vec4 clip_position = (use_rsp_projection ? rsp_projection : PROJECTION_MATRIX) * view_position;
+		// Fast3D's viewport convention has positive Y downward relative to Godot's
+		// clip space; the fixed NDC diagnostics retain the original RSP sign.
+		if (use_rsp_projection) {
+			clip_position.y = -clip_position.y;
+		}
+		POSITION = clip_position;
 	}
 	if (use_dynamic_lighting) {
 		vec3 n = normalize(NORMAL);
