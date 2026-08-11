@@ -210,10 +210,22 @@ func _extract_and_render() -> void:
 		status_label.text = "Extraction failed for level %d." % selected_level
 		_show_warnings()
 		return
+	_apply_projection_context()
 	_render_current()
 	_place_camera()
 	_setup_background()
 	_show_warnings()
+
+## Match Godot's perspective frustum to the geo/RSP projection. Position and orientation
+## remain under the free-flight camera, but depth and reprojection use the same fov/clip
+## range as the extracted area.
+func _apply_projection_context() -> void:
+	var context: Dictionary = rom_manager.getProjectionContext()
+	if context.is_empty() or not context.get("perspective", false):
+		return
+	camera.fov = float(context.fov)
+	camera.near = maxf(0.01, float(context.near))
+	camera.far = maxf(camera.near + 1.0, float(context.far))
 
 ## 设置当前区域的背景：天空盒（skybox.c 的 10×8 图块贴图集，屏幕 pass 用
 ## SCREEN_UV、cubemap pass 用 EYEDIR 采样）或纯色填充（geo_process_background

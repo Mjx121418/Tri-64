@@ -48,6 +48,10 @@ struct ProjectionContext {
     float root_y {0};
     float root_width {0};
     float root_height {0};
+    float perspective_fov {0};
+    float perspective_near {0};
+    float perspective_far {0};
+    bool perspective {false};
     bool valid {false};
 };
 

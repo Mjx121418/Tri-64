@@ -481,10 +481,11 @@ per frame.
   256-per-circle, converted). `oBhvParams`/`oBhvParams2ndByte` are packed game-exactly
   per source.
 - **Camera**: the extracted camera/projection context is supplied to the fixed G_VTX
-  pass. Godot's live camera reprojects static and inline meshes every frame, and the
-  live model-view light branch follows camera rotation like the original master-list
-  submission; exact RSP depth and camera-matrix equivalence remain Milestone 1
-  validation work.
+  pass. Godot now adopts the extracted perspective FOV/near/far range while retaining
+  free-flight position/orientation controls. It reprojects static and inline meshes
+  every frame, and the live model-view light branch follows camera rotation like the
+  original master-list submission; exact RSP depth and camera-matrix equivalence remain
+  Milestone 1 validation work.
 - **Lights**: parsed (Phase 2) and used for live per-vertex shading (`texel × shade` for
   textured-lit, `shade` for flat-lit), so static castle-grounds grass and inline
   goomba/cannon/bobomb parts follow the same camera-dependent model-view timing.

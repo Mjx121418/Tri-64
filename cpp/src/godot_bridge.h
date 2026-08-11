@@ -67,6 +67,8 @@ public:
     Dictionary getAllLevelNames();
     // Mario 的初始位置与朝向，返回 { pos: Vector3, angle_y: float }。
     Dictionary getMarioStartPos();
+    // 当前区域的 geo 投影参数：{ perspective, fov, near, far, view, projection }。
+    Dictionary getProjectionContext();
     // 当前区域的背景（geo 0x19 节点）：{ background: int（天空盒 id 或
     // RGBA5551 填充色）, func: int, is_skybox: bool, fill_color: Color,
     // skybox_width/height: int, skybox_pixels: PackedByteArray(RGBA8) }。

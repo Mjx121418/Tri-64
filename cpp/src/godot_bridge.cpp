@@ -106,6 +106,16 @@ Array meshDicts(const GBI::Mesh &mesh, bool exact_shade) {
     return out;
 }
 
+PackedFloat32Array matrixValues(const Mtxf &matrix) {
+    PackedFloat32Array values;
+    for (const auto &row : matrix) {
+        for (float value : row) {
+            values.push_back(value);
+        }
+    }
+    return values;
+}
+
 // 与 meshDicts 的 material 一一对应：{ textured, color, tex_width, tex_height,
 // tex_pixels }。textures 与 mesh.materials 并行。
 Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &textures,
@@ -244,6 +254,7 @@ void GodotBridge::_bind_methods() {
                          &GodotBridge::getLevelNameFor);
     ClassDB::bind_method(D_METHOD("getAllLevelNames"), &GodotBridge::getAllLevelNames);
     ClassDB::bind_method(D_METHOD("getMarioStartPos"), &GodotBridge::getMarioStartPos);
+    ClassDB::bind_method(D_METHOD("getProjectionContext"), &GodotBridge::getProjectionContext);
     ClassDB::bind_method(D_METHOD("getBackground"), &GodotBridge::getBackground);
 }
 
@@ -517,6 +528,21 @@ Dictionary GodotBridge::getMarioStartPos() {
     d["pos"] = Vector3(result_.mario_start_pos.x, result_.mario_start_pos.y,
                         result_.mario_start_pos.z);
     d["angle_y"] = static_cast<double>(result_.mario_start_angle_y);
+    return d;
+}
+
+Dictionary GodotBridge::getProjectionContext() {
+    Dictionary d;
+    if (!result_.projection_context) {
+        return d;
+    }
+    const GBI::ProjectionContext &context = *result_.projection_context;
+    d["perspective"] = context.perspective;
+    d["fov"] = context.perspective_fov;
+    d["near"] = context.perspective_near;
+    d["far"] = context.perspective_far;
+    d["view"] = matrixValues(context.view_matrix);
+    d["projection"] = matrixValues(context.projection_matrix);
     return d;
 }
 

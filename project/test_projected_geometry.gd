@@ -18,6 +18,15 @@ func _init() -> void:
 
 	var meshes: Array = bridge.getMeshes()
 	var materials: Array = bridge.getMaterials()
+	var projection_context: Dictionary = bridge.getProjectionContext()
+	if projection_context.is_empty() or not projection_context.get("perspective", false) \
+			or float(projection_context.get("fov", 0.0)) <= 0.0 \
+			or float(projection_context.get("far", 0.0)) <= float(projection_context.get("near", 0.0)) \
+			or projection_context.get("view", PackedFloat32Array()).size() != 16 \
+			or projection_context.get("projection", PackedFloat32Array()).size() != 16:
+		push_error("BOB has no valid extracted perspective context")
+		quit(1)
+		return
 	var projected := 0
 	for mesh in meshes:
 		if not mesh.get("rsp_projected", false):
@@ -91,6 +100,13 @@ func _init() -> void:
 		return
 
 	main_scene.rom_manager = bridge
+	main_scene._apply_projection_context()
+	if not is_equal_approx(main_scene.camera.fov, float(projection_context.fov)) \
+			or not is_equal_approx(main_scene.camera.near, float(projection_context.near)) \
+			or not is_equal_approx(main_scene.camera.far, float(projection_context.far)):
+		push_error("Godot camera did not adopt the extracted perspective context")
+		quit(1)
+		return
 	main_scene._render_geometry()
 	await process_frame
 	await process_frame

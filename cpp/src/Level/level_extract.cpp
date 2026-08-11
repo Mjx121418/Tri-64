@@ -61,6 +61,10 @@ void setPerspectiveContext(GBI::ProjectionContext &context,
         perspective.fov, aspect, static_cast<float>(perspective.near),
         static_cast<float>(perspective.far));
     context.fixed_projection_matrix = Fast3D::fromFloatMatrix(context.projection_matrix);
+    context.perspective_fov = perspective.fov;
+    context.perspective_near = static_cast<float>(perspective.near);
+    context.perspective_far = static_cast<float>(perspective.far);
+    context.perspective = true;
     context.valid = true;
 }
 
@@ -76,6 +80,7 @@ void setOrthoContext(GBI::ProjectionContext &context,
     const float bottom = (context.root_y + context.root_height) * 0.5f * ortho.scale;
     context.projection_matrix = mtxfOrtho(left, right, bottom, top, -2.0f, 2.0f);
     context.fixed_projection_matrix = Fast3D::fromFloatMatrix(context.projection_matrix);
+    context.perspective = false;
     context.valid = true;
 }
 
@@ -783,6 +788,9 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
             break;
         }
     }
+    result_.projection_context = area_projection.valid
+        ? std::optional<GBI::ProjectionContext> {area_projection}
+        : std::nullopt;
 
     std::vector<InlineCall> inline_calls;
     inline_calls.reserve(dls.size());

@@ -66,6 +66,8 @@ struct Result {
     int16_t unused_area_28[5] {0, 0, 0, 0, 0}; // 0x3A 未使用
     // 区域相机数据（geo views[0] 的 NODE_CAMERA；按值拷贝，不持有场景图指针）。
     std::optional<GraphNodeCamera> camera {};
+    // 区域 geo 的投影上下文，供 Godot 使用与 RSP 相同的透视参数。
+    std::optional<GBI::ProjectionContext> projection_context {};
     int16_t mario_model_id {0};                // 0x25 Mario 出生模型
     uint32_t mario_behavior_arg {0};           // 0x25 Mario 出生参数
     SegmentedAddress mario_behavior_script {}; // 0x25 Mario 出生行为

@@ -470,6 +470,56 @@ void testFast3DFixed() {
         }
     }
 
+    // The extracted camera view is applied before the fixed projection, and
+    // viewport Z maps NDC [-1, 1] to the RSP's [0, 255.5] range.
+    {
+        std::vector<uint8_t> segment(0x280, 0);
+        putVertex(segment, 0x180, 10, 0, -1, 0, 0);
+        putVertex(segment, 0x190, 10, 0, 0, 0, 0);
+        putVertex(segment, 0x1A0, 10, 0, 1, 0, 0);
+
+        size_t command = 0;
+        putCommand(segment, command, (0x04u << 24) | (0x20u << 16) | 48u,
+                   0x0E000180u);
+        command += 8;
+        putCommand(segment, command, 0xBFu << 24, (1u * 10u << 8) | (2u * 10u));
+        command += 8;
+        putCommand(segment, command, 0xB8u << 24, 0);
+
+        GBI::ProjectionContext context;
+        context.valid = true;
+        context.viewport.valid = true;
+        const Fast3D::Fixed half_max_z = fixedFromInteger(511) / 4;
+        context.viewport.scale[0] = kFixedOne;
+        context.viewport.scale[1] = kFixedOne;
+        context.viewport.scale[2] = half_max_z;
+        context.viewport.translate[0] = 0;
+        context.viewport.translate[1] = 0;
+        context.viewport.translate[2] = half_max_z;
+        context.fixed_view_matrix = identityMatrix();
+        context.fixed_view_matrix[3][0] = fixedFromInteger(-10);
+        context.fixed_projection_matrix = identityMatrix();
+
+        SegmentTable table;
+        table.rom_span = std::span(segment);
+        table.loadSegment(0x0E, 0, static_cast<uint32_t>(segment.size()));
+        WarningLog warnings;
+        GBI::DLInterpreter interpreter(table, warnings);
+        const GBI::Mesh &mesh = interpreter.run(
+            SegmentedAddress {0x0E, 0}, true, 0, mtxfIdentity(), identityMatrix(), context);
+        check(mesh.vertices.size() == 3, "camera/depth triangle vertices");
+        if (mesh.vertices.size() == 3) {
+            check(mesh.vertices[0].clip_position[0] == 0.0f
+                      && mesh.vertices[1].clip_position[0] == 0.0f
+                      && mesh.vertices[2].clip_position[0] == 0.0f,
+                  "camera view translation precedes projection");
+            check(mesh.vertices[0].viewport_position[2] == 0.0f
+                      && mesh.vertices[1].viewport_position[2] == 127.75f
+                      && mesh.vertices[2].viewport_position[2] == 255.5f,
+                  "RSP viewport depth maps NDC in order");
+        }
+    }
+
     // The transformed-light cache must be rebuilt after G_MTX. A negative X
     // matrix turns the directional light away from the X-facing vertex, so
     // only the ambient color should remain.
