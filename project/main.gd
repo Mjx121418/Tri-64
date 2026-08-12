@@ -9,6 +9,7 @@ extends Node3D
 @onready var object_list: Tree = %ObjectList
 @onready var level_option: OptionButton = %LevelOption
 @onready var area_option: OptionButton = %AreaOption
+@onready var resolution_option: OptionButton = %ResolutionOption
 @onready var camera: Camera3D = %Camera3D
 @onready var model_root: Node3D = %ModelRoot
 @onready var viewport_3d: SubViewport = %Viewport3D
@@ -44,6 +45,9 @@ var _billboard_nodes: Array = []
 
 # 3D 槽位上一次的尺寸：容器布局变化（窗口缩放、RoomPanel 显隐）时重排 SubViewport。
 var _last_slot_size := Vector2(-1, -1)
+
+# 用户选择的渲染分辨率（320x240 的整数倍，Res 下拉框）。默认 1280x960（4x）。
+var _render_resolution := Vector2i(1280, 960)
 
 # SM64 Fast3D model-view lighting shader（受光材质用）。
 const _sm64_lighting_shader := preload("res://sm64_lighting.gdshader")
@@ -123,12 +127,18 @@ func _ready() -> void:
 
 	level_option.item_selected.connect(_on_level_selected)
 	area_option.item_selected.connect(_on_area_selected)
+	resolution_option.item_selected.connect(_on_resolution_selected)
 	render_mode_option.item_selected.connect(_on_render_mode_selected)
 	all_rooms_checkbox.toggled.connect(_on_all_rooms_toggled)
 
 	render_mode_option.add_item("Geometry")
 	render_mode_option.add_item("Collision")
 	render_mode_option.select(RENDER_GEOMETRY)
+
+	# 渲染分辨率：320x240 的整数倍，最大 2560x1920（8x）。默认 1280x960（4x）。
+	for n in range(1, 9):
+		resolution_option.add_item("%dx%d (%dx)" % [320 * n, 240 * n, n])
+	resolution_option.select(3)
 
 	for level in LEVELS:
 		level_option.add_item("%d  %s" % [level[0], level[1]])
@@ -152,9 +162,15 @@ func _ready() -> void:
 func _on_open_rom_pressed() -> void:
 	file_dialog.popup_centered_ratio(0.8)
 
+func _on_resolution_selected(index: int) -> void:
+	_render_resolution = Vector2i(320 * (index + 1), 240 * (index + 1))
+	_update_viewport_layout()
+
 ## 3D 渲染区固定 4:3（N64 输出 320x240）：在 UI 布局的 3D 槽位（顶栏/左面板/
-## 状态栏围出的区域）内取最大的 4:3 矩形，把 SubViewport 调整到该矩形（渲染
-## 分辨率随窗口自动适配），其余区域显示黑边。UI 控件与 3D 区互不覆盖。
+## 状态栏围出的区域）内取最大的 4:3 矩形，其余区域显示黑边。渲染分辨率 = 用户
+## 在 Res 下拉框选择的 320x240 整数倍：SubViewport 以该分辨率渲染（stretch
+## 容器自动取 container.size = 渲染分辨率），容器按比例缩放纹理铺满整个渲染区
+##（320x240 的整数倍都是 4:3，缩放均匀）。UI 控件与 3D 区互不覆盖。
 func _update_viewport_layout() -> void:
 	var slot_size: Vector2 = viewport_3d_slot.size
 	var fit_w := slot_size.x
@@ -163,22 +179,19 @@ func _update_viewport_layout() -> void:
 		fit_h = slot_size.y
 		fit_w = fit_h * 4.0 / 3.0
 	var pos := Vector2((slot_size.x - fit_w) * 0.5, (slot_size.y - fit_h) * 0.5)
-	viewport_3d_container.position = pos
-	viewport_3d_container.size = Vector2(fit_w, fit_h)
-	# 渲染分辨率跟随渲染区的实际大小，上限 1280x960（N64 320x240 的 4x，4:3
-	# 与 fit 一致）。SubViewportContainer(stretch) 用整数 shrink 缩放渲染分辨率
-	# （vp = 容器尺寸 / shrink），再把纹理线性放大到整个渲染区。
-	const MAX_RENDER_W := 1280
-	const MAX_RENDER_H := 960
-	var shrink := maxi(1, maxi(ceili(fit_w / MAX_RENDER_W), ceili(fit_h / MAX_RENDER_H)))
-	viewport_3d_container.stretch_shrink = shrink
+	var selected := Vector2(_render_resolution)
+	var scale := fit_w / selected.x
+	viewport_3d_container.position = pos + (Vector2(fit_w, fit_h) - selected * scale) * 0.5
+	viewport_3d_container.size = selected
+	viewport_3d_container.scale = Vector2.ONE * scale
 	_place_camera_panel()
 
 ## 相机读数面板悬浮在 3D 渲染区（SubViewport 容器）的右上角，跟随窗口/布局变化。
 func _place_camera_panel() -> void:
 	const MARGIN := 8.0
 	camera_pos_panel.position = Vector2(
-			viewport_3d_container.global_position.x + viewport_3d_container.size.x
+			viewport_3d_container.global_position.x
+					+ viewport_3d_container.size.x * viewport_3d_container.scale.x
 					- camera_pos_panel.size.x - MARGIN,
 			viewport_3d_container.global_position.y + MARGIN)
 

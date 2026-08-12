@@ -72,6 +72,17 @@ layout_mode = 2
 focus_mode = 0
 disabled = true
 
+[node name="ResolutionLabel" type="Label" parent="UI/MainLayout/TopBar/HBox"]
+layout_mode = 2
+text = "Res:"
+vertical_alignment = 1
+
+[node name="ResolutionOption" type="OptionButton" parent="UI/MainLayout/TopBar/HBox" unique_id=2000000200]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(140, 0)
+layout_mode = 2
+focus_mode = 0
+
 [node name="Middle" type="HBoxContainer" parent="UI/MainLayout"]
 size_flags_vertical = 3
 
