@@ -14,6 +14,8 @@ extends Node3D
 @onready var viewport_3d: SubViewport = %Viewport3D
 @onready var viewport_3d_container: SubViewportContainer = %Viewport3DContainer
 @onready var viewport_3d_slot: Control = %Viewport3DSlot
+@onready var ui_layer: CanvasLayer = $UI
+@onready var main_layout: Control = $UI/MainLayout
 @onready var camera_pos_label: Label = %CameraPosLabel
 
 @onready var render_mode_option: OptionButton = %RenderModeOption
@@ -142,6 +144,7 @@ func _ready() -> void:
 	# 之间的槽位），按槽位内最大的 4:3 矩形调整 SubViewport（分辨率随窗口自动
 	# 适配），其余区域留黑边。槽位尺寸在容器布局稳定后由 _process 里的检查更新。
 	_update_viewport_layout()
+	_update_ui_scale()
 
 	status_label.text = "No ROM loaded. Click \"Open ROM\" to select a .z64 file."
 
@@ -162,6 +165,22 @@ func _update_viewport_layout() -> void:
 	viewport_3d_container.position = pos
 	viewport_3d_container.size = Vector2(fit_w, fit_h)
 	viewport_3d.size = Vector2i(roundi(fit_w), roundi(fit_h))
+
+## 窗口比布局的最小尺寸还小时（顶栏按钮/左面板的最小宽度或高度超过窗口），
+## 按钮/列表会被挤出窗口边界。把整个 UI canvas 绕窗口中心缩放，使布局始终
+## 落在窗口内；窗口够大时 scale = 1（原分辨率）。3D 渲染区分辨率不受影响
+##（SubViewport 的渲染分辨率是 canvas 坐标，与 canvas 变换无关）。
+func _update_ui_scale() -> void:
+	var window_size: Vector2 = get_viewport().get_visible_rect().size
+	var min_size: Vector2 = main_layout.get_combined_minimum_size()
+	var scale := 1.0
+	if min_size.x > 0.0 and window_size.x < min_size.x:
+		scale = window_size.x / min_size.x
+	if min_size.y > 0.0 and window_size.y < min_size.y:
+		scale = minf(scale, window_size.y / min_size.y)
+	var center := window_size * 0.5
+	ui_layer.transform = Transform2D(Vector2(scale, 0.0), Vector2(0.0, scale),
+			Vector2(center.x * (1.0 - scale), center.y * (1.0 - scale)))
 
 func _on_rom_file_selected(path: String) -> void:
 	if not _ensure_bridge():
@@ -1020,6 +1039,7 @@ func _process(_delta: float) -> void:
 	if viewport_3d_slot.size != _last_slot_size:
 		_last_slot_size = viewport_3d_slot.size
 		_update_viewport_layout()
+	_update_ui_scale()
 	var pos := camera.global_position
 	var fwd := -camera.transform.basis.z
 	var target := pos + fwd * 1000.0
