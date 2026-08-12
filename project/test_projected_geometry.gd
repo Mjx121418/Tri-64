@@ -222,6 +222,13 @@ func _init() -> void:
 		push_error("BOB re-extraction failed after castle texture check")
 		quit(1)
 		return
+	main_scene._place_camera()
+	var expected_camera: Transform3D = main_scene._camera_transform_from_view(projection_context.view)
+	if not main_scene.camera.global_position.is_equal_approx(expected_camera.origin) \
+			or not main_scene.camera.global_basis.is_equal_approx(expected_camera.basis):
+		push_error("Godot camera did not adopt the extracted geo camera pose")
+		quit(1)
+		return
 	if not is_equal_approx(main_scene.camera.fov, float(projection_context.fov)) \
 			or not is_equal_approx(main_scene.camera.near, float(projection_context.near)) \
 			or not is_equal_approx(main_scene.camera.far, float(projection_context.far)):

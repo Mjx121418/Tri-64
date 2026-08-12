@@ -219,9 +219,9 @@ func _extract_and_render() -> void:
 	_setup_background()
 	_show_warnings()
 
-## Match Godot's perspective frustum to the geo/RSP projection. Position and orientation
-## remain under the free-flight camera, but depth and reprojection use the same fov/clip
-## range as the extracted area.
+## Match Godot's perspective frustum to the geo/RSP projection. The live camera starts
+## at the extracted geo camera pose, then remains freely navigable. Depth and reprojection
+## use the extracted projection matrix.
 func _apply_projection_context() -> void:
 	var context: Dictionary = rom_manager.getProjectionContext()
 	if context.is_empty() or not context.get("perspective", false):
@@ -299,11 +299,28 @@ func _render_current() -> void:
 	else:
 		_render_geometry()
 
+## Convert the row-vector SM64 view matrix into Godot's camera world transform.
+## The extracted matrix's 3x3 block is the camera basis in world space; its final
+## row is the view-space translation.
+func _camera_transform_from_view(values: PackedFloat32Array) -> Transform3D:
+	if values.size() != 16:
+		return Transform3D.IDENTITY
+	var basis := Basis(
+			Vector3(values[0], values[4], values[8]),
+			Vector3(values[1], values[5], values[9]),
+			Vector3(values[2], values[6], values[10]))
+	var view_translation := Vector3(values[12], values[13], values[14])
+	return Transform3D(basis, basis * (-view_translation))
+
 ## 相机只在切换关卡/区域时重新放置；切换渲染模式不移动相机。
 func _place_camera() -> void:
-	var mario = rom_manager.getMarioStartPos()
-	camera.global_position = mario.pos
-	camera.global_position = Vector3(0, 0, 0)
+	var context: Dictionary = rom_manager.getProjectionContext()
+	var view_values: PackedFloat32Array = context.get("view", PackedFloat32Array())
+	if view_values.size() == 16:
+		camera.global_transform = _camera_transform_from_view(view_values)
+		return
+	# Keep a usable fallback for levels without a decoded camera node.
+	camera.global_position = Vector3.ZERO
 	camera.rotation_degrees = Vector3(-35, -25, 0)
 
 ## 渲染几何三角形：静态网格 + 对象模型（含特殊对象）。
