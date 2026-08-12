@@ -165,7 +165,13 @@ func _update_viewport_layout() -> void:
 	var pos := Vector2((slot_size.x - fit_w) * 0.5, (slot_size.y - fit_h) * 0.5)
 	viewport_3d_container.position = pos
 	viewport_3d_container.size = Vector2(fit_w, fit_h)
-	viewport_3d.size = Vector2i(roundi(fit_w), roundi(fit_h))
+	# 渲染分辨率跟随渲染区的实际大小，上限 1280x960（N64 320x240 的 4x，4:3
+	# 与 fit 一致）。SubViewportContainer(stretch) 用整数 shrink 缩放渲染分辨率
+	# （vp = 容器尺寸 / shrink），再把纹理线性放大到整个渲染区。
+	const MAX_RENDER_W := 1280
+	const MAX_RENDER_H := 960
+	var shrink := maxi(1, maxi(ceili(fit_w / MAX_RENDER_W), ceili(fit_h / MAX_RENDER_H)))
+	viewport_3d_container.stretch_shrink = shrink
 	_place_camera_panel()
 
 ## 相机读数面板悬浮在 3D 渲染区（SubViewport 容器）的右上角，跟随窗口/布局变化。

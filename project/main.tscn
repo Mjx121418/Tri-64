@@ -145,6 +145,7 @@ mouse_filter = 2
 
 [node name="Viewport3DContainer" type="SubViewportContainer" parent="UI/MainLayout/Middle/Viewport3DSlot"]
 unique_name_in_owner = true
+stretch = true
 
 [node name="Viewport3D" type="SubViewport" parent="UI/MainLayout/Middle/Viewport3DSlot/Viewport3DContainer"]
 unique_name_in_owner = true
