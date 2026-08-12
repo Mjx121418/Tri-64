@@ -13,6 +13,7 @@ extends Node3D
 @onready var model_root: Node3D = %ModelRoot
 @onready var viewport_3d: SubViewport = %Viewport3D
 @onready var viewport_3d_container: SubViewportContainer = %Viewport3DContainer
+@onready var viewport_3d_slot: Control = %Viewport3DSlot
 @onready var camera_pos_label: Label = %CameraPosLabel
 
 @onready var render_mode_option: OptionButton = %RenderModeOption
@@ -37,6 +38,9 @@ var _visible_collision_triangles := 0
 # 每帧把 global_basis 设为相机的世界基（游戏把 billboard 渲染成相机空间轴对齐
 # ——mtxf_billboard 的 modelview = R_z(roll)，roll≈0 → 始终面向相机）。
 var _billboard_nodes: Array = []
+
+# 3D 槽位上一次的尺寸：容器布局变化（窗口缩放、RoomPanel 显隐）时重排 SubViewport。
+var _last_slot_size := Vector2(-1, -1)
 
 # SM64 Fast3D model-view lighting shader（受光材质用）。
 const _sm64_lighting_shader := preload("res://sm64_lighting.gdshader")
@@ -134,9 +138,9 @@ func _ready() -> void:
 	_sky.sky_material = _sky_material
 	world_env.environment.sky = _sky
 
-	# 3D 渲染区固定 4:3（N64 输出 320x240）：窗口变化时把 SubViewport 调整到
-	# 窗口内最大的 4:3 矩形，分辨率随窗口自动适配，其余区域留黑边。
-	get_viewport().size_changed.connect(_update_viewport_layout)
+	# 3D 渲染区固定 4:3（N64 输出 320x240）：与 UI 同层布局（顶栏/左面板/状态栏
+	# 之间的槽位），按槽位内最大的 4:3 矩形调整 SubViewport（分辨率随窗口自动
+	# 适配），其余区域留黑边。槽位尺寸在容器布局稳定后由 _process 里的检查更新。
 	_update_viewport_layout()
 
 	status_label.text = "No ROM loaded. Click \"Open ROM\" to select a .z64 file."
@@ -144,17 +148,17 @@ func _ready() -> void:
 func _on_open_rom_pressed() -> void:
 	file_dialog.popup_centered_ratio(0.8)
 
-## 3D 渲染区固定 4:3（N64 输出 320x240）：取窗口内最大的 4:3 矩形，把
-## SubViewport 调整到该矩形（渲染分辨率随窗口自动适配），其余区域显示黑边。
-## UI（CanvasLayer）仍然铺满窗口。
+## 3D 渲染区固定 4:3（N64 输出 320x240）：在 UI 布局的 3D 槽位（顶栏/左面板/
+## 状态栏围出的区域）内取最大的 4:3 矩形，把 SubViewport 调整到该矩形（渲染
+## 分辨率随窗口自动适配），其余区域显示黑边。UI 控件与 3D 区互不覆盖。
 func _update_viewport_layout() -> void:
-	var window_size: Vector2 = get_viewport().get_visible_rect().size
-	var fit_w := window_size.x
+	var slot_size: Vector2 = viewport_3d_slot.size
+	var fit_w := slot_size.x
 	var fit_h := fit_w * 3.0 / 4.0
-	if fit_h > window_size.y:
-		fit_h = window_size.y
+	if fit_h > slot_size.y:
+		fit_h = slot_size.y
 		fit_w = fit_h * 4.0 / 3.0
-	var pos := Vector2((window_size.x - fit_w) * 0.5, (window_size.y - fit_h) * 0.5)
+	var pos := Vector2((slot_size.x - fit_w) * 0.5, (slot_size.y - fit_h) * 0.5)
 	viewport_3d_container.position = pos
 	viewport_3d_container.size = Vector2(fit_w, fit_h)
 	viewport_3d.size = Vector2i(roundi(fit_w), roundi(fit_h))
@@ -1013,6 +1017,9 @@ func _has_alpha(img: Image) -> bool:
 ## 世界朝向 = 视图矩阵的逆 = 相机的世界基（camera.global_transform.basis）。
 ## 节点的局部位置 = pivot，继承实例变换 → 位置跟随父链。
 func _process(_delta: float) -> void:
+	if viewport_3d_slot.size != _last_slot_size:
+		_last_slot_size = viewport_3d_slot.size
+		_update_viewport_layout()
 	var pos := camera.global_position
 	var fwd := -camera.transform.basis.z
 	var target := pos + fwd * 1000.0

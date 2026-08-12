@@ -30,95 +30,77 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0, 0, 0, 1)
 
-[node name="Viewport3DContainer" type="SubViewportContainer" parent="UI"]
-unique_name_in_owner = true
-
-[node name="Viewport3D" type="SubViewport" parent="UI/Viewport3DContainer"]
-unique_name_in_owner = true
-own_world_3d = true
-
-[node name="WorldEnvironment" type="WorldEnvironment" parent="UI/Viewport3DContainer/Viewport3D" unique_id=268341073]
-unique_name_in_owner = true
-environment = SubResource("Environment_1")
-
-[node name="Sun" type="DirectionalLight3D" parent="UI/Viewport3DContainer/Viewport3D" unique_id=875002194]
-transform = Transform3D(0.81915206, 0.43938506, -0.36868784, 0, 0.64278764, 0.76604444, 0.57357645, -0.62750685, 0.5265408, 0, 0, 0)
-light_energy = 1.3
-shadow_enabled = true
-
-[node name="Camera3D" type="Camera3D" parent="UI/Viewport3DContainer/Viewport3D" unique_id=2078550102]
-unique_name_in_owner = true
-transform = Transform3D(0.90630776, 0.24240388, -0.34618863, 0, 0.81915206, 0.57357645, 0.42261827, -0.5198368, 0.74240386, 0, 0, 0)
-far = 30000.0
-script = ExtResource("2_cam")
-
-[node name="ModelRoot" type="Node3D" parent="UI/Viewport3DContainer/Viewport3D" unique_id=1600000511]
-unique_name_in_owner = true
-
-[node name="TopBar" type="PanelContainer" parent="UI" unique_id=1126180979]
-anchors_preset = 10
+[node name="MainLayout" type="VBoxContainer" parent="UI"]
+anchors_preset = 15
 anchor_right = 1.0
-offset_bottom = 44.0
+anchor_bottom = 1.0
 grow_horizontal = 2
+grow_vertical = 2
 
-[node name="HBox" type="HBoxContainer" parent="UI/TopBar" unique_id=717212337]
+[node name="TopBar" type="PanelContainer" parent="UI/MainLayout" unique_id=1126180979]
+custom_minimum_size = Vector2(0, 44)
+
+[node name="HBox" type="HBoxContainer" parent="UI/MainLayout/TopBar" unique_id=717212337]
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="OpenRomButton" type="Button" parent="UI/TopBar/HBox" unique_id=444909423]
+[node name="OpenRomButton" type="Button" parent="UI/MainLayout/TopBar/HBox" unique_id=444909423]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(130, 0)
 layout_mode = 2
 focus_mode = 0
 text = "Open ROM"
 
-[node name="RomNameLabel" type="Label" parent="UI/TopBar/HBox" unique_id=1572237981]
+[node name="RomNameLabel" type="Label" parent="UI/MainLayout/TopBar/HBox" unique_id=1572237981]
 unique_name_in_owner = true
 layout_mode = 2
 text = "No ROM selected."
 vertical_alignment = 1
 
-[node name="LevelLabel" type="Label" parent="UI/TopBar/HBox" unique_id=1505668074]
+[node name="LevelLabel" type="Label" parent="UI/MainLayout/TopBar/HBox" unique_id=1505668074]
 layout_mode = 2
 text = "Level:"
 vertical_alignment = 1
 
-[node name="LevelOption" type="OptionButton" parent="UI/TopBar/HBox" unique_id=1294020259]
+[node name="LevelOption" type="OptionButton" parent="UI/MainLayout/TopBar/HBox" unique_id=1294020259]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(300, 0)
 layout_mode = 2
 focus_mode = 0
 disabled = true
 
-[node name="AreaLabel" type="Label" parent="UI/TopBar/HBox" unique_id=2101412698]
+[node name="AreaLabel" type="Label" parent="UI/MainLayout/TopBar/HBox" unique_id=2101412698]
 layout_mode = 2
 text = "Area:"
 vertical_alignment = 1
 
-[node name="AreaOption" type="OptionButton" parent="UI/TopBar/HBox" unique_id=335791403]
+[node name="AreaOption" type="OptionButton" parent="UI/MainLayout/TopBar/HBox" unique_id=335791403]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(90, 0)
 layout_mode = 2
 focus_mode = 0
 disabled = true
 
-[node name="LeftPanel" type="PanelContainer" parent="UI" unique_id=1382548952]
-anchors_preset = 9
-anchor_bottom = 1.0
-offset_top = 48.0
-offset_right = 260.0
-offset_bottom = -28.0
-grow_vertical = 2
+[node name="CameraPosLabel" type="Label" parent="UI/MainLayout/TopBar/HBox" unique_id=436183950]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Cam: (0, 0, 0)"
 
-[node name="VBox" type="VBoxContainer" parent="UI/LeftPanel" unique_id=1810948297]
+[node name="Middle" type="HBoxContainer" parent="UI/MainLayout"]
+size_flags_vertical = 3
+
+[node name="LeftPanel" type="PanelContainer" parent="UI/MainLayout/Middle" unique_id=1382548952]
+custom_minimum_size = Vector2(260, 0)
+
+[node name="VBox" type="VBoxContainer" parent="UI/MainLayout/Middle/LeftPanel" unique_id=1810948297]
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="ObjectsTitle" type="Label" parent="UI/LeftPanel/VBox" unique_id=127782233]
+[node name="ObjectsTitle" type="Label" parent="UI/MainLayout/Middle/LeftPanel/VBox" unique_id=127782233]
 layout_mode = 2
 text = "Objects"
 
-[node name="ObjectList" type="Tree" parent="UI/LeftPanel/VBox" unique_id=422687451]
+[node name="ObjectList" type="Tree" parent="UI/MainLayout/Middle/LeftPanel/VBox" unique_id=422687451]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
@@ -126,76 +108,87 @@ focus_mode = 0
 hide_root = true
 scroll_horizontal_enabled = false
 
-[node name="Sep" type="HSeparator" parent="UI/LeftPanel/VBox" unique_id=757419781]
+[node name="Sep" type="HSeparator" parent="UI/MainLayout/Middle/LeftPanel/VBox" unique_id=757419781]
 layout_mode = 2
 
-[node name="RenderModeLabel" type="Label" parent="UI/LeftPanel/VBox" unique_id=1832047470]
+[node name="RenderModeLabel" type="Label" parent="UI/MainLayout/Middle/LeftPanel/VBox" unique_id=1832047470]
 layout_mode = 2
 text = "Render mode"
 
-[node name="RenderModeOption" type="OptionButton" parent="UI/LeftPanel/VBox" unique_id=1698430605]
+[node name="RenderModeOption" type="OptionButton" parent="UI/MainLayout/Middle/LeftPanel/VBox" unique_id=1698430605]
 unique_name_in_owner = true
 layout_mode = 2
 focus_mode = 0
 
-[node name="RoomPanel" type="PanelContainer" parent="UI/LeftPanel/VBox" unique_id=2000000001]
+[node name="RoomPanel" type="PanelContainer" parent="UI/MainLayout/Middle/LeftPanel/VBox" unique_id=2000000001]
 unique_name_in_owner = true
 visible = false
 custom_minimum_size = Vector2(0, 150)
 layout_mode = 2
 
-[node name="VBox" type="VBoxContainer" parent="UI/LeftPanel/VBox/RoomPanel" unique_id=2000000002]
+[node name="VBox" type="VBoxContainer" parent="UI/MainLayout/Middle/LeftPanel/VBox/RoomPanel" unique_id=2000000002]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Title" type="Label" parent="UI/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000003]
+[node name="Title" type="Label" parent="UI/MainLayout/Middle/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000003]
 layout_mode = 2
 text = "Rooms"
 
-[node name="AllRooms" type="CheckButton" parent="UI/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000004]
+[node name="AllRooms" type="CheckButton" parent="UI/MainLayout/Middle/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000004]
 unique_name_in_owner = true
 layout_mode = 2
 focus_mode = 0
 button_pressed = true
 text = "All rooms"
 
-[node name="Scroll" type="ScrollContainer" parent="UI/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000005]
+[node name="Scroll" type="ScrollContainer" parent="UI/MainLayout/Middle/LeftPanel/VBox/RoomPanel/VBox" unique_id=2000000005]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 
-[node name="RoomList" type="VBoxContainer" parent="UI/LeftPanel/VBox/RoomPanel/VBox/Scroll" unique_id=2000000006]
+[node name="RoomList" type="VBoxContainer" parent="UI/MainLayout/Middle/LeftPanel/VBox/RoomPanel/VBox/Scroll" unique_id=2000000006]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 
-[node name="StatusBar" type="PanelContainer" parent="UI" unique_id=798349282]
-anchors_preset = 12
-anchor_top = 1.0
-anchor_right = 1.0
-anchor_bottom = 1.0
-offset_top = -28.0
-grow_horizontal = 2
-grow_vertical = 0
+[node name="Viewport3DSlot" type="Control" parent="UI/MainLayout/Middle"]
+unique_name_in_owner = true
+size_flags_horizontal = 3
+size_flags_vertical = 3
+mouse_filter = 2
 
-[node name="StatusLabel" type="Label" parent="UI/StatusBar" unique_id=1704764072]
+[node name="Viewport3DContainer" type="SubViewportContainer" parent="UI/MainLayout/Middle/Viewport3DSlot"]
+unique_name_in_owner = true
+
+[node name="Viewport3D" type="SubViewport" parent="UI/MainLayout/Middle/Viewport3DSlot/Viewport3DContainer"]
+unique_name_in_owner = true
+own_world_3d = true
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="UI/MainLayout/Middle/Viewport3DSlot/Viewport3DContainer/Viewport3D" unique_id=268341073]
+unique_name_in_owner = true
+environment = SubResource("Environment_1")
+
+[node name="Sun" type="DirectionalLight3D" parent="UI/MainLayout/Middle/Viewport3DSlot/Viewport3DContainer/Viewport3D" unique_id=875002194]
+transform = Transform3D(0.81915206, 0.43938506, -0.36868784, 0, 0.64278764, 0.76604444, 0.57357645, -0.62750685, 0.5265408, 0, 0, 0)
+light_energy = 1.3
+shadow_enabled = true
+
+[node name="Camera3D" type="Camera3D" parent="UI/MainLayout/Middle/Viewport3DSlot/Viewport3DContainer/Viewport3D" unique_id=2078550102]
+unique_name_in_owner = true
+transform = Transform3D(0.90630776, 0.24240388, -0.34618863, 0, 0.81915206, 0.57357645, 0.42261827, -0.5198368, 0.74240386, 0, 0, 0)
+far = 30000.0
+script = ExtResource("2_cam")
+
+[node name="ModelRoot" type="Node3D" parent="UI/MainLayout/Middle/Viewport3DSlot/Viewport3DContainer/Viewport3D" unique_id=1600000511]
+unique_name_in_owner = true
+
+[node name="StatusBar" type="PanelContainer" parent="UI/MainLayout" unique_id=798349282]
+custom_minimum_size = Vector2(0, 28)
+
+[node name="StatusLabel" type="Label" parent="UI/MainLayout/StatusBar" unique_id=1704764072]
 unique_name_in_owner = true
 layout_mode = 2
 text = "No ROM loaded."
-
-[node name="CameraPosPanel" type="PanelContainer" parent="UI" unique_id=943887334]
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -360.0
-offset_top = 48.0
-offset_bottom = 70.0
-grow_horizontal = 0
-
-[node name="CameraPosLabel" type="Label" parent="UI/CameraPosPanel" unique_id=436183950]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Cam: (0, 0, 0)"
 
 [node name="RomFileDialog" type="FileDialog" parent="UI" unique_id=1383238674]
 unique_name_in_owner = true
@@ -218,4 +211,4 @@ grow_horizontal = 2
 grow_vertical = 2
 scroll_following = true
 
-[connection signal="cell_selected" from="UI/LeftPanel/VBox/ObjectList" to="." method="_on_object_list_cell_selected"]
+[connection signal="cell_selected" from="UI/MainLayout/Middle/LeftPanel/VBox/ObjectList" to="." method="_on_object_list_cell_selected"]
