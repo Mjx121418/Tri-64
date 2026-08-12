@@ -10,7 +10,9 @@ extends Node3D
 @onready var level_option: OptionButton = %LevelOption
 @onready var area_option: OptionButton = %AreaOption
 @onready var camera: Camera3D = %Camera3D
-@onready var model_root: Node3D = $ModelRoot
+@onready var model_root: Node3D = %ModelRoot
+@onready var viewport_3d: SubViewport = %Viewport3D
+@onready var viewport_3d_container: SubViewportContainer = %Viewport3DContainer
 @onready var camera_pos_label: Label = %CameraPosLabel
 
 @onready var render_mode_option: OptionButton = %RenderModeOption
@@ -132,10 +134,30 @@ func _ready() -> void:
 	_sky.sky_material = _sky_material
 	world_env.environment.sky = _sky
 
+	# 3D 渲染区固定 4:3（N64 输出 320x240）：窗口变化时把 SubViewport 调整到
+	# 窗口内最大的 4:3 矩形，分辨率随窗口自动适配，其余区域留黑边。
+	get_viewport().size_changed.connect(_update_viewport_layout)
+	_update_viewport_layout()
+
 	status_label.text = "No ROM loaded. Click \"Open ROM\" to select a .z64 file."
 
 func _on_open_rom_pressed() -> void:
 	file_dialog.popup_centered_ratio(0.8)
+
+## 3D 渲染区固定 4:3（N64 输出 320x240）：取窗口内最大的 4:3 矩形，把
+## SubViewport 调整到该矩形（渲染分辨率随窗口自动适配），其余区域显示黑边。
+## UI（CanvasLayer）仍然铺满窗口。
+func _update_viewport_layout() -> void:
+	var window_size: Vector2 = get_viewport().get_visible_rect().size
+	var fit_w := window_size.x
+	var fit_h := fit_w * 3.0 / 4.0
+	if fit_h > window_size.y:
+		fit_h = window_size.y
+		fit_w = fit_h * 4.0 / 3.0
+	var pos := Vector2((window_size.x - fit_w) * 0.5, (window_size.y - fit_h) * 0.5)
+	viewport_3d_container.position = pos
+	viewport_3d_container.size = Vector2(fit_w, fit_h)
+	viewport_3d.size = Vector2i(roundi(fit_w), roundi(fit_h))
 
 func _on_rom_file_selected(path: String) -> void:
 	if not _ensure_bridge():
