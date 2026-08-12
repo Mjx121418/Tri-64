@@ -72,11 +72,6 @@ layout_mode = 2
 focus_mode = 0
 disabled = true
 
-[node name="CameraPosLabel" type="Label" parent="UI/MainLayout/TopBar/HBox" unique_id=436183950]
-unique_name_in_owner = true
-layout_mode = 2
-text = "Cam: (0, 0, 0)"
-
 [node name="Middle" type="HBoxContainer" parent="UI/MainLayout"]
 size_flags_vertical = 3
 
@@ -172,6 +167,15 @@ script = ExtResource("2_cam")
 
 [node name="ModelRoot" type="Node3D" parent="UI/MainLayout/Middle/Viewport3DSlot/Viewport3DContainer/Viewport3D" unique_id=1600000511]
 unique_name_in_owner = true
+
+[node name="CameraPosPanel" type="PanelContainer" parent="UI" unique_id=943887334]
+unique_name_in_owner = true
+mouse_filter = 2
+
+[node name="CameraPosLabel" type="Label" parent="UI/CameraPosPanel" unique_id=436183950]
+unique_name_in_owner = true
+layout_mode = 2
+text = "Cam: (0, 0, 0)"
 
 [node name="StatusBar" type="PanelContainer" parent="UI/MainLayout" unique_id=798349282]
 custom_minimum_size = Vector2(0, 28)

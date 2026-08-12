@@ -16,6 +16,7 @@ extends Node3D
 @onready var viewport_3d_slot: Control = %Viewport3DSlot
 @onready var ui_layer: CanvasLayer = $UI
 @onready var main_layout: Control = $UI/MainLayout
+@onready var camera_pos_panel: PanelContainer = %CameraPosPanel
 @onready var camera_pos_label: Label = %CameraPosLabel
 
 @onready var render_mode_option: OptionButton = %RenderModeOption
@@ -165,6 +166,15 @@ func _update_viewport_layout() -> void:
 	viewport_3d_container.position = pos
 	viewport_3d_container.size = Vector2(fit_w, fit_h)
 	viewport_3d.size = Vector2i(roundi(fit_w), roundi(fit_h))
+	_place_camera_panel()
+
+## 相机读数面板悬浮在 3D 渲染区（SubViewport 容器）的右上角，跟随窗口/布局变化。
+func _place_camera_panel() -> void:
+	const MARGIN := 8.0
+	camera_pos_panel.position = Vector2(
+			viewport_3d_container.global_position.x + viewport_3d_container.size.x
+					- camera_pos_panel.size.x - MARGIN,
+			viewport_3d_container.global_position.y + MARGIN)
 
 ## 窗口比布局的最小尺寸还小时（顶栏按钮/左面板的最小宽度或高度超过窗口），
 ## 按钮/列表会被挤出窗口边界。把整个 UI canvas 绕窗口中心缩放，使布局始终
@@ -1046,6 +1056,8 @@ func _process(_delta: float) -> void:
 	camera_pos_label.text = "Cam (%d, %d, %d)  look->(%d, %d, %d)" % [
 			roundi(pos.x), roundi(pos.y), roundi(pos.z),
 			roundi(target.x), roundi(target.y), roundi(target.z)]
+	# 面板尺寸随文本变化，每帧重新贴到渲染区右上角。
+	_place_camera_panel()
 	if not _billboard_nodes.is_empty():
 		var cam_basis := camera.global_transform.basis
 		for node in _billboard_nodes:
