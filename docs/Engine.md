@@ -250,11 +250,12 @@ microcode, so all GBI encodings here are the F3D layouts.
 - **Matrix stack**: we keep parallel float and signed Q16.16 model-view stacks. `G_VTX`
   processes position, normal, texture coordinates, lighting, and projection state at
   load time; later matrix or texture changes do not alter the cached vertex. Projection
-  matrices are captured, and the exported perspective divide uses the ROM-compatible
-  `VRCP` path from `fast3d.s`; the Godot projected shader uses the extracted
-  perspective matrix with the current free-flight model-view transform, converting
-  Fast3D's conventional depth to Godot Forward+'s reverse-Z clip range. No
-  near-plane clipping.
+  matrices are captured, and the fixed path composes the model-view/projection matrix
+  before `G_VTX` as Fast3D does. The exported perspective divide uses the ROM-compatible
+  `VRCP` path from `fast3d.s` with the `G_MW_PERSPNORM` scale; the Godot projected shader
+  uses the extracted perspective matrix with the current free-flight model-view
+  transform, converting Fast3D's conventional depth to Godot Forward+'s reverse-Z
+  clip range. No near-plane clipping.
 - **Vertices**: the fixed path transforms them with the RSP-style 48-bit accumulator;
   the float position remains available for the normal renderer. Texture scale from
   `G_TEXTURE` is applied at `G_VTX`, and the 4th word is kept as the normal/color.
@@ -272,8 +273,9 @@ microcode, so all GBI encodings here are the F3D layouts.
    time. Lit materials without captured lights fall back to white (no modulation).
 - **Light arithmetic**: the fixed path now mirrors the RSP's signed 16-bit vector lanes,
   48-bit accumulator overflow, VMULF fractional rounding, and signed saturation for
-  matrix/light products and shade accumulation. Remaining matrix/vector edge cases and
-  exact camera/depth behavior are still Milestone 1 validation work.
+  matrix/light products and shade accumulation. Synthetic goldens cover matrix/vector
+  accumulator wrap and independent shade-channel saturation; exact camera/depth
+  behavior is still Milestone 1 validation work.
 - **`G_TEXTURE`**: F3D on-bit = `w0 bit 0`; tile/lod (bits 8-13) recorded. We always
   sample render tile 0 (SM64's convention); multi-tile/mipmap DLs are not emulated.
 - **`G_TEXTURE_GEN`** (environment mapping): not emulated (the star's reflection-mapped
@@ -311,10 +313,12 @@ microcode, so all GBI encodings here are the F3D layouts.
   to Godot materials: layers **0-3 OPA** (`G_RM_*_OPA_SURF`: no blending — alpha is
   ignored, z-write on) → forced opaque even if the texture/vertex alpha is < 255;
   layer **4** (`G_RM_AA_TEX_EDGE`: edge alpha → coverage) → `TRANSPARENCY_ALPHA_SCISSOR`
-  (hard-edge alpha cutout, opaque pass, z-write on); layers **5-7**
-  (`G_RM_AA_XLU_SURF`: `Z_CMP` without `Z_UPD`) → alpha blend with
-  `DEPTH_DRAW_DISABLED`. Within a layer the game draws in append order; the
-  Godot renderer depth-sorts transparent geometry instead (see `Quirks.md`).
+  (hard-edge alpha cutout, opaque pass, z-write on) through the projected shader;
+  billboard parts use the same path, so they share the extracted Fast3D projection
+  with adjacent opaque geometry. Layers **5-7**
+  (`G_RM_AA_XLU_SURF`: `Z_CMP` without `Z_UPD`) → the projected blend shader with
+  `ALPHA` output and `depth_draw_never`. Within a layer the game draws in append
+  order; the Godot renderer depth-sorts transparent geometry instead (see `Quirks.md`).
 - **Untextured color source**: `combineColorSource` decodes the combine mux to decide
   whether the color comes from SHADE (vertex color), PRIMITIVE, or ENVIRONMENT; the
   bridge exports `use_vertex` (= combine uses SHADE) and the prim/env colors, so the
@@ -350,8 +354,16 @@ control transparency.
   (e.g. the 0x900BC00 overlay) decode as their raw RGB.
 - **UV convention**: N64 t=0 is the texture top; Godot ARRAY_TEX_UV v=0 is also the top,
   so t maps directly to v — **no V flip** (a flip turns every texture upside down).
-- **Clamp/repeat**: from `G_SETTILE` cms/cmt; Godot has one repeat flag for both axes, so
-  asymmetric tiles fall back to repeat (SM64 tiles are usually symmetric).
+  RDP coordinates address texel intervals `[i, i+1)`, while Godot filters around
+  texel centers; `DLInterpreter::appendVertex` subtracts the SETTILESIZE origin
+  and adds half a texel before normalizing. This preserves RDP filtering fractions,
+  including transparent atlas edges such as the Goomba face.
+- **Clamp/repeat**: from `G_SETTILE` cms/cmt plus angrylion's `clamp || mask == 0`
+  rule; Godot has one repeat flag for both axes, so asymmetric tiles fall back to
+  repeat (SM64 tiles are usually symmetric). The decoder keeps load-tile and
+  render-tile state separate. Since decoded images are cropped to the SETTILESIZE
+  region, the projected clamp rectangle is `[0.5/width, 0.5/height]` through
+  `[(width-0.5)/width, (height-0.5)/height]`, derived from inclusive sl/sh/tl/th.
 - **Transparency**: derived from decoded alpha; the RDP's blend-mode coefficients are not
   replicated.
 

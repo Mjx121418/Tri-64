@@ -233,6 +233,9 @@ struct DecodedCommand {
     // G_SETTILE 的 S/T clamp/mirror 模式（2 位）：0=G_TX_WRAP 1=G_TX_MIRROR 2=G_TX_CLAMP
     uint8_t tileClampS() const { return (w1 >> 8) & 0x3; }
     uint8_t tileClampT() const { return (w1 >> 18) & 0x3; }
+    // G_SETTILE 的 S/T mask（4 位）；angrylion treats mask=0 as forced clamp.
+    uint8_t tileMaskS() const { return (w1 >> 4) & 0xF; }
+    uint8_t tileMaskT() const { return (w1 >> 14) & 0xF; }
     // G_SETTILE 的 line（w0 bits 9-17，TMEM 行跨度 64 位字）与 palette
     //（w1 bits 20-23，CI4 调色板索引）——CI 纹理解码需要。
     uint16_t tileLine() const { return (w0 >> 9) & 0x1FF; }

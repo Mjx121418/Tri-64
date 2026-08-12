@@ -50,6 +50,15 @@ GBI::ProjectionContext rootProjectionContext(const GraphNodeRoot &root) {
     return context;
 }
 
+uint16_t perspectiveNorm(float near_plane, float far_plane) {
+    if (near_plane + far_plane <= 2.0f) {
+        return 0xFFFF;
+    }
+    const int32_t value = static_cast<int32_t>(
+        131072.0 / (static_cast<double>(near_plane) + far_plane));
+    return static_cast<uint16_t>(value <= 0 ? 1 : value);
+}
+
 void setPerspectiveContext(GBI::ProjectionContext &context,
                            const GraphNodePerspective &perspective) {
     if (!context.viewport.valid || context.root_height == 0.0f) {
@@ -64,6 +73,8 @@ void setPerspectiveContext(GBI::ProjectionContext &context,
     context.perspective_fov = perspective.fov;
     context.perspective_near = static_cast<float>(perspective.near);
     context.perspective_far = static_cast<float>(perspective.far);
+    context.persp_norm = perspectiveNorm(
+        static_cast<float>(perspective.near), static_cast<float>(perspective.far));
     context.perspective = true;
     context.valid = true;
 }

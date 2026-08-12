@@ -998,9 +998,14 @@ void testDlRspData() {
     put(off, 0xFDu << 24, 0x0E000200u); off += 8;
     // gsDPLoadTLUTCmd(tile 7, count 15)（16 条目）
     put(off, 0xF0u << 24, (7u << 24) | (15u << 14)); off += 8;
-    // gsDPSetTile(render tile 0, fmt=RGBA, siz=16, line=8, tmem=0, palette=5)
+    // gsDPSetTile(render tile 0, fmt=RGBA, siz=16, line=8, tmem=0, palette=5,
+    // WRAP + mask=0 on both axes). angrylion treats mask=0 as forced clamp.
     // —— 放在三角形之前，材质记录的是渲染 tile 的 palette
-    put(off, (0xF5u << 24) | (2u << 19) | (8u << 9), (5u << 20) | (2u << 18) | (2u << 8) | (5u << 4));
+    put(off, (0xF5u << 24) | (2u << 19) | (8u << 9), (5u << 20));
+    off += 8;
+    // 再配置 load tile 7 为 WRAP：per-tile 状态不能覆盖 render tile 0 的 state。
+    put(off, (0xF5u << 24) | (2u << 19) | (8u << 9),
+        (7u << 24) | (5u << 4));
     off += 8;
     // gsDPSetTextureImage(纹理 @0x300)
     put(off, 0xFDu << 24, 0x0E000300u); off += 8;
@@ -1051,6 +1056,16 @@ void testDlRspData() {
         if (mat.tex_palette != 5 || mat.tex_line != 8 || mat.lut_type != GBI::G_TT_RGBA16) {
             printf("test_dl_rsp: FAIL material palette/line/lut (%u,%u,%u)\n", mat.tex_palette,
                    mat.tex_line, mat.lut_type);
+        }
+        if (mat.tex_clamp_s || mat.tex_clamp_t) {
+            printf("test_dl_rsp: FAIL render-tile explicit clamp was overwritten by load-tile state\n");
+        }
+        if (mat.tex_mask_s != 0 || mat.tex_mask_t != 0) {
+            printf("test_dl_rsp: FAIL render-tile mask-0 state was overwritten by load-tile state\n");
+        }
+        if (!(mat.tex_clamp_s || mat.tex_mask_s == 0) ||
+            !(mat.tex_clamp_t || mat.tex_mask_t == 0)) {
+            printf("test_dl_rsp: FAIL angrylion mask-0 forced-clamp rule\n");
         }
     } else {
         printf("test_dl_rsp: FAIL no material emitted\n");

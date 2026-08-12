@@ -160,6 +160,7 @@ Mesh &DLInterpreter::run(SegmentedAddress dl, bool reset_state, uint8_t layer,
         state_.fixed_view_matrix = projection_context.fixed_view_matrix;
         state_.view_loaded = true;
         state_.viewport = projection_context.viewport;
+        state_.persp_norm = projection_context.persp_norm;
     }
     // 模型视图矩阵栈初始为单位阵（不使用矩阵的 DL 输出原始顶点）。继续运行时
     // 保留上一个 DL 的渲染寄存器（combine/颜色/tile/几何模式/纹理绑定/灯光）——
@@ -289,17 +290,26 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         state_.fog_color[3] = cmd.colorA();
         break;
     case G_SETTILE:
+        // 防御性绑定：记录该 tile 的 tmem 地址（LOAD 时绑定图像用）
+        state_.tile_tmem[cmd.tileNum()] = cmd.tileTMEM();
+        // RDP tile state is per tile. The load tile (usually tile 7) has its
+        // own format/line/wrap setup and must not overwrite the render tile's
+        // sampling state used by Material and TextureDecoder.
+        if (cmd.tileNum() != kRenderTile) {
+            break;
+        }
         state_.tile_fmt = cmd.rdpFmt();
         state_.tile_siz = cmd.rdpSize();
         // G_SETTILE 的 S/T clamp/mirror 模式（0=WRAP 1=MIRROR 2=CLAMP）。
-        // 导出到 Godot 的 texture_repeat：CLAMP 关闭重复，否则开启。
+        // angrylion's calculate_tile_derivs uses cs || !mask, so G_TX_NOMASK
+        // is a forced clamp even when the command says WRAP.
         state_.tex_clamp_s = cmd.tileClampS() == 2;
         state_.tex_clamp_t = cmd.tileClampT() == 2;
+        state_.tex_mask_s = cmd.tileMaskS();
+        state_.tex_mask_t = cmd.tileMaskT();
         // palette（CI4 调色板索引）与 line（TMEM 行跨度）——CI 纹理解码需要。
         state_.tex_palette = cmd.tilePalette();
         state_.tex_line = cmd.tileLine();
-        // 防御性绑定：记录该 tile 的 tmem 地址（LOAD 时绑定图像用）
-        state_.tile_tmem[cmd.tileNum()] = cmd.tileTMEM();
         break;
     case G_LOADBLOCK:
     case G_LOADTILE:
@@ -316,6 +326,9 @@ void DLInterpreter::execute(const DecodedCommand &cmd, SegmentedAddress &pc) {
         break;
     case G_SETTILESIZE: {
         // w0: uls<<12 | ult ; w1: lrs<<12 | lrt；尺寸 = (lrs-uls)/4 + 1（RDP 单位 1/4 纹素）
+        if (cmd.tileNum() != kRenderTile) {
+            break;
+        }
         state_.tex_sl = cmd.lowS();
         state_.tex_tl = cmd.lowT();
         state_.tex_sh = cmd.highS();
@@ -473,6 +486,8 @@ void DLInterpreter::snapshotMaterial() {
     material_.tex_dxt = state_.tex_dxt;
     material_.tex_clamp_s = state_.tex_clamp_s;
     material_.tex_clamp_t = state_.tex_clamp_t;
+    material_.tex_mask_s = state_.tex_mask_s;
+    material_.tex_mask_t = state_.tex_mask_t;
     material_.tex_palette = state_.tex_palette;
     material_.tex_line = state_.tex_line;
     material_.lut_type = state_.lut_type;
@@ -649,13 +664,18 @@ void DLInterpreter::processVertex(ProcessedVertex &dst) {
     };
     dst.position = Fast3D::transformPoint(matrix, position);
     if (state_.projection_loaded) {
-        const Fast3D::FixedVector4 world_position = Fast3D::vectorMatrixMultiply(
-            Fast3D::makeVector4(position[0], position[1], position[2]), matrix);
-        const Fast3D::FixedVector4 view_position = state_.view_loaded
-            ? Fast3D::vectorMatrixMultiply(world_position, state_.fixed_view_matrix)
-            : world_position;
-        dst.clip_position = Fast3D::vectorMatrixMultiply(view_position,
-                                                          state_.fixed_projection);
+        // fast3d.s builds the combined model-view/projection matrix before
+        // G_VTX (f3d_04001484 and load_mp_matrix). Multiplying the matrices
+        // first preserves the RSP's accumulator/saturation points instead of
+        // rounding after each separate vector transform.
+        const Fast3D::FixedMatrix model_view = state_.view_loaded
+            ? Fast3D::matrixMultiply(matrix, state_.fixed_view_matrix)
+            : matrix;
+        const Fast3D::FixedMatrix model_view_projection = Fast3D::matrixMultiply(
+            model_view, state_.fixed_projection);
+        dst.clip_position = Fast3D::vectorMatrixMultiply(
+            Fast3D::makeVector4(position[0], position[1], position[2]),
+            model_view_projection);
         const Fast3D::Fixed x = dst.clip_position[0];
         const Fast3D::Fixed y = dst.clip_position[1];
         const Fast3D::Fixed z = dst.clip_position[2];
@@ -667,17 +687,25 @@ void DLInterpreter::processVertex(ProcessedVertex &dst) {
         if (y > w) dst.clip_code |= 1 << 3;
         if (z < -w) dst.clip_code |= 1 << 4;
         if (z > w) dst.clip_code |= 1 << 5;
-        // Fast3D uses the RSP VRCP overlay rather than an exact divide. The
-        // overlay doubles the normalized raw reciprocal before multiplying
-        // clip coordinates, matching f3d_04001000 in fast3d.s.
-        const Fast3D::Fixed inverse_w = Fast3D::fixedMultiply(
-            Fast3D::rspReciprocal(w), Fast3D::fixedFromInteger(2));
+        // Fast3D scales the clip coordinates by the Q0.16 perspNorm value
+        // before the VRCP overlay and removes that scale after the divide
+        // (fast3d.s:816-835). Keep the two fixed-point products separate: the
+        // RSP rounds each VMAD result, so combining them changes edge values.
+        const uint16_t persp_norm = state_.persp_norm;
+        const Fast3D::Fixed normalized_w = Fast3D::fixedMultiplyScalar(w, persp_norm);
+        const Fast3D::Fixed normalized_inverse_w = Fast3D::fixedMultiply(
+            Fast3D::rspReciprocal(normalized_w), Fast3D::fixedFromInteger(2));
+        const Fast3D::Fixed inverse_w = Fast3D::fixedMultiplyScalar(
+            normalized_inverse_w, persp_norm);
         dst.inverse_w = inverse_w;
         if (w != 0) {
             dst.ndc_position = Fast3D::makeVector3(
-                Fast3D::fixedMultiply(x, inverse_w),
-                Fast3D::fixedMultiply(y, inverse_w),
-                Fast3D::fixedMultiply(z, inverse_w));
+                Fast3D::fixedMultiplyScalar(
+                    Fast3D::fixedMultiply(x, normalized_inverse_w), persp_norm),
+                Fast3D::fixedMultiplyScalar(
+                    Fast3D::fixedMultiply(y, normalized_inverse_w), persp_norm),
+                Fast3D::fixedMultiplyScalar(
+                    Fast3D::fixedMultiply(z, normalized_inverse_w), persp_norm));
             if (state_.viewport.valid) {
                 for (size_t i = 0; i < 3; i++) {
                     dst.viewport_position[i] = state_.viewport.translate[i]
@@ -826,8 +854,13 @@ void DLInterpreter::appendVertex(const ProcessedVertex &v) {
     mv.uv[0] = v.texture_coordinate[0] / 32.0f;
     mv.uv[1] = v.texture_coordinate[1] / 32.0f;
     if (material_.textured && material_.tex_width() > 0 && material_.tex_height() > 0) {
-        mv.uv[0] /= material_.tex_width();
-        mv.uv[1] /= material_.tex_height();
+        // angrylion samples RDP texel coordinates in [i, i+1), while Godot
+        // filters around texel centers. Subtract the SETTILESIZE origin and
+        // add half a texel so both samplers use the same interpolation point.
+        const float s = mv.uv[0] - material_.tex_sl / 4.0f + 0.5f;
+        const float t = mv.uv[1] - material_.tex_tl / 4.0f + 0.5f;
+        mv.uv[0] = s / material_.tex_width();
+        mv.uv[1] = t / material_.tex_height();
     }
     // 注意：不翻转 v 轴。Godot 的 ArrayMesh ARRAY_TEX_UV 用 v=0 为顶部（与
     // 图像第 0 行一致），N64 的 t=0 也是顶部，直接映射即可；翻转会导致所有

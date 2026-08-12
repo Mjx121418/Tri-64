@@ -3,9 +3,11 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled;
 
-uniform sampler2D albedo_tex : source_color; // sRGB→linear，与 StandardMaterial3D 的
-                                            // albedo_texture 一致（否则纹理会偏亮）
+uniform sampler2D albedo_tex : source_color, repeat_disable; // sRGB→linear，与 StandardMaterial3D 的
+                                             // albedo_texture 一致（否则纹理会偏亮）
 uniform bool use_texel = false;      // 纹理采样（G_CC_MODULATERGB 等）
+uniform bool repeat_s = true;        // S 方向 G_TX_WRAP/MIRROR
+uniform bool repeat_t = true;        // T 方向 G_TX_WRAP/MIRROR
 uniform bool clamp_uv = false;       // 两轴 CLAMP（否则 WRAP）
 uniform vec4 uv_clamp = vec4(0.0, 0.0, 1.0, 1.0); // clamp 区域的归一化 UV
 uniform int num_lights = 0;          // 方向光数量（0 = 不调光，shade = 白）
@@ -43,9 +45,10 @@ void fragment() {
 		discard;
 	}
 	vec2 uv = UV;
-	if (clamp_uv) {
-		uv = clamp(UV, uv_clamp.xy, uv_clamp.zw);
-	}
+	vec2 clamp_min = clamp_uv ? uv_clamp.xy : vec2(0.0);
+	vec2 clamp_max = clamp_uv ? uv_clamp.zw : vec2(1.0);
+	uv.x = repeat_s ? fract(uv.x) : clamp(uv.x, clamp_min.x, clamp_max.x);
+	uv.y = repeat_t ? fract(uv.y) : clamp(uv.y, clamp_min.y, clamp_max.y);
 	vec3 base = use_texel ? texture(albedo_tex, uv).rgb : vec3(1.0);
 	ALBEDO = base * vertex_shade;
 }

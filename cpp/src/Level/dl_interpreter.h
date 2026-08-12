@@ -51,6 +51,10 @@ struct ProjectionContext {
     float perspective_fov {0};
     float perspective_near {0};
     float perspective_far {0};
+    // guPerspective emits this raw u16 scale through G_MW_PERSPNORM. Fast3D
+    // uses it around the reciprocal path to preserve precision for large
+    // view-space W values.
+    uint16_t persp_norm {0xFFFF};
     bool perspective {false};
     bool valid {false};
 };
@@ -138,6 +142,8 @@ struct Material {
     bool lit {false};                // 几何模式 G_LIGHTING（未纹理材质据此选环境色）
     bool tex_clamp_s {false};        // G_SETTILE 的 S 方向 G_TX_CLAMP（否则 WRAP/MIRROR）
     bool tex_clamp_t {false};        // G_SETTILE 的 T 方向 G_TX_CLAMP
+    uint8_t tex_mask_s {0};          // G_SETTILE 的 S mask（0 在 RDP 中强制 clamp）
+    uint8_t tex_mask_t {0};          // G_SETTILE 的 T mask（0 在 RDP 中强制 clamp）
     uint8_t tex_palette {0};         // G_SETTILE 的 palette（CI4 调色板索引）
     uint16_t tex_line {0};           // G_SETTILE 的 line（TMEM 行跨度 64 位字）
     uint8_t lut_type {0};            // OTHERMODE 的 TEXTLUT 位域（G_TT_*：CI 调色板格式）
@@ -164,6 +170,7 @@ struct Material {
             && combine_uses_texel == o.combine_uses_texel
             && lit == o.lit
             && tex_clamp_s == o.tex_clamp_s && tex_clamp_t == o.tex_clamp_t
+            && tex_mask_s == o.tex_mask_s && tex_mask_t == o.tex_mask_t
             && tex_palette == o.tex_palette && tex_line == o.tex_line
             && lut_type == o.lut_type
             && cull_back == o.cull_back
@@ -284,6 +291,8 @@ struct RSPState {
     uint16_t tex_dxt {0};            // G_LOADBLOCK 的 DXT（编码源图像行宽）
     bool tex_clamp_s {false};        // S 方向 G_TX_CLAMP（否则 WRAP/MIRROR）
     bool tex_clamp_t {false};        // T 方向 G_TX_CLAMP
+    uint8_t tex_mask_s {0};          // S mask（mask=0 时 angrylion 强制 clamp）
+    uint8_t tex_mask_t {0};          // T mask（mask=0 时 angrylion 强制 clamp）
     uint8_t tex_palette {0};         // CI4 调色板索引
     uint16_t tex_line {0};           // TMEM 行跨度（64 位字）
     uint8_t lut_type {0};            // OTHERMODE 的 TEXTLUT（CI 调色板格式）

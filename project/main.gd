@@ -39,6 +39,7 @@ var _billboard_nodes: Array = []
 # SM64 Fast3D model-view lighting shader（受光材质用）。
 const _sm64_lighting_shader := preload("res://sm64_lighting.gdshader")
 const _sm64_projected_shader := preload("res://sm64_projected.gdshader")
+const _sm64_projected_alpha_shader := preload("res://sm64_projected_alpha.gdshader")
 # SM64 天空盒 shader（skybox.c 的 10×8 图块贴图集，按相机 yaw/pitch 滚动）。
 const _skybox_shader := preload("res://skybox.gdshader")
 
@@ -813,8 +814,8 @@ func _build_object_mesh(md: Dictionary) -> Dictionary:
 				if not part_cache.has(mkey):
 					part_cache[mkey] = _build_material(part.materials[mi], int(me.layer))
 				part_materials.append(part_cache[mkey])
-				parts.append({"pivot": part.pivot, "mesh": bam,
-						"surface_materials": part_materials})
+			parts.append({"pivot": part.pivot, "mesh": bam,
+					"surface_materials": part_materials})
 		entry.billboard_parts = parts
 	return entry
 
@@ -841,8 +842,8 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 	var alpha_blend := layer >= 5
 	# 受光 + 有灯光 + 不透明（OPA 层忽略纹理 alpha；其余层纹理无 alpha、材质
 	# alpha 满）→ 光照 shader。
-	if md.get("rsp_projection", false) and layer < 4:
-		return _build_projected_material(md, tex_img)
+	if md.get("rsp_projection", false):
+		return _build_projected_material(md, tex_img, layer)
 	if md.lit and md.num_lights > 0 and alpha >= 255 \
 			and (md.textured and (not alpha_matters or not tex_alpha) or not md.textured):
 		var light_tex: ImageTexture = null
@@ -893,12 +894,14 @@ func _build_material(md: Dictionary, layer: int = 0) -> Material:
 ## Static area geometry shader. The captured Fast3D NDC/depth remains in the
 ## TANGENT channel for diagnostics; the active branch reprojects with Godot's
 ## current camera so movement remains live.
-func _build_projected_material(md: Dictionary, tex_img: Image) -> ShaderMaterial:
+func _build_projected_material(md: Dictionary, tex_img: Image, layer: int = 0) -> ShaderMaterial:
 	var sm := ShaderMaterial.new()
-	sm.shader = _sm64_projected_shader
+	sm.shader = _sm64_projected_alpha_shader if layer >= 5 else _sm64_projected_shader
 	if tex_img != null:
 		sm.set_shader_parameter("albedo_tex", ImageTexture.create_from_image(tex_img))
 		sm.set_shader_parameter("use_texel", true)
+		sm.set_shader_parameter("repeat_s", md.get("repeat_s", true))
+		sm.set_shader_parameter("repeat_t", md.get("repeat_t", true))
 		sm.set_shader_parameter("clamp_uv", not (md.repeat_s or md.repeat_t))
 		if md.has("uv_clamp"):
 			sm.set_shader_parameter("uv_clamp", md.uv_clamp)
@@ -907,6 +910,8 @@ func _build_projected_material(md: Dictionary, tex_img: Image) -> ShaderMaterial
 	var base_color: Color = md.env_color if int(md.color_source) == 5 else md.color
 	sm.set_shader_parameter("base_color", Vector3(base_color.r, base_color.g, base_color.b))
 	sm.set_shader_parameter("use_vertex", md.use_vertex)
+	sm.set_shader_parameter("alpha_scissor", layer == 4)
+	sm.set_shader_parameter("material_alpha", float(md.get("alpha", 255)) / 255.0)
 	var dynamic_lighting: bool = md.lit and md.use_vertex \
 			and int(md.get("num_lights", 0)) > 0
 	sm.set_shader_parameter("use_dynamic_lighting", dynamic_lighting)
@@ -934,6 +939,8 @@ func _build_lighting_material(md: Dictionary, tex: ImageTexture) -> ShaderMateri
 	if tex != null:
 		sm.set_shader_parameter("albedo_tex", tex)
 		sm.set_shader_parameter("use_texel", true)
+		sm.set_shader_parameter("repeat_s", md.get("repeat_s", true))
+		sm.set_shader_parameter("repeat_t", md.get("repeat_t", true))
 		# 两轴都 CLAMP 才关重复（shader 里用 UV clamp；与 StandardMaterial3D 的
 		# FLAG_USE_TEXTURE_REPEAT 近似一致）。
 		sm.set_shader_parameter("clamp_uv", not (md.repeat_s or md.repeat_t))

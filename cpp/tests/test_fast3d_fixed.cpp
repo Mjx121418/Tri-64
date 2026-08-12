@@ -210,6 +210,46 @@ void testFast3DFixed() {
                  makeVector3(std::numeric_limits<Fixed>::max(), 0, 0),
                  "vector matrix negative overflow saturates");
 
+    // Matrix/vector products use the RSP's wrapped 48-bit accumulator before
+    // the VMAD result is saturated. Four maximum positive products wrap just
+    // below zero; the signed counterpart wraps just above zero. Keep these
+    // values as goldens so a widened host accumulator cannot silently change
+    // Fast3D's overflow behavior.
+    const Fixed fixed_max = std::numeric_limits<Fixed>::max();
+    const Fixed fixed_min = std::numeric_limits<Fixed>::min();
+    FixedMatrix maximums {};
+    for (auto &row : maximums) {
+        row.fill(fixed_max);
+    }
+    FixedMatrix minimum_row {};
+    minimum_row[0].fill(fixed_min);
+    const FixedMatrix positive_wrap = matrixMultiply(maximums, maximums);
+    const FixedMatrix negative_wrap = matrixMultiply(minimum_row, maximums);
+    const Fixed wrap_positive = -262144;
+    const Fixed wrap_negative = 131072;
+    FixedMatrix positive_expected {};
+    for (auto &row : positive_expected) {
+        row.fill(wrap_positive);
+    }
+    FixedMatrix negative_expected {};
+    negative_expected[0].fill(wrap_negative);
+    checkMatrix(positive_wrap,
+                positive_expected,
+                "four-term positive matrix accumulator wrap");
+    checkMatrix(negative_wrap,
+                negative_expected,
+                "four-term negative matrix accumulator wrap");
+    const FixedVector4 positive_vector = vectorMatrixMultiply(
+        FixedVector4 {fixed_max, fixed_max, fixed_max, fixed_max}, maximums);
+    check(positive_vector == FixedVector4 {wrap_positive, wrap_positive,
+                                           wrap_positive, wrap_positive},
+          "four-term positive vector accumulator wrap");
+    const FixedVector4 negative_vector = vectorMatrixMultiply(
+        FixedVector4 {fixed_min, fixed_min, fixed_min, fixed_min}, maximums);
+    check(negative_vector == FixedVector4 {wrap_negative, wrap_negative,
+                                           wrap_negative, wrap_negative},
+          "four-term negative vector accumulator wrap");
+
     const FixedVector3 fractionalPoint = makeVector3(0x00010000, 0x00020000, 0x00030000);
     checkVector3(transformPoint(fractionalProduct, fractionalPoint),
                  makeVector3(0x0000E000, 0x00020000, 0x00030000),
@@ -245,6 +285,22 @@ void testFast3DFixed() {
         makeVector3(kFixedOne, 0, 0), shade_directions, shade_lights, 1, true, 0xFF);
     check(overbright_shade == std::array<uint8_t, 4> {255, 255, 255, 0xFF},
           "overbright light accumulation saturates to white");
+
+    // A half-length normal and half-length light produce an exact Q1.15 dot
+    // of 0.25. Two directional lights plus ambient then saturate red while
+    // retaining the unsaturated green/blue channel values.
+    std::array<Light, 8> channel_lights {};
+    std::array<FixedVector3, 8> channel_directions {};
+    channel_lights[0].color = {255, 100, 200};
+    channel_lights[1].color = {100, 255, 100};
+    channel_lights[2].color = {200, 20, 30};
+    channel_directions[0] = makeVector3(0x00008000, 0x00008000, 0);
+    channel_directions[1] = makeVector3(0x00008000, 0x00008000, 0);
+    const auto channel_shade = shadeVertex(
+        makeVector3(0x00008000, 0x00008000, 0), channel_directions,
+        channel_lights, 2, true, 0xA5);
+    check(channel_shade == std::array<uint8_t, 4> {255, 197, 180, 0xA5},
+          "multi-light shade saturates channels independently");
 
     const Mtxf object_transform = mtxfMul(
         mtxfRotationZXY({0x1200, 0x2300, 0x0800}), mtxfTranslation(17, -9, 31));
@@ -296,9 +352,13 @@ void testFast3DFixed() {
     check(rspReciprocal(fixedFromInteger(3)) == 0x00002AAA,
           "RSP reciprocal Q16 three case");
     check(rspReciprocal(0x00017880) == 0x00005708,
-          "RSP reciprocal ROM quantization entry 241");
+           "RSP reciprocal ROM quantization entry 241");
     check(rspReciprocal(0x00018880) == 0x0000537C,
-          "RSP reciprocal ROM quantization entry 273");
+           "RSP reciprocal ROM quantization entry 273");
+    check(fixedMultiplyScalar(kFixedOne, 4) == 4 * kFixedOne,
+          "perspNorm scales Q16 values");
+    check(fixedMultiplyScalar(kFixedOne, 0xFFFF) == std::numeric_limits<Fixed>::max(),
+          "maximum perspNorm saturates Q16 values");
 
     Accumulator48 wrapped((int64_t {1} << 47) - 1);
     wrapped.addSigned(1);
@@ -446,6 +506,8 @@ void testFast3DFixed() {
         putCommand(segment, command, (0x03u << 24) | (0x80u << 16) | 16u,
                    0x0E000080u);
         command += 8;
+        putCommand(segment, command, (0xBCu << 24) | GBI::G_MW_PERSPNORM, 4u);
+        command += 8;
         putCommand(segment, command, (0x04u << 24) | (0x20u << 16) | 48u,
                    0x0E000180u);
         command += 8;
@@ -460,6 +522,7 @@ void testFast3DFixed() {
         context.fixed_projection_matrix[0][0] = 0x00008000; // x / 2
         context.fixed_projection_matrix[1][1] = 0x00004000; // y / 4
         context.fixed_projection_matrix[2][2] = 0x00008000; // z / 2
+        context.persp_norm = 4;
 
         SegmentTable table;
         table.rom_span = std::span(segment);
@@ -471,13 +534,13 @@ void testFast3DFixed() {
         check(mesh.vertices.size() == 3, "projection context triangle vertices");
         if (mesh.vertices.size() == 3) {
             check(mesh.vertices[0].projected, "projection context marks vertex projected");
-            check(std::abs(mesh.vertices[0].ndc_position[0] - 1.0f) < 0.0001f
-                      && std::abs(mesh.vertices[0].ndc_position[1] - 1.0f) < 0.0001f
-                      && std::abs(mesh.vertices[0].ndc_position[2] - 1.0f) < 0.0001f,
+            check(std::abs(mesh.vertices[0].ndc_position[0] - 0.999878f) < 0.0001f
+                      && std::abs(mesh.vertices[0].ndc_position[1] - 0.999878f) < 0.0001f
+                      && std::abs(mesh.vertices[0].ndc_position[2] - 0.999878f) < 0.0001f,
                   "projection context fixed NDC");
-            check(std::abs(mesh.vertices[0].viewport_position[0] - 320.0f) < 0.01f
-                      && std::abs(mesh.vertices[0].viewport_position[1] - 240.0f) < 0.01f
-                      && std::abs(mesh.vertices[0].viewport_position[2] - 255.5f) < 0.01f,
+            check(std::abs(mesh.vertices[0].viewport_position[0] - 319.980469f) < 0.01f
+                      && std::abs(mesh.vertices[0].viewport_position[1] - 239.985352f) < 0.01f
+                      && std::abs(mesh.vertices[0].viewport_position[2] - 255.484406f) < 0.01f,
                   "RSP viewport scale and translation");
         }
     }
@@ -511,6 +574,7 @@ void testFast3DFixed() {
         context.fixed_view_matrix = identityMatrix();
         context.fixed_view_matrix[3][0] = fixedFromInteger(-10);
         context.fixed_projection_matrix = identityMatrix();
+        context.persp_norm = 4;
 
         SegmentTable table;
         table.rom_span = std::span(segment);
@@ -525,9 +589,9 @@ void testFast3DFixed() {
                       && mesh.vertices[1].clip_position[0] == 0.0f
                       && mesh.vertices[2].clip_position[0] == 0.0f,
                   "camera view translation precedes projection");
-            check(std::abs(mesh.vertices[0].viewport_position[2] - 0.0f) < 0.01f
+            check(std::abs(mesh.vertices[0].viewport_position[2] - 0.015594f) < 0.01f
                       && std::abs(mesh.vertices[1].viewport_position[2] - 127.75f) < 0.01f
-                      && std::abs(mesh.vertices[2].viewport_position[2] - 255.5f) < 0.01f,
+                      && std::abs(mesh.vertices[2].viewport_position[2] - 255.484406f) < 0.01f,
                   "RSP viewport depth maps NDC in order");
         }
     }

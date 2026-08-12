@@ -229,7 +229,8 @@ void testTreeUV(LevelScriptSetup &setup) {
     const GBI::Mesh &mesh = it->second.mesh;
     bool all_clamp = true;
     for (const auto &m : mesh.materials) {
-        all_clamp = all_clamp && m.tex_clamp_s && m.tex_clamp_t;
+        all_clamp = all_clamp && (m.tex_clamp_s || m.tex_mask_s == 0) &&
+                    (m.tex_clamp_t || m.tex_mask_t == 0);
     }
     printf("  tree model 0x17: %zu materials, all S/T clamp=%d\n", mesh.materials.size(),
            all_clamp);

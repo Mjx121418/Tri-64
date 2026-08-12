@@ -119,7 +119,7 @@ PackedFloat32Array matrixValues(const Mtxf &matrix) {
 // 与 meshDicts 的 material 一一对应：{ textured, color, tex_width, tex_height,
 // tex_pixels }。textures 与 mesh.materials 并行。
 Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &textures,
-                    bool exact_shade) {
+                    bool exact_shade, bool force_projection = false) {
     Array out;
     for (size_t m = 0; m < mesh.materials.size(); m++) {
         Dictionary d;
@@ -133,7 +133,8 @@ Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &text
         for (const auto &vertex : mesh.vertices) {
             all_projected = all_projected && vertex.projected;
         }
-        d["rsp_projection"] = exact_shade && all_projected;
+        d["rsp_projection"] = force_projection || (exact_shade && all_projected);
+        d["force_projection"] = force_projection;
         // combine 颜色源（G_CC_SHADE → 顶点色；PRIMITIVE → prim；ENV → env）。
         // 渲染端据此决定底色：SHADE 用 WHITE × 顶点色，PRIMITIVE/ENV 用对应色。
         const GBI::CombineSource color_source =
@@ -204,15 +205,24 @@ Array materialDicts(const GBI::Mesh &mesh, const std::vector<GBI::Texture> &text
             d["ambient"] = Color(A.col[0] / 255.0f, A.col[1] / 255.0f, A.col[2] / 255.0f);
         }
         // G_SETTILE 的 S/T clamp 模式 → Godot texture_repeat（true=重复/平铺）。
-        d["repeat_s"] = !state.tex_clamp_s;
-        d["repeat_t"] = !state.tex_clamp_t;
-        // 两轴都 CLAMP 时，shader 用 UV 夹取到图块内容区域（sl..sh, tl..th 归一化）。
-        if (state.tex_clamp_s && state.tex_clamp_t && state.tex_width() > 0 &&
-            state.tex_height() > 0) {
-            const float w = static_cast<float>(state.tex_width());
-            const float h = static_cast<float>(state.tex_height());
-            d["uv_clamp"] = Vector4(state.tex_sl / (4.0f * w), state.tex_tl / (4.0f * h),
-                                    state.tex_sh / (4.0f * w), state.tex_th / (4.0f * h));
+        // angrylion uses clamp = explicit CLAMP || mask == 0.
+        const bool clamp_s = state.tex_clamp_s || state.tex_mask_s == 0;
+        const bool clamp_t = state.tex_clamp_t || state.tex_mask_t == 0;
+        d["repeat_s"] = !clamp_s;
+        d["repeat_t"] = !clamp_t;
+        d["tile_mask_s"] = static_cast<int64_t>(state.tex_mask_s);
+        d["tile_mask_t"] = static_cast<int64_t>(state.tex_mask_t);
+        // TextureDecoder has already cropped the decoded image to the tile's
+        // (sl..sh, tl..th) region. RDP clamps to texel 0 through the last texel
+        // center; the half-texel range matches angrylion's sfrac/tfrac path.
+        if (clamp_s && clamp_t && state.tex_width() > 0 &&
+            state.tex_height() > 0 && state.tex_sh >= state.tex_sl &&
+            state.tex_th >= state.tex_tl) {
+            const float width = static_cast<float>(state.tex_width());
+            const float height = static_cast<float>(state.tex_height());
+            d["uv_clamp"] = Vector4(
+                0.5f / width, 0.5f / height,
+                (width - 0.5f) / width, (height - 0.5f) / height);
         }
         if (has_tex) {
             const GBI::Texture &tex = textures[m];
@@ -351,7 +361,7 @@ Array GodotBridge::getObjectModels() {
             Dictionary p;
             p["pivot"] = Vector3(part.pivot.x, part.pivot.y, part.pivot.z);
             p["meshes"] = meshDicts(part.mesh, false);
-            p["materials"] = materialDicts(part.mesh, part.textures, false);
+            p["materials"] = materialDicts(part.mesh, part.textures, false, true);
             parts.push_back(p);
         }
         d["billboard_parts"] = parts;
@@ -383,7 +393,7 @@ Array GodotBridge::getInlineObjectModels() {
             Dictionary p;
             p["pivot"] = Vector3(part.pivot.x, part.pivot.y, part.pivot.z);
             p["meshes"] = meshDicts(part.mesh, false);
-            p["materials"] = materialDicts(part.mesh, part.textures, false);
+            p["materials"] = materialDicts(part.mesh, part.textures, false, true);
             parts.push_back(p);
         }
         d["billboard_parts"] = parts;
@@ -541,6 +551,7 @@ Dictionary GodotBridge::getProjectionContext() {
     d["fov"] = context.perspective_fov;
     d["near"] = context.perspective_near;
     d["far"] = context.perspective_far;
+    d["persp_norm"] = context.persp_norm;
     d["view"] = matrixValues(context.view_matrix);
     d["projection"] = matrixValues(context.projection_matrix);
     return d;

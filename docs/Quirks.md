@@ -225,12 +225,18 @@ The RDP's texture t-coordinate is top-down (t=0 = texture top, matching the imag
 row 0). Godot's ArrayMesh ARRAY_TEX_UV also uses v=0 as the top, so the N64 t maps
 directly to v — do NOT flip the V axis (a `v = 1 - v` flip turns every texture
 upside down; most visible on directional textures like trees, invisible on
-vertically symmetric ones like bobombs).
+vertically symmetric ones like bobombs). RDP texture coordinates address the
+interval `[i, i+1)` for texel `i`; the display-list decoder adds half a texel when
+converting to Godot UVs so filtered samples have the same center and fraction as
+the RDP.
 
 The RDP clamps or wraps texture coordinates per G_SETTILE's 2-bit cms/cmt mode
 (0=WRAP, 1=MIRROR, 2=CLAMP; w1 bits 8-9 and 18-19). Godot has one repeat flag for
 both axes, so asymmetric tiles (S wrap, T clamp) fall back to repeat — SM64 tiles
-are usually symmetric. See `Engine.md` §6.
+are usually symmetric. Angrylion's effective rule is `clamp || mask == 0`, so
+`G_TX_NOMASK` is forced clamp even when the mode says WRAP. `G_SETTILESIZE`'s
+inclusive sl/sh/tl/th bounds become the first and last texel-center UVs after the
+texture decoder crops the tile. See `Engine.md` §6.
 
 ## native-selected object animations (default index 0)
 

@@ -1,9 +1,7 @@
-// Opaque static geometry path carrying Fast3D projection data and supporting
-// live reprojection through the current Godot camera.
-// TANGENT carries four floats per vertex; xyz are fixed-point NDC values and
-// w is reserved so the channel remains a regular Godot tangent attribute.
+// Projected alpha path for Fast3D layers 5-7. These layers blend and do not
+// update the depth buffer, unlike layer 4's opaque alpha scissor path.
 shader_type spatial;
-render_mode unshaded, cull_disabled;
+render_mode unshaded, cull_disabled, blend_mix, depth_draw_never;
 
 uniform sampler2D albedo_tex : source_color, repeat_disable;
 uniform bool use_texel = false;
@@ -13,19 +11,16 @@ uniform bool repeat_s = true;
 uniform bool repeat_t = true;
 uniform bool clamp_uv = false;
 uniform vec4 uv_clamp = vec4(0.0, 0.0, 1.0, 1.0);
-uniform bool alpha_scissor = false;
 uniform float material_alpha = 1.0;
 // Extraction-time NDC is only valid while the matching camera is fixed.
 uniform bool use_rsp_position = false;
 uniform bool use_dynamic_reprojection = true;
 uniform bool use_rsp_projection = false;
 uniform mat4 rsp_projection = mat4(1.0);
-// Static area and inline object materials use the same live Fast3D light-space path.
-// Their fixed SHADE is still exported for inspection, but should not darken them twice.
 uniform bool use_dynamic_lighting = false;
 uniform int num_lights = 0;
 uniform vec3 ambient = vec3(0.0);
-uniform vec3 light_dirs[8]; // raw Light_t directions in RSP light space
+uniform vec3 light_dirs[8];
 uniform vec3 light_cols[8];
 uniform bool cull_back = true;
 
@@ -37,16 +32,10 @@ void vertex() {
 	if (use_rsp_position) {
 		POSITION = vec4(TANGENT.xyz, 1.0);
 	} else if (use_dynamic_reprojection) {
-		// Rebuild clip coordinates from the current camera every frame. This is
-		// intentionally separate from the extraction-time fixed NDC override.
 		vec4 view_position = MODELVIEW_MATRIX * vec4(VERTEX, 1.0);
 		vec4 clip_position = (use_rsp_projection ? rsp_projection : PROJECTION_MATRIX) * view_position;
-		// Fast3D's viewport convention has positive Y downward relative to Godot's
-		// clip space; the fixed NDC diagnostics retain the original RSP sign.
 		if (use_rsp_projection) {
 			clip_position.y = -clip_position.y;
-			// Godot Forward+ uses reverse Z (CLIP_SPACE_FAR == 0), while the
-			// Fast3D matrix produces the conventional NDC range [-1, 1].
 			if (CLIP_SPACE_FAR == 0.0) {
 				clip_position.z = (clip_position.w - clip_position.z) * 0.5;
 			}
@@ -72,7 +61,6 @@ void vertex() {
 }
 
 void fragment() {
-	// Godot's screen-space winding is opposite the imported Fast3D winding.
 	if (cull_back && FRONT_FACING) {
 		discard;
 	}
@@ -83,10 +71,8 @@ void fragment() {
 	uv.y = repeat_t ? fract(uv.y) : clamp(uv.y, clamp_min.y, clamp_max.y);
 	vec4 texel = use_texel ? texture(albedo_tex, uv) : vec4(1.0);
 	float alpha = texel.a * material_alpha * vertex_alpha;
-	if (alpha_scissor && alpha < 0.5) {
-		discard;
-	}
 	vec3 base = use_texel ? texel.rgb :
 			(use_dynamic_lighting && use_vertex ? vec3(1.0) : base_color);
 	ALBEDO = base * (use_dynamic_lighting ? lighting_shade : vertex_color);
+	ALPHA = alpha;
 }

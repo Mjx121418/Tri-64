@@ -233,6 +233,15 @@ constexpr Fixed fixedMultiply(Fixed lhs, Fixed rhs) noexcept {
     return accumulator.toFixed();
 }
 
+// Multiply a Q16.16 value by a raw unsigned 16-bit RSP lane. G_MW_PERSPNORM
+// supplies this kind of lane, not another Q16.16 value; 0xFFFF is the
+// maximum normalization scale used by orthographic/uncalibrated paths.
+constexpr Fixed fixedMultiplyScalar(Fixed value, uint16_t scalar) noexcept {
+    Accumulator48 accumulator;
+    accumulator.addSigned(static_cast<int64_t>(value) * scalar);
+    return accumulator.toFixed();
+}
+
 // Divide two Q16.16 values while keeping the result in Q16.16. This remains
 // available for non-RSP callers; projected vertices use rspReciprocal below.
 Fixed fixedDivide(Fixed numerator, Fixed denominator) noexcept;
