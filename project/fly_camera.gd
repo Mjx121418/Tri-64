@@ -16,8 +16,17 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.set_mouse_mode(Input.MOUSE_MODE_VISIBLE)
 		_captured = false
 	elif event is InputEventMouseMotion and _captured:
-		rotate_y(-event.relative.x * mouse_sensitivity)
-		rotate_object_local(Vector3.RIGHT, -event.relative.y * mouse_sensitivity)
+		# Godot 把鼠标事件变换进控件局部坐标时会把 relative 除以控件的全局
+		# 缩放（viewport.cpp 的 _gui_input_event：localizer.basis_xform）。
+		# SubViewportContainer 的 scale = 渲染区 / 渲染分辨率：分辨率越高
+		# scale 越小 → 相同的屏幕移动得到更大的 relative → 相机更灵敏。
+		# 乘回该缩放，使灵敏度与所选分辨率无关（屏幕像素单位）。
+		var container := get_viewport().get_parent()
+		var scale := 1.0
+		if container is SubViewportContainer:
+			scale = container.get_global_transform_with_canvas().get_scale().x
+		rotate_y(-event.relative.x * mouse_sensitivity * scale)
+		rotate_object_local(Vector3.RIGHT, -event.relative.y * mouse_sensitivity * scale)
 
 func _process(delta: float) -> void:
 	var speed := move_speed * (sprint_multiplier if Input.is_key_pressed(KEY_SHIFT) else 1.0)
