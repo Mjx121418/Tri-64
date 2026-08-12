@@ -165,7 +165,7 @@ Mtxf mtxfLookAt(const Vec3<float> &from, const Vec3<float> &to, int16_t roll) {
 Mtxf mtxfPerspective(float fov_degrees, float aspect, float near_plane,
                      float far_plane) {
     Mtxf matrix {};
-    if (aspect <= 0.0f || near_plane <= 0.0f || far_plane <= near_plane) {
+    if (aspect <= 0.0f) {
         return mtxfIdentity();
     }
     constexpr float pi = 3.14159265358979323846f;
@@ -174,6 +174,11 @@ Mtxf mtxfPerspective(float fov_degrees, float aspect, float near_plane,
     if (std::abs(sine) < 1e-6f) {
         return mtxfIdentity();
     }
+    // Mirrors decomp lib/src/guPerspectiveF.c: no near/far guards. A far plane
+    // written as u16 > 0x7FFF reads as a negative s16 (e.g. SMTW's 0x9696 =
+    // -26986); guPerspective still computes a valid matrix with the far plane
+    // behind the camera = no far clip. Bailing out to identity breaks those
+    // hacks (see docs/Engine.md + docs/Quirks.md).
     const float cotangent = std::cos(half_fov) / sine;
     const float range = far_plane - near_plane;
     matrix[0][0] = cotangent / aspect;

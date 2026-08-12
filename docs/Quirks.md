@@ -255,3 +255,16 @@ reference TEXEL0/TEXEL1 (1/2). We classify `textured` by this alone (NOT gated o
 G_TEXTURE_ENABLE, because some DLs rely on a parent DL's G_ON). G_LIGHTING is
 recorded as Material.lit. Full details (flat-geometry color, mux bit layout, default
 geometry mode) in `Engine.md` §5/§6.
+
+## negative far plane (u16 far > 0x7FFF) in hack level cameras
+
+Some hacks write the GEO_PERSPECTIVE far field as a u16 larger than 0x7FFF — e.g.
+Super Mario Treasure World v1.2.1 uses `0x9696` (38550) for its custom course
+cameras. The engine reads fov/near/far as **s16** (`cur_geo_cmd_s16`, geo_layout.c),
+so the game sees far = -26986. `guPerspective` (guPerspectiveF.c) has no guards and
+still produces a valid matrix: the far plane lands *behind* the camera, which behaves
+like **no far clipping**, and `perspNorm` saturates to 65535 (no RSP perspective
+normalization). The author likely intended a finite far of 38550 (u16); the s16
+interpretation is what actually renders. An extractor that rejects `far <= near` (or
+treats the field as u16) will clip or misrender such levels. Our `mtxfPerspective`
+mirrors guPerspective (see `Engine.md` §4).

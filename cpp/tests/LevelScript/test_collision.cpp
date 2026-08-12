@@ -5,6 +5,7 @@
 #include "Scripts/Collision.h"
 #include "test_parallel.h"
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <set>
@@ -336,5 +337,31 @@ void testHackRobustness() {
            total_warnings);
     if (ok == 0) {
         printf("test_hack_robustness: FAIL no level extracted cleanly\n");
+    }
+
+    // 投影矩阵必须按 guPerspectiveF 语义计算（对 far 无防护；负 far = 远平面在
+    // 相机后方 = 无远裁剪），任何情况下都不能退化成单位矩阵——否则 Godot 里整个
+    // 区域被裁剪，只剩天空盒。负 far 的具体黄金值（SMTW v1.2.1 的 0x9696 =
+    // -26986）在 testMatrixSupport 里直接测 mtxfPerspective。
+    {
+        const LevelExtract::Result result = LevelExtract::extract(rom, 9, 1);
+        if (!result.ok || !result.projection_context) {
+            printf("test_hack_robustness: FAIL SMTW BOB projection context missing\n");
+            return;
+        }
+        const GBI::ProjectionContext &pc = *result.projection_context;
+        if (!pc.perspective || pc.perspective_near <= 0.0f) {
+            printf("test_hack_robustness: FAIL SMTW BOB perspective context invalid\n");
+        }
+        const float m32 = pc.projection_matrix[3][2];
+        if (std::abs(m32) < 1e-4f || pc.projection_matrix[0][0] == 0.0f) {
+            printf("test_hack_robustness: FAIL SMTW BOB projection matrix is identity\n");
+        }
+        const float expected = 2.0f * pc.perspective_near * pc.perspective_far /
+                               (pc.perspective_near - pc.perspective_far);
+        if (std::abs(m32 - expected) > 1e-3f) {
+            printf("test_hack_robustness: FAIL SMTW BOB m[3][2] = %f (expect %f)\n",
+                   m32, expected);
+        }
     }
 }

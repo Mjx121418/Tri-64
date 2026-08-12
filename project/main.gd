@@ -228,7 +228,13 @@ func _apply_projection_context() -> void:
 		return
 	camera.fov = float(context.fov)
 	camera.near = maxf(0.01, float(context.near))
-	camera.far = maxf(camera.near + 1.0, float(context.far))
+	var far := float(context.far)
+	# far <= near：hack 把 far 写成 u16 > 0x7FFF，按 s16 读出为负（如 SMTW 的
+	# 0x9696 = -26986），游戏的 guPerspective 得到"无远裁剪"（远平面在相机
+	# 后方）。Godot 相机需要正的 far，回退到原版量级。
+	if far <= camera.near:
+		far = 30000.0
+	camera.far = maxf(camera.near + 1.0, far)
 	var values: PackedFloat32Array = context.get("projection", PackedFloat32Array())
 	if values.size() == 16:
 		_rsp_projection = Projection(

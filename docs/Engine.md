@@ -180,6 +180,17 @@ look-at matrix + viewport, shadow/culling use runtime state.
 - **Perspective command length**: `GEO_CAMERA_FRUSTUM_WITH_FUNC` is 12 bytes (opcode +
   fov/near/far + func ptr). `geo_layout.c` advances only 0x08; we advance by the actual
   command length (12 when the func flag is set) or the stream mis-aligns. (Decomp quirk.)
+- **Perspective matrix**: the game calls `guPerspective` (`lib/src/guPerspectiveF.c`),
+  which has **no guards** — it computes the matrix algebraically even when `far <=
+  near`. A hack that writes far as a u16 > 0x7FFF (e.g. SMTW v1.2.1's `0x9696`) reads
+  as a negative s16 (`-26986`); the resulting matrix has its far plane *behind* the
+  camera = effectively no far clip, and `perspNorm` saturates to 65535 (no RSP
+  normalization). Our `mtxfPerspective` previously bailed to the identity matrix when
+  `far <= near`, which clipped the whole area in Godot (only the skybox rendered).
+  It now mirrors `guPerspectiveF` unconditionally (formula identical for `far > near`,
+  so vanilla and the other hacks are unchanged). The renderer additionally falls back
+  to a positive `camera.far` (30000) when the extracted far is negative, since Godot's
+  camera needs a real clip range for the standard-material paths. See `Quirks.md`.
 - **Animated parts / billboards**: `GEO_ANIMATED_PART` animation is baked by
   `ObjectExtract::Frame0Animator` at the game's first rendered frame — mirroring
   `geo_obj_init_animation` (`animFrame = startFrame - 1`) plus the first

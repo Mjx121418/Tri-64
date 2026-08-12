@@ -5,6 +5,7 @@
 #include "Level/dl_interpreter.h"
 #include "Level/level_extract.h"
 #include "Level/texture.h"
+#include "Math/math.h"
 #include "Memory/segment.h"
 #include "ROM.h"
 #include "Scripts/level_script.h"
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -643,6 +645,31 @@ void testMatrixSupport() {
         printf("test_matrix: v0 = (%.1f, %.1f, %.1f)  (expect 101.0, 202.0, 303.0)\n",
                mesh.vertices[0].position[0], mesh.vertices[0].position[1],
                mesh.vertices[0].position[2]);
+    }
+
+    // mtxfPerspective 镜像 decomp 的 guPerspectiveF：对 far 没有防护。hack 把
+    // far 写成 u16 > 0x7FFF 时按 s16 读出为负（SMTW 的 0x9696 = -26986），
+    // guPerspective 仍算出有效矩阵（远平面在相机后方 = 无远裁剪），不能退回
+    // 单位矩阵（否则该 hack 的投影全被裁剪，渲染只剩天空盒）。
+    {
+        const Mtxf neg_far = mtxfPerspective(45.0f, 4.0f / 3.0f, 100.0f, -26986.0f);
+        const float m22 = (100.0f - 26986.0f) / (100.0f + 26986.0f);
+        const float m32 = 2.0f * 100.0f * -26986.0f / (100.0f + 26986.0f);
+        if (std::abs(neg_far[2][2] - m22) > 1e-4f ||
+            std::abs(neg_far[3][2] - m32) > 1e-4f || neg_far[2][3] != -1.0f) {
+            printf("test_matrix: FAIL negative-far perspective does not match "
+                   "guPerspectiveF\n");
+        }
+    }
+    // 正 far 回归：vanilla BOB 的 45°, 4:3, near 100, far 30000 数值不变。
+    {
+        const Mtxf vanilla = mtxfPerspective(45.0f, 4.0f / 3.0f, 100.0f, 30000.0f);
+        const float m22 = (100.0f + 30000.0f) / (100.0f - 30000.0f);
+        const float m32 = 2.0f * 100.0f * 30000.0f / (100.0f - 30000.0f);
+        if (std::abs(vanilla[2][2] - m22) > 1e-4f ||
+            std::abs(vanilla[3][2] - m32) > 1e-4f) {
+            printf("test_matrix: FAIL vanilla perspective regression\n");
+        }
     }
 }
 
