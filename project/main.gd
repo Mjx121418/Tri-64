@@ -9,6 +9,7 @@ extends Node3D
 @onready var object_list: Tree = %ObjectList
 @onready var level_option: OptionButton = %LevelOption
 @onready var area_option: OptionButton = %AreaOption
+@onready var act_option: OptionButton = %ActOption
 @onready var resolution_option: OptionButton = %ResolutionOption
 @onready var camera: Camera3D = %Camera3D
 @onready var model_root: Node3D = %ModelRoot
@@ -105,6 +106,8 @@ var rom_manager: Variant = null
 var _rom_loaded := false
 var selected_level := 9
 var selected_area := 1
+# 提取用 act：0 = 所有 act（忽略 OBJECT_WITH_ACTS 掩码，默认），1..6 = 指定 act。
+var selected_act := 0
 
 # 渲染模式：0 = 几何三角形（静态网格 + 对象），1 = 碰撞三角形。
 const RENDER_GEOMETRY := 0
@@ -127,6 +130,7 @@ func _ready() -> void:
 
 	level_option.item_selected.connect(_on_level_selected)
 	area_option.item_selected.connect(_on_area_selected)
+	act_option.item_selected.connect(_on_act_selected)
 	resolution_option.item_selected.connect(_on_resolution_selected)
 	render_mode_option.item_selected.connect(_on_render_mode_selected)
 	all_rooms_checkbox.toggled.connect(_on_all_rooms_toggled)
@@ -134,6 +138,12 @@ func _ready() -> void:
 	render_mode_option.add_item("Geometry")
 	render_mode_option.add_item("Collision")
 	render_mode_option.select(RENDER_GEOMETRY)
+
+	# 提取 act：All（0，忽略 OBJECT_WITH_ACTS 掩码，默认）或 1..6。
+	act_option.add_item("All")
+	for n in range(1, 7):
+		act_option.add_item(str(n))
+	act_option.select(0)
 
 	# 渲染分辨率：320x240 的整数倍，最大 2560x1920（8x）。默认 1280x960（4x）。
 	for n in range(1, 9):
@@ -233,6 +243,16 @@ func _on_level_selected(index: int) -> void:
 		_populate_areas()
 		_extract_and_render()
 
+## Act 下拉：All（0，默认）/ 1..6。切换 act 后区域不变，直接重新提取。
+func _on_act_selected(index: int) -> void:
+	selected_act = index
+	if _rom_loaded:
+		_extract_and_render()
+
+## 当前 act 的显示名（状态栏用）：All 或 1..6。
+func _act_label() -> String:
+	return "All" if selected_act == 0 else str(selected_act)
+
 ## 从 ROM 一次性加载所有关卡名称并填充下拉列表（替代硬编码名称）。
 func _populate_levels_from_rom() -> void:
 	if not _ensure_bridge():
@@ -283,7 +303,7 @@ func _extract_and_render() -> void:
 	if not _ensure_bridge():
 		status_label.text = "GDExtension (GodotBridge) is not loaded; cannot extract the level."
 		return
-	if not rom_manager.extractLevel(selected_level, selected_area):
+	if not rom_manager.extractLevel(selected_level, selected_area, selected_act):
 		status_label.text = "Extraction failed for level %d." % selected_level
 		_show_warnings()
 		return
@@ -484,8 +504,8 @@ func _render_geometry() -> void:
 		_add_billboard_parts(oi, entry, opacity)
 		rendered_objects += 1
 
-	status_label.text = "%s, Area %d: %d meshes, %d materials, %d triangles, %d objects (%d rendered)." % [
-			rom_manager.getLevelName(), selected_area, meshes.size(), materials.size(), total_triangles,
+	status_label.text = "%s, Act %s, Area %d: %d meshes, %d materials, %d triangles, %d objects (%d rendered)." % [
+			rom_manager.getLevelName(), _act_label(), selected_area, meshes.size(), materials.size(), total_triangles,
 			objects.size(), rendered_objects]
 
 ## Inline object meshes already include the object's graph transform. Keep them at the
@@ -636,8 +656,8 @@ func _render_collision() -> void:
 	# 同一个节点变换（pos/angle），放在对象实际出生位置/朝向。
 	var object_triangles := _render_object_collisions()
 
-	status_label.text = "%s, Area %d: collision mode, %d/%d triangles shown, %d object collision triangles." % [
-			rom_manager.getLevelName(), selected_area, _visible_collision_triangles,
+	status_label.text = "%s, Act %s, Area %d: collision mode, %d/%d triangles shown, %d object collision triangles." % [
+			rom_manager.getLevelName(), _act_label(), selected_area, _visible_collision_triangles,
 			_collision_indices.size() / 3, object_triangles]
 
 ## 从 _collision_rooms 收集唯一房间号，为每个房间加一个 CheckButton。无房间

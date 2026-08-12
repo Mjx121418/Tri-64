@@ -48,6 +48,10 @@ class LevelScriptVM {
     int32_t curr_level_num { 0 };
     int32_t curr_area_index { -1 };
 
+    // "All acts" 模式：忽略 OBJECT_WITH_ACTS 的 act 位掩码（每个 OBJECT 命令
+    // 只出现一次，去掉门禁即得到所有 act 的对象，无需多次运行脚本再合并）。
+    bool ignore_acts_ { false };
+
     // occured in "level_script.c", not necessarily useful.
     int16_t current_area_index { -1 };
     int16_t script_status { 1 };
@@ -191,6 +195,8 @@ public:
 
     void setLevelNum(int32_t level_num) { curr_level_num = level_num; }
     void setActNum(int32_t act_num) { curr_act_num = act_num; }
+    // 0 = 所有 act 的对象都生成（忽略 OBJECT_WITH_ACTS 的掩码）。
+    void setIgnoreActs(bool ignore) { ignore_acts_ = ignore; }
     int32_t getCourseNum() const { return curr_course_num; }
     int32_t getLevelNum() const { return curr_level_num; }
 };

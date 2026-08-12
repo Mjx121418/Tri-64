@@ -248,8 +248,8 @@ void GodotBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("loadROM", "path"), &GodotBridge::loadROM);
     ClassDB::bind_method(D_METHOD("ROMLoaded"), &GodotBridge::ROMLoaded);
     ClassDB::bind_method(D_METHOD("getLevelAreas", "level_num"), &GodotBridge::getLevelAreas);
-    ClassDB::bind_method(D_METHOD("extractLevel", "level_num", "area_index"),
-                         &GodotBridge::extractLevel);
+    ClassDB::bind_method(D_METHOD("extractLevel", "level_num", "area_index", "act_num"),
+                         &GodotBridge::extractLevel, DEFVAL(0));
     ClassDB::bind_method(D_METHOD("getMeshes"), &GodotBridge::getMeshes);
     ClassDB::bind_method(D_METHOD("getMaterials"), &GodotBridge::getMaterials);
     ClassDB::bind_method(D_METHOD("getObjects"), &GodotBridge::getObjects);
@@ -294,12 +294,14 @@ PackedInt32Array GodotBridge::getLevelAreas(int level_num) {
     return out;
 }
 
-bool GodotBridge::extractLevel(int level_num, int area_index) {
+// act_num 0 = 所有 act（忽略 OBJECT_WITH_ACTS 掩码），默认 0。
+bool GodotBridge::extractLevel(int level_num, int area_index, int act_num) {
     result_ = {};
     if (!rom.is_loaded) {
         return false;
     }
     LevelExtract::LevelExtractor extractor(rom);
+    extractor.setActNum(act_num);
     extractor.run(level_num, area_index);
     result_ = extractor.takeResult();
     return result_.ok;

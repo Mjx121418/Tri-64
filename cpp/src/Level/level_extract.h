@@ -98,6 +98,7 @@ class LevelExtractor {
     bool ok_ {false};
     std::string error_;
     WarningLog log_; // 本次提取的警告/被守卫的异常（run 时清空，结束后拷入 result_）
+    int32_t act_num_ { 0 }; // 0 = 所有 act（忽略 OBJECT_WITH_ACTS 掩码）
 
     static size_t findPattern(const std::vector<uint8_t> &rom,
                               const std::array<uint8_t, 4> &pattern, size_t from = 0);
@@ -125,7 +126,7 @@ class LevelExtractor {
 public:
     explicit LevelExtractor(ROM &rom) : rom_(rom) {}
 
-    static Result extract(ROM &rom, int level_num, int area_index);
+    static Result extract(ROM &rom, int level_num, int area_index, int act_num = 0);
     static std::vector<int> listAreas(ROM &rom, int level_num);
     static std::string extractLevelName(ROM &rom, int level_num);
     static std::map<int, std::string> loadAllLevelNames(ROM &rom);
@@ -138,14 +139,19 @@ public:
     // 提取 rom 中 level_num（LevelNum，如 BOB=9）的 area_index 号区域。
     void run(int level_num, int area_index);
 
+    // 设置提取用的 act（1..6；游戏按 act 掩码过滤 OBJECT_WITH_ACTS 对象）。
+    // act_num = 0 = "所有 act"：忽略掩码，脚本里每个 OBJECT 命令都生成
+    // （每个位置在脚本中只出现一次，因此不需要去重）。
+    void setActNum(int act_num) { act_num_ = act_num; }
+
     const Result &result() const { return result_; }
     // Move the completed result out when the extractor will not be reused.
     // This avoids copying meshes, textures, collision data, and object models.
     Result takeResult() { return std::move(result_); }
 };
 
-// 便捷包装：一次完整提取（供 bridge/测试使用）。
-Result extract(ROM &rom, int level_num, int area_index);
+// 便捷包装：一次完整提取（供 bridge/测试使用）。act_num 0 = 所有 act（默认）。
+Result extract(ROM &rom, int level_num, int area_index, int act_num = 0);
 
 // 返回 level_num 关卡的所有有效区域索引（供 UI 的 Area 下拉列表使用）。
 std::vector<int> listAreas(ROM &rom, int level_num);

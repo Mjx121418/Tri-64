@@ -115,6 +115,17 @@ run MIPS functions; `SLEEP`/`DELAY` pause across frames.
   copy** of the camera (not a dangling scene-graph pointer) on the result.
 - **`SET_MARIO_START_POS`** (0x2B): the game fills a `SpawnInfo`; we store pos + yaw on
   `Level` (and `Result`).
+- **Act selection**: `OBJECT`/`OBJECT_WITH_ACTS` (0x24) carries an act bitmask
+  (byte 2; plain `OBJECT` hardcodes `0x1F` = ALL_ACTS); the game spawns only when
+  `(acts & (1 << (gCurrActNum - 1))) || acts == 0x1F` (`level_script.c:
+  level_cmd_place_object`). We mirror this with `curr_act_num` defaulting to 1. The
+  extractor's `setActNum(n)` (1..6) selects the act; `setActNum(0)` = **"all acts"**
+  ignores the mask entirely — since each `OBJECT` command appears exactly once in the
+  script, removing the gate yields every act's placements once, with no merging or
+  dedup. In all-acts mode, in-script act *branches* (`GET_OR_SET` `VAR_CURR_ACT_NUM`
+  comparisons, e.g. WDW's act-dependent area selection) still evaluate with act 1; the
+  per-act selector covers those. The Godot viewer defaults to all acts with an Act
+  dropdown (All / 1..6).
 - **Entry point**: we run `level_main_scripts_entry` from seg 0x15 offset 0 (not the
   jump table) so common models (stars, coins, ...) load; the menu is skipped because
   `level_main_menu_entry_2`'s `JUMP_IF(reg == 0)` jumps straight to `EXIT` (reg is never

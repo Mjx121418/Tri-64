@@ -632,10 +632,14 @@ void LevelScriptVM::cmdPlaceObject() {
     uint8_t acts = current_command.cmdGet<uint8_t>(2);
 
     // The game only spawns objects whose act mask contains the current act;
-    // 0x1F ("ALL_ACTS") always spawns. A static export keeps the first act.
+    // 0x1F ("ALL_ACTS") always spawns. A static export keeps the first act;
+    // ignore_acts_ ("all acts" mode) spawns every OBJECT command regardless
+    // of its mask — each placement appears exactly once in the script, so no
+    // dedup is needed.
     uint8_t act_mask = 1u << (curr_act_num - 1);
 
-    if (current_area_index != -1 && ((acts & act_mask) || acts == 0x1F)) {
+    if (current_area_index != -1 &&
+        (ignore_acts_ || (acts & act_mask) || acts == 0x1F)) {
         ObjectSpawnInfo info;
         info.model_id = current_command.cmdGet<uint8_t>(3); // OBJECT 命令第 3 字节
         info.start_pos = readVec3s(current_command.data, 4);

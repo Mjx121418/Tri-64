@@ -133,10 +133,29 @@ void testObject() {
         }
 
         if (is_vanilla) {
-            if (r.objects.size() != 103 || with_model != 92) {
-                printf("test_object: FAIL BOB object counts (objects=%zu model!=0=%zu, expect "
-                       "103/92)\n",
+            // 默认 act_num=0 = "所有 act"（忽略 OBJECT_WITH_ACTS 掩码）：
+            // 原版 BOB 比 act 1 多 10 个 act 专属 OBJECT 放置（103 → 113）。
+            if (r.objects.size() != 113 || with_model != 99) {
+                printf("test_object: FAIL BOB all-acts object counts (objects=%zu model!=0=%zu, "
+                       "expect 113/99)\n",
                        r.objects.size(), with_model);
+            }
+            // act 1 显式提取 = 原版 act-1 黄金值（OBJECT_WITH_ACTS 掩码过滤）。
+            {
+                LevelExtract::Result act1 = LevelExtract::extract(rom, 9, 1, 1);
+                size_t act1_objects = 0;
+                size_t act1_models = 0;
+                for (const auto &obj : act1.objects) {
+                    act1_objects++;
+                    if (obj.model_id != 0) {
+                        act1_models++;
+                    }
+                }
+                if (act1_objects != 103 || act1_models != 92) {
+                    printf("test_object: FAIL BOB act-1 object counts (objects=%zu model!=0=%zu, "
+                           "expect 103/92)\n",
+                           act1_objects, act1_models);
+                }
             }
             if (goombas != 2 || bobombs != 12 || bubble_trees != 17) {
                 printf("test_object: FAIL BOB per-model counts (goombas=%zu bobombs=%zu "

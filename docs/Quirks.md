@@ -254,6 +254,19 @@ level table. We run the whole main entry from seg 0x15 offset 0 with curr_level_
 set; the menu EXECUTE is skipped because level_main_menu_entry_2's JUMP_IF(OP_EQ, 0,
 +42) jumps straight to EXIT when reg == 0. See `Engine.md` §3.
 
+## act-gated OBJECT placements (OBJECT_WITH_ACTS)
+
+Levels gate object placements by act with the OBJECT command's act bitmask
+(0x24 byte 2; `OBJECT` hardcodes `0x1F` = ALL_ACTS, `OBJECT_WITH_ACTS` takes a real
+mask). The game spawns only when the mask contains the current act
+(`level_script.c: level_cmd_place_object`). The viewer extracts **all acts by
+default** (mask ignored — each placement exists once in the script), with an Act
+dropdown to restrict to a single act. Vanilla BOB has 10 placements outside act 1
+(star/cage-related spawners, model-0 formation spawners near the hill). In-script
+act branches via `GET_OR_SET(VAR_CURR_ACT_NUM)` (e.g. WDW's act-dependent area
+selection) still follow act 1 in all-acts mode — use the Act dropdown for those
+levels. See `Engine.md` §3.
+
 ## textured vs flat (combine mode)
 
 The RDP samples the texture only when G_SETCOMBINE's color/alpha A/B/C/D muxes

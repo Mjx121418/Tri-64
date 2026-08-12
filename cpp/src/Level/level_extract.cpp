@@ -494,6 +494,12 @@ void LevelExtractor::runLevelScript(int level_num, bool load_supplemental) {
     //（此时 VM 停止，即关卡已加载）。
     LevelScriptVM vm(seg_table_, level_, log_);
     vm.setLevelNum(level_num);
+    // act_num_ = 0 = "所有 act"：忽略 OBJECT_WITH_ACTS 的 act 掩码。
+    if (act_num_ <= 0) {
+        vm.setIgnoreActs(true);
+    } else {
+        vm.setActNum(act_num_);
+    }
     vm.execute(SegmentedAddress { 0x15, 0 });
 
     ok_ = true;
@@ -1063,8 +1069,9 @@ void LevelExtractor::extractArea(int level_num, int area_index) {
     result_.ok = true;
 }
 
-Result LevelExtractor::extract(ROM &rom, int level_num, int area_index) {
+Result LevelExtractor::extract(ROM &rom, int level_num, int area_index, int act_num) {
     LevelExtractor extractor(rom);
+    extractor.setActNum(act_num);
     extractor.run(level_num, area_index);
     return extractor.takeResult();
 }
@@ -1109,8 +1116,8 @@ std::map<int, std::string> LevelExtractor::loadAllLevelNames(ROM &rom) {
     return names;
 }
 
-Result extract(ROM &rom, int level_num, int area_index) {
-    return LevelExtractor::extract(rom, level_num, area_index);
+Result extract(ROM &rom, int level_num, int area_index, int act_num) {
+    return LevelExtractor::extract(rom, level_num, area_index, act_num);
 }
 
 std::vector<int> listAreas(ROM &rom, int level_num) {
